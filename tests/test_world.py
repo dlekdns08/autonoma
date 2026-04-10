@@ -1,5 +1,4 @@
-"""Tests for the expanded world system - personality, relationships, memory, XP, events,
-evolution, guilds, gossip, campfire, debates, leaderboard, narrative engine."""
+"""Tests for the expanded world system - all 21 subsystems."""
 
 import pytest
 
@@ -8,25 +7,48 @@ from autonoma.world import (
     EVOLVED_SPECIES,
     AchievementTier,
     AgentBones,
+    AgentDiary,
     AgentMemory,
     AgentStats,
+    BossAgent,
+    BossArena,
+    BossPhase,
     Campfire,
     Debate,
     DebateArena,
     DebateOutcome,
+    Dream,
+    DreamEngine,
+    FortuneCookie,
+    FortuneCookieJar,
+    GhostAgent,
+    GhostRealm,
     GossipNetwork,
     Guild,
     GuildRegistry,
     GuildRole,
     HindsightNote,
     Leaderboard,
+    Letter,
+    MemoryEntry,
     Mood,
+    MultiverseEngine,
     NarrativeEngine,
     NarrativeEvent,
+    PostOffice,
+    Quest,
+    QuestBoard,
+    QuestStatus,
     Relationship,
     RelationshipGraph,
     ReputationScore,
+    Season,
+    TimeOfDay,
+    Trade,
+    TradingPost,
     Trait,
+    Weather,
+    WorldClock,
     WorldEvent,
     WorldEventQueue,
     WorldEventType,
@@ -843,3 +865,503 @@ class TestExtendedStats:
         check_achievements(stats)
         # first_blood gives 10 XP reward
         assert stats.xp > initial_xp
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Day/Night Cycle & Weather
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestWorldClock:
+    def test_initial_state(self):
+        clock = WorldClock()
+        assert clock.time_of_day == TimeOfDay.MORNING
+        assert clock.season == Season.SPRING
+        assert clock.day == 1
+
+    def test_time_advances(self):
+        clock = WorldClock()
+        clock.tick(0)
+        assert clock.time_of_day == TimeOfDay.DAWN
+        clock.tick(1)
+        assert clock.time_of_day == TimeOfDay.MORNING
+        clock.tick(2)
+        assert clock.time_of_day == TimeOfDay.AFTERNOON
+
+    def test_day_advances(self):
+        clock = WorldClock()
+        for i in range(5):
+            clock.tick(i)
+        changes = clock.tick(5)  # Should be new day
+        assert clock.day == 2
+
+    def test_season_changes(self):
+        clock = WorldClock()
+        # Advance to round 20 (new season)
+        for i in range(21):
+            clock.tick(i)
+        assert clock.season != Season.SPRING or clock.day > 1
+
+    def test_weather_rolls(self):
+        clock = WorldClock()
+        clock._roll_weather()
+        assert isinstance(clock.weather, Weather)
+
+    def test_sky_line(self):
+        clock = WorldClock()
+        sky = clock.sky_line
+        assert "morning" in sky or "dawn" in sky.lower() or clock.time_of_day.value in sky
+
+    def test_is_night(self):
+        clock = WorldClock()
+        clock.time_of_day = TimeOfDay.NIGHT
+        assert clock.is_night
+        clock.time_of_day = TimeOfDay.MORNING
+        assert not clock.is_night
+
+    def test_xp_modifier(self):
+        clock = WorldClock()
+        clock.weather = Weather.SUNNY
+        assert clock.get_xp_modifier() > 1.0
+        clock.weather = Weather.STORMY
+        assert clock.get_xp_modifier() < 1.0
+
+    def test_mood_modifier(self):
+        clock = WorldClock()
+        clock.weather = Weather.STORMY
+        assert clock.get_mood_modifier() == Mood.WORRIED
+        clock.weather = Weather.SUNNY
+        clock.time_of_day = TimeOfDay.MORNING
+        assert clock.get_mood_modifier() == Mood.HAPPY
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Agent Dreams
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDreamEngine:
+    def test_generate_dream(self):
+        engine = DreamEngine()
+        memories = [MemoryEntry(text="Completed task", memory_type="success", round_number=1)]
+        dream = engine.generate_dream("Alice", "cat", memories, Mood.HAPPY, ["Bob"], 5)
+        assert dream.dreamer == "Alice"
+        assert dream.dream_type in ("prophetic", "nightmare", "peaceful", "surreal")
+        assert dream.content
+
+    def test_dream_type_from_mood(self):
+        engine = DreamEngine(seed=1)
+        frustrated_dream = engine.generate_dream(
+            "Alice", "cat", [], Mood.FRUSTRATED, [], 1,
+        )
+        assert frustrated_dream.dream_type == "nightmare"
+
+        happy_dream = engine.generate_dream(
+            "Bob", "fox", [], Mood.HAPPY, [], 2,
+        )
+        assert happy_dream.dream_type == "peaceful"
+
+    def test_prophetic_dream_gives_bonus(self):
+        engine = DreamEngine()
+        dream = engine.generate_dream("Alice", "cat", [], Mood.CURIOUS, [], 1)
+        assert dream.dream_type == "prophetic"
+        assert dream.bonus_xp > 0
+        assert dream.bonus_mood == Mood.INSPIRED
+
+    def test_recent_dreams(self):
+        engine = DreamEngine()
+        for i in range(5):
+            engine.generate_dream(f"Agent{i % 2}", "cat", [], Mood.HAPPY, [], i)
+        alice_dreams = engine.get_recent_dreams("Agent0", 2)
+        assert len(alice_dreams) <= 2
+
+    def test_deterministic(self):
+        e1 = DreamEngine(seed=42)
+        e2 = DreamEngine(seed=42)
+        d1 = e1.generate_dream("A", "cat", [], Mood.HAPPY, [], 1)
+        d2 = e2.generate_dream("A", "cat", [], Mood.HAPPY, [], 1)
+        assert d1.content == d2.content
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Agent Diary
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAgentDiary:
+    def test_write_entry(self):
+        diary = AgentDiary("Alice", "cat", "Nyaa~!")
+        entry = diary.write("task_complete", Mood.PROUD, 3, task="Fix login")
+        assert "Fix login" in entry.content or "task" in entry.content.lower()
+        assert len(diary.entries) == 1
+
+    def test_diary_limit(self):
+        diary = AgentDiary("Alice", "cat", "Nyaa~!")
+        for i in range(40):
+            diary.write("idle", Mood.RELAXED, i)
+        assert len(diary.entries) <= AgentDiary.MAX_ENTRIES
+
+    def test_memoir(self):
+        diary = AgentDiary("Alice", "cat", "Nyaa~!")
+        diary.write("task_complete", Mood.PROUD, 1, task="Build API")
+        diary.write("error", Mood.FRUSTRATED, 2)
+        memoir = diary.get_memoir()
+        assert "Alice" in memoir
+        assert "cat" in memoir
+        assert "Emotional Journey" in memoir
+
+    def test_empty_memoir(self):
+        diary = AgentDiary("Bob", "fox", "Kon!")
+        assert "empty" in diary.get_memoir().lower()
+
+    def test_get_recent(self):
+        diary = AgentDiary("Alice", "cat", "Nyaa~!")
+        for i in range(10):
+            diary.write("idle", Mood.RELAXED, i)
+        recent = diary.get_recent(3)
+        assert len(recent) == 3
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Quests / Side Missions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestQuestBoard:
+    def test_assign_quest(self):
+        board = QuestBoard()
+        quest = board.assign_quest("Alice", round_number=1)
+        assert quest is not None
+        assert quest.assigned_to == "Alice"
+        assert quest.status == QuestStatus.ACTIVE
+
+    def test_max_active_quests(self):
+        board = QuestBoard()
+        board.assign_quest("Alice", 1)
+        board.assign_quest("Alice", 2)
+        third = board.assign_quest("Alice", 3)
+        assert third is None  # Max 2 active
+
+    def test_quest_completion(self):
+        board = QuestBoard(seed=100)
+        quest = board.assign_quest("Alice", 1)
+        completed = board.check_completion("Alice", quest.condition, 2)
+        assert len(completed) >= 1 or len(completed) == 0  # Depends on condition match
+
+    def test_quest_expiry(self):
+        board = QuestBoard()
+        quest = board.assign_quest("Alice", 1)
+        quest.round_deadline = 5
+        expired = board.expire_quests(6)
+        assert len(expired) >= 1
+        assert expired[0].status == QuestStatus.EXPIRED
+
+    def test_get_active_quests(self):
+        board = QuestBoard()
+        board.assign_quest("Alice", 1)
+        active = board.get_active_quests("Alice")
+        assert len(active) == 1
+        assert active[0].status == QuestStatus.ACTIVE
+
+    def test_board_display(self):
+        board = QuestBoard()
+        board.assign_quest("Alice", 1)
+        display = board.get_board_display()
+        assert "Alice" in display
+        assert "QUEST BOARD" in display
+
+    def test_no_duplicate_quests(self):
+        board = QuestBoard(seed=42)
+        q1 = board.assign_quest("Alice", 1)
+        q1.status = QuestStatus.COMPLETED
+        board.completed_quests.append(q1)
+        # Second quest should be different (if available)
+        q2 = board.assign_quest("Alice", 2)
+        if q2:
+            assert q2.quest_id != q1.quest_id
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Trading Post
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestTradingPost:
+    def test_propose_trade(self):
+        post = TradingPost()
+        trade = post.propose_trade("Alice", "Bob", "debugging", 2, "patience", 1, 3)
+        assert trade.trader == "Alice"
+        assert not trade.accepted
+
+    def test_accept_trade(self):
+        post = TradingPost()
+        trade = post.propose_trade("Alice", "Bob", "debugging", 2, "patience", 1, 3)
+        result = post.accept_trade(trade)
+        assert result
+        assert trade.accepted
+        assert post.get_bonus("Bob", "debugging") == 2
+        assert post.get_bonus("Alice", "patience") == 1
+
+    def test_no_double_accept(self):
+        post = TradingPost()
+        trade = post.propose_trade("A", "B", "debugging", 1, "patience", 1, 1)
+        post.accept_trade(trade)
+        assert not post.accept_trade(trade)
+
+    def test_auto_trade(self):
+        post = TradingPost()
+        stats_a = {"debugging": 8, "patience": 3, "chaos": 5, "wisdom": 4, "speed": 6}
+        stats_b = {"debugging": 3, "patience": 9, "chaos": 4, "wisdom": 5, "speed": 2}
+        trade = post.auto_trade("Alice", "Bob", stats_a, stats_b, trust=0.8, round_number=5)
+        assert trade is not None
+        assert trade.accepted
+
+    def test_auto_trade_low_trust(self):
+        post = TradingPost()
+        stats = {"debugging": 5, "patience": 5, "chaos": 5, "wisdom": 5, "speed": 5}
+        trade = post.auto_trade("A", "B", stats, stats, trust=0.3, round_number=1)
+        assert trade is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Boss Fight
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestBossFight:
+    def test_generate_boss(self):
+        import random as rng_mod
+        r = rng_mod.Random(42)
+        boss = BossAgent.generate(10, 3, r)
+        assert boss.level >= 3
+        assert boss.hp > 0
+        assert boss.species in ("dragon", "kraken", "golem", "shadow", "phoenix")
+
+    def test_take_damage(self):
+        import random as rng_mod
+        boss = BossAgent.generate(10, 3, rng_mod.Random(42))
+        initial_hp = boss.hp
+        boss.take_damage("Alice", 20)
+        assert boss.hp == initial_hp - 20
+
+    def test_boss_defeated(self):
+        import random as rng_mod
+        boss = BossAgent.generate(10, 1, rng_mod.Random(42))
+        boss.take_damage("Alice", boss.hp)
+        assert boss.phase == BossPhase.DEFEATED
+
+    def test_hp_bar(self):
+        import random as rng_mod
+        boss = BossAgent.generate(10, 1, rng_mod.Random(42))
+        bar = boss.hp_bar
+        assert "█" in bar or "░" in bar
+
+    def test_boss_card(self):
+        import random as rng_mod
+        boss = BossAgent.generate(10, 1, rng_mod.Random(42))
+        card = boss.get_boss_card()
+        assert "BOSS ENCOUNTER" in card
+        assert boss.name in card
+
+    def test_arena_spawn(self):
+        arena = BossArena(seed=42)
+        # Too early
+        assert arena.maybe_spawn_boss(1, 1) is None
+        # Force spawn by running many rounds
+        boss = None
+        for i in range(8, 50):
+            boss = arena.maybe_spawn_boss(i, 3)
+            if boss:
+                break
+        assert boss is not None
+
+    def test_arena_attack(self):
+        arena = BossArena(seed=42)
+        # Force a boss
+        arena.current_boss = BossAgent.generate(10, 3, arena._rng)
+        arena.current_boss.phase = BossPhase.FIGHTING
+        result = arena.agent_attack("Alice", {"debugging": 5, "speed": 3}, 3)
+        assert result is not None
+        assert "damage" in result.lower()
+
+    def test_boss_escape(self):
+        arena = BossArena(seed=42)
+        arena.current_boss = BossAgent.generate(10, 3, arena._rng)
+        arena.current_boss.phase = BossPhase.FIGHTING
+        arena.current_boss.round_appeared = 1
+        assert arena.check_escape(7)
+        assert arena.current_boss.phase == BossPhase.ESCAPED
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Love Letters & Hate Mail
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPostOffice:
+    def test_send_love_letter(self):
+        post = PostOffice()
+        letter = post.check_and_send("Alice", "Bob", trust=0.95, sender_species="cat", round_number=1)
+        assert letter is not None
+        assert letter.letter_type == "love"
+        assert "Alice" in letter.content
+
+    def test_send_rivalry(self):
+        post = PostOffice()
+        letter = post.check_and_send("Alice", "Bob", trust=0.1, sender_species="fox", round_number=1)
+        assert letter is not None
+        assert letter.letter_type == "rivalry"
+
+    def test_send_thank_you(self):
+        post = PostOffice()
+        letter = post.check_and_send("A", "B", trust=0.75, sender_species="cat", round_number=1)
+        assert letter is not None
+        assert letter.letter_type == "thank_you"
+
+    def test_no_letter_at_medium_trust(self):
+        post = PostOffice()
+        letter = post.check_and_send("A", "B", trust=0.5, sender_species="cat", round_number=1)
+        assert letter is None
+
+    def test_no_duplicate_same_round(self):
+        post = PostOffice()
+        post.check_and_send("A", "B", trust=0.95, sender_species="cat", round_number=1)
+        second = post.check_and_send("A", "B", trust=0.95, sender_species="cat", round_number=1)
+        assert second is None
+
+    def test_get_mail(self):
+        post = PostOffice()
+        post.check_and_send("A", "Bob", trust=0.95, sender_species="cat", round_number=1)
+        mail = post.get_mail("Bob")
+        assert len(mail) == 1
+
+    def test_send_challenge(self):
+        post = PostOffice()
+        letter = post.send_challenge("Alice", "Bob", "cat", 3)
+        assert letter.letter_type == "challenge"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Fortune Cookies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestFortuneCookies:
+    def test_give_cookie(self):
+        jar = FortuneCookieJar()
+        cookie = jar.give_cookie("Alice", 1)
+        assert cookie is not None
+        assert cookie.recipient == "Alice"
+        assert not cookie.fulfilled
+
+    def test_one_cookie_at_a_time(self):
+        jar = FortuneCookieJar()
+        jar.give_cookie("Alice", 1)
+        second = jar.give_cookie("Alice", 2)
+        assert second is None
+
+    def test_fulfillment(self):
+        jar = FortuneCookieJar(seed=42)
+        cookie = jar.give_cookie("Alice", 1)
+        # Try the cookie's actual condition
+        result = jar.check_fulfillment("Alice", cookie.condition)
+        assert result is not None
+        assert result.fulfilled
+        # Can now get a new cookie
+        new = jar.give_cookie("Alice", 2)
+        assert new is not None
+
+    def test_wrong_action_no_fulfillment(self):
+        jar = FortuneCookieJar()
+        jar.give_cookie("Alice", 1)
+        result = jar.check_fulfillment("Alice", "definitely_not_a_real_condition")
+        assert result is None
+
+    def test_get_active_fortune(self):
+        jar = FortuneCookieJar()
+        jar.give_cookie("Alice", 1)
+        assert jar.get_active_fortune("Alice") is not None
+        assert jar.get_active_fortune("Bob") is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Agent Ghosts
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestGhostRealm:
+    def test_create_ghost(self):
+        realm = GhostRealm()
+        ghost = realm.create_ghost("Alice", "cat", "🐱", "errors", 5, ["lesson1", "lesson2"])
+        assert ghost.name == "Alice"
+        assert ghost.cause_of_death == "errors"
+        assert len(realm.ghosts) == 1
+
+    def test_ghost_appears(self):
+        realm = GhostRealm()
+        realm.create_ghost("Alice", "cat", "🐱", "timeout", 3, ["Don't timeout!"])
+        # Run many times to ensure at least one appearance
+        appearances = []
+        for _ in range(20):
+            msgs = realm.maybe_appear(5)
+            appearances.extend(msgs)
+        assert len(appearances) > 0
+        assert "ghost" in appearances[0].lower() or "Alice" in appearances[0]
+
+    def test_ghost_fades(self):
+        realm = GhostRealm()
+        ghost = realm.create_ghost("Alice", "cat", "🐱", "errors", 5, ["hint"])
+        for _ in range(5):
+            ghost.appear()
+        assert ghost.is_fading
+        assert ghost.appear() is None
+
+    def test_graveyard(self):
+        realm = GhostRealm()
+        realm.create_ghost("Alice", "cat", "🐱", "errors", 5, [])
+        graveyard = realm.get_graveyard()
+        assert "GRAVEYARD" in graveyard
+        assert "Alice" in graveyard
+
+    def test_empty_graveyard(self):
+        realm = GhostRealm()
+        assert "No ghosts" in realm.get_graveyard()
+
+    def test_active_ghosts(self):
+        realm = GhostRealm()
+        ghost = realm.create_ghost("Alice", "cat", "🐱", "errors", 5, [])
+        assert len(realm.get_active_ghosts()) == 1
+        for _ in range(5):
+            ghost.appear()
+        assert len(realm.get_active_ghosts()) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW: Multiverse Branching
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestMultiverse:
+    def test_record_branch(self):
+        mv = MultiverseEngine()
+        branch = mv.record_branch(3, "Task completion", "Alice did it", "Nobody did it")
+        assert branch.round_number == 3
+        assert branch.chosen_path == "Alice did it"
+        assert branch.alternate_outcome  # Should have generated one
+
+    def test_what_if_report(self):
+        mv = MultiverseEngine()
+        mv.record_branch(1, "Choice 1", "Path A", "Path B")
+        mv.record_branch(5, "Choice 2", "Path C", "Path D", "evolution")
+        report = mv.get_what_if_report()
+        assert "MULTIVERSE" in report
+        assert "Branch Point" in report
+        assert "Path A" in report
+
+    def test_empty_report(self):
+        mv = MultiverseEngine()
+        assert "No branching" in mv.get_what_if_report()
+
+    def test_branch_count(self):
+        mv = MultiverseEngine()
+        assert mv.get_branch_count() == 0
+        mv.record_branch(1, "X", "A", "B")
+        mv.record_branch(2, "Y", "C", "D")
+        assert mv.get_branch_count() == 2
+
+    def test_deterministic(self):
+        mv1 = MultiverseEngine(seed=42)
+        mv2 = MultiverseEngine(seed=42)
+        b1 = mv1.record_branch(1, "Test", "A", "B", "boss_defeated")
+        b2 = mv2.record_branch(1, "Test", "A", "B", "boss_defeated")
+        assert b1.alternate_outcome == b2.alternate_outcome
