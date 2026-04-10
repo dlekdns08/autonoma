@@ -22,14 +22,23 @@ from autonoma.models import (
     TaskStatus,
 )
 from autonoma.world import (
+    BossArena,
     Campfire,
     DebateArena,
+    DreamEngine,
+    FortuneCookieJar,
+    GhostRealm,
     GossipNetwork,
     GuildRegistry,
     Leaderboard,
     Mood,
+    MultiverseEngine,
     NarrativeEngine,
+    PostOffice,
+    QuestBoard,
     RelationshipGraph,
+    TradingPost,
+    WorldClock,
     WorldEventQueue,
     WorldEventType,
     check_achievements,
@@ -70,6 +79,15 @@ class AgentSwarm:
         self.debate_arena = DebateArena()
         self.leaderboard = Leaderboard()
         self.narrative = NarrativeEngine()
+        self.world_clock = WorldClock()
+        self.dreams = DreamEngine()
+        self.quest_board = QuestBoard()
+        self.trading_post = TradingPost()
+        self.boss_arena = BossArena()
+        self.post_office = PostOffice()
+        self.fortune_jar = FortuneCookieJar()
+        self.ghost_realm = GhostRealm()
+        self.multiverse = MultiverseEngine()
 
         self.director.position = Position(x=35, y=1)
         self.agents["Director"] = self.director
@@ -111,13 +129,41 @@ class AgentSwarm:
             for agent in self.agents.values():
                 agent._round_number = self._round
 
-            await bus.emit("swarm.round", round=self._round, max_rounds=max_rounds)
+            # ── Tick World Clock ──
+            clock_changes = self.world_clock.tick(self._round)
+            if clock_changes:
+                await bus.emit("world.clock", **clock_changes, sky=self.world_clock.sky_line)
+
+            # Apply weather mood modifier
+            mood_mod = self.world_clock.get_mood_modifier()
+            if mood_mod:
+                for agent in self.agents.values():
+                    if random.random() < 0.3:  # 30% chance weather affects mood
+                        agent.mood = mood_mod
+
+            # Build relationship data for frontend
+            relationships = []
+            for (a, b), val in self.relationships.trust.items():
+                relationships.append({"from": a, "to": b, "trust": val})
+
+            await bus.emit(
+                "swarm.round", round=self._round, max_rounds=max_rounds,
+                sky=self.world_clock.sky_line,
+                relationships=relationships,
+            )
+
+            # ── Fortune Cookies (dawn) ──
+            if self.world_clock.time_of_day.value == "dawn":
+                await self._distribute_fortune_cookies()
 
             # ── World Event Check ──
             agent_names = [n for n in self.agents if n != "Director"]
             world_event = self.world_events.maybe_generate(self._round, agent_names)
             if world_event:
                 await self._apply_world_event(world_event)
+
+            # ── Boss Fight Check ──
+            await self._check_boss_fight(agent_names)
 
             # Director goes first
             try:
@@ -148,20 +194,36 @@ class AgentSwarm:
                 for agent, result in zip(other_agents, results):
                     if isinstance(result, Exception):
                         logger.warning(f"[Swarm] Agent '{agent.name}' error: {result}")
+                        agent.stats.errors += 1
                         await bus.emit(
                             "agent.error",
                             agent=agent.name,
                             error=str(result),
                         )
+                        # Ghost creation on 3+ errors
+                        if agent.stats.errors >= 3 and agent.name not in [g.name for g in self.ghost_realm.ghosts]:
+                            self._create_ghost(agent, "errors")
                     elif isinstance(result, dict):
                         # Track relationships from actions
                         self._track_relationships(agent, result)
+                        # Check fortune cookie fulfillment
+                        action = result.get("action", "")
+                        self._check_fortune(agent.name, action)
+                        # Check quest completion
+                        self._check_quests(agent, result)
 
             # Route messages (only new ones)
             self._route_messages(project)
 
             # ── Gossip spread between agents ──
             self._spread_gossip()
+
+            # ── Love Letters / Hate Mail ──
+            self._check_letters()
+
+            # ── Trading Post (every 4 rounds) ──
+            if self._round % 4 == 0 and self._round > 0:
+                self._auto_trades()
 
             # ── Guild formation check (every 5 rounds) ──
             if self._round % 5 == 0 and self._round > 0:
@@ -170,6 +232,22 @@ class AgentSwarm:
             # ── Campfire ritual (every 7 rounds) ──
             if self._round % 7 == 0 and self._round > 0:
                 await self._run_campfire()
+
+            # ── Dreams at night ──
+            if self.world_clock.is_night:
+                await self._generate_dreams()
+
+            # ── Ghost appearances ──
+            await self._ghost_appearances()
+
+            # ── Quest expiry check ──
+            expired = self.quest_board.expire_quests(self._round)
+            for q in expired:
+                await bus.emit("quest.expired", agent=q.assigned_to, quest=q.title)
+
+            # ── Assign new quests ──
+            if self._round % 3 == 0:
+                self._assign_quests()
 
             # ── Update leaderboard & check achievements ──
             self._update_world_stats()
@@ -195,9 +273,11 @@ class AgentSwarm:
         # Collect total token usage
         total_tokens = sum(a.total_tokens for a in self.agents.values())
 
-        # Final leaderboard + epilogue
+        # Final leaderboard + epilogue + multiverse report
         epilogue = self.narrative.render_epilogue()
         leaderboard_text = self.leaderboard.render()
+        multiverse_report = self.multiverse.get_what_if_report()
+        graveyard = self.ghost_realm.get_graveyard()
 
         await bus.emit(
             "swarm.finished",
@@ -207,6 +287,8 @@ class AgentSwarm:
             total_tokens=total_tokens,
             epilogue=epilogue,
             leaderboard=leaderboard_text,
+            multiverse=multiverse_report,
+            graveyard=graveyard,
         )
         return project
 
@@ -589,4 +671,232 @@ class AgentSwarm:
                 self.leaderboard.update(
                     name, agent.stats, agent.bones,
                     self.relationships, self.gossip, self.debate_arena,
+                )
+
+    # ── Fortune Cookies ───────────────────────────────────────────────
+
+    async def _distribute_fortune_cookies(self) -> None:
+        """Give fortune cookies at dawn."""
+        for name in list(self.agents.keys()):
+            if name == "Director":
+                continue
+            cookie = self.fortune_jar.give_cookie(name, self._round)
+            if cookie:
+                await bus.emit("fortune.given", agent=name, fortune=cookie.fortune)
+                self.agents[name].memory.remember(
+                    f"🥠 Fortune: {cookie.fortune}", "observation", self._round,
+                )
+
+    def _check_fortune(self, agent_name: str, action: str) -> None:
+        """Check if an action fulfills a fortune cookie."""
+        cookie = self.fortune_jar.check_fulfillment(agent_name, action)
+        if cookie:
+            agent = self.agents.get(agent_name)
+            if agent:
+                agent.stats.add_xp(cookie.bonus_xp)
+                agent.mood = Mood.EXCITED
+                agent.memory.remember(
+                    f"Fortune fulfilled! +{cookie.bonus_xp}XP!", "success", self._round,
+                )
+                self.quest_board.check_completion(agent_name, "fortune_fulfilled", self._round)
+                logger.info(f"[Fortune] {agent_name} fulfilled: {cookie.fortune}")
+
+    # ── Dreams ────────────────────────────────────────────────────────
+
+    async def _generate_dreams(self) -> None:
+        """Generate dreams for agents during the night phase."""
+        for name, agent in self.agents.items():
+            if name == "Director":
+                continue
+            if random.random() > 0.5:  # 50% chance of dreaming
+                continue
+
+            friends = self.relationships.get_friends(name, threshold=0.5)
+            species = agent.bones.species if agent.bones else "agent"
+
+            dream = self.dreams.generate_dream(
+                agent_name=name,
+                species=species,
+                memories=agent.memory.private,
+                mood=agent.mood,
+                relationships=friends,
+                round_number=self._round,
+            )
+
+            # Apply dream effects
+            if dream.bonus_xp:
+                xp = int(dream.bonus_xp * self.world_clock.get_xp_modifier())
+                agent.stats.add_xp(xp)
+            if dream.bonus_mood:
+                agent.mood = dream.bonus_mood
+
+            agent.memory.remember(f"💤 Dream: {dream.content[:60]}", "observation", self._round)
+
+            # Diary entry
+            if hasattr(agent, 'diary') and agent.diary:
+                agent.diary.write(
+                    "dream_reflection", agent.mood, self._round,
+                    weather=self.world_clock.weather.value,
+                    time_of_day="night",
+                    dream=dream.content[:40],
+                )
+
+            # Check quest: prophetic dream
+            if dream.dream_type == "prophetic":
+                self.quest_board.check_completion(name, "prophetic_dream", self._round)
+
+            await bus.emit(
+                "agent.dream", agent=name, dream=dream.content[:60],
+                dream_type=dream.dream_type,
+            )
+
+    # ── Boss Fight ────────────────────────────────────────────────────
+
+    async def _check_boss_fight(self, agent_names: list[str]) -> None:
+        """Check for boss spawning and handle combat."""
+        # Check if existing boss escaped
+        if self.boss_arena.check_escape(self._round):
+            boss = self.boss_arena.current_boss
+            if boss:
+                await bus.emit("boss.escaped", name=boss.name)
+                self.multiverse.record_branch(
+                    self._round, f"Boss {boss.name} escaped!",
+                    "Boss got away", "We defeated the boss", "boss_defeated",
+                )
+
+        # Try spawning a new boss
+        if agent_names:
+            avg_level = sum(
+                self.agents[n].stats.level for n in agent_names if n in self.agents
+            ) // max(1, len(agent_names))
+
+            boss = self.boss_arena.maybe_spawn_boss(self._round, avg_level)
+            if boss:
+                await bus.emit(
+                    "boss.appeared", name=boss.name, species=boss.species,
+                    level=boss.level, hp=boss.max_hp,
+                )
+                self.narrative._add(
+                    __import__("autonoma.world", fromlist=["NarrativeEvent"]).NarrativeEvent.WORLD_EVENT,
+                    f"☠ BOSS APPEARED: {boss.name} the {boss.species}! ☠",
+                    self._round, [], dramatic_weight=4,
+                )
+
+        # Agents attack current boss
+        if self.boss_arena.current_boss and self.boss_arena.current_boss.phase.value == "fighting":
+            for name in agent_names:
+                agent = self.agents.get(name)
+                if agent and agent.bones:
+                    result = self.boss_arena.agent_attack(
+                        name, agent.bones.stats, agent.stats.level,
+                    )
+                    if result:
+                        await bus.emit("boss.damage", agent=name, message=result)
+
+            # Check if boss was defeated
+            if self.boss_arena.current_boss.phase.value == "defeated":
+                boss = self.boss_arena.current_boss
+                xp_reward = boss.drops.get("xp", 50)
+                for name in agent_names:
+                    agent = self.agents.get(name)
+                    if agent:
+                        agent.stats.add_xp(xp_reward)
+                        agent.mood = Mood.EXCITED
+                await bus.emit("boss.defeated", name=boss.name, xp_reward=xp_reward)
+                self.multiverse.record_branch(
+                    self._round, f"Defeated {boss.name}!",
+                    "Team victory!", "Boss escaped", "boss_defeated",
+                )
+                # Check quest
+                if self.world_clock.weather.value == "stormy":
+                    for name in agent_names:
+                        self.quest_board.check_completion(name, "task_in_storm", self._round)
+
+    # ── Love Letters & Hate Mail ──────────────────────────────────────
+
+    def _check_letters(self) -> None:
+        """Auto-send letters based on relationship changes."""
+        for (frm, to), rel in self.relationships._graph.items():
+            if rel.familiarity < 2:
+                continue
+            frm_agent = self.agents.get(frm)
+            if not frm_agent or not frm_agent.bones:
+                continue
+            letter = self.post_office.check_and_send(
+                frm, to, rel.trust, frm_agent.bones.species, self._round,
+            )
+            if letter:
+                logger.info(f"[Letter] {letter}")
+
+    # ── Trading Post ──────────────────────────────────────────────────
+
+    def _auto_trades(self) -> None:
+        """Auto-propose trades between high-trust agents."""
+        agent_names = [n for n in self.agents if n != "Director"]
+        for name in agent_names:
+            agent = self.agents[name]
+            if not agent.bones:
+                continue
+            friends = self.relationships.get_friends(name, threshold=0.6)
+            for friend in friends[:1]:
+                friend_agent = self.agents.get(friend)
+                if not friend_agent or not friend_agent.bones:
+                    continue
+                trade = self.trading_post.auto_trade(
+                    name, friend, agent.bones.stats, friend_agent.bones.stats,
+                    self.relationships.get(name, friend).trust, self._round,
+                )
+                if trade:
+                    logger.info(f"[Trade] {trade}")
+
+    # ── Ghost System ──────────────────────────────────────────────────
+
+    def _create_ghost(self, agent: AutonomousAgent, cause: str) -> None:
+        """Turn a fallen agent into a ghost."""
+        species = agent.bones.species if agent.bones else "unknown"
+        emoji = agent.bones.species_emoji if agent.bones else "👻"
+        memories = [m.text for m in agent.memory.private[-5:]]
+        self.ghost_realm.create_ghost(
+            agent.name, species, emoji, cause, self._round, memories,
+        )
+        logger.info(f"[Ghost] {agent.name} became a ghost ({cause})")
+
+    async def _ghost_appearances(self) -> None:
+        """Let ghosts appear and share wisdom."""
+        messages = self.ghost_realm.maybe_appear(self._round)
+        for msg in messages:
+            await bus.emit("ghost.appears", message=msg)
+
+    # ── Quest System ──────────────────────────────────────────────────
+
+    def _assign_quests(self) -> None:
+        """Assign quests to agents who need them."""
+        for name in self.agents:
+            if name == "Director":
+                continue
+            quest = self.quest_board.assign_quest(name, self._round)
+            if quest:
+                logger.info(f"[Quest] {name} received: {quest.title}")
+
+    def _check_quests(self, agent: AutonomousAgent, result: dict) -> None:
+        """Check if agent action completes a quest."""
+        action = result.get("action", "")
+        condition_map = {
+            "complete_task": "task_complete",
+            "create_file": "create_file",
+            "send_message": "send_message",
+        }
+        condition = condition_map.get(action)
+        if condition:
+            completed = self.quest_board.check_completion(agent.name, condition, self._round)
+            for quest in completed:
+                agent.stats.add_xp(quest.xp_reward)
+                agent.mood = Mood.EXCITED
+                logger.info(f"[Quest Complete] {agent.name}: {quest.title} (+{quest.xp_reward}XP)")
+                # Record multiverse branch
+                self.multiverse.record_branch(
+                    self._round,
+                    f"{agent.name} completed quest '{quest.title}'",
+                    "Quest completed!", "Quest was skipped",
+                    "task_complete",
                 )
