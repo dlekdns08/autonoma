@@ -1,0 +1,13 @@
+# Production override — uses pre-built images from GHCR
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  api:
+    build: !override
+    image: ghcr.io/${GITHUB_REPOSITORY:-autonoma}/api:${IMAGE_TAG:-latest}
+
+  web:
+    build: !override
+    image: ghcr.io/${GITHUB_REPOSITORY:-autonoma}/web:${IMAGE_TAG:-latest}
+    environment:
+      - NEXT_PUBLIC_WS_URL=${WS_URL:-ws://localhost:8000/ws}
