@@ -67,6 +67,7 @@ class AnimatedRenderer:
         self._total_tokens = 0
         self._handlers_registered = False
         self._particles: list[dict[str, Any]] = []  # floating particles for celebration
+        self._sky_line: str = ""
 
     def attach(self, swarm: AgentSwarm, project: ProjectState) -> None:
         self._swarm = swarm
@@ -92,6 +93,13 @@ class AnimatedRenderer:
             bus.off("world.event", self._on_world_event)
             bus.off("guild.formed", self._on_guild_formed)
             bus.off("campfire.complete", self._on_campfire)
+            bus.off("world.clock", self._on_clock)
+            bus.off("fortune.given", self._on_fortune)
+            bus.off("agent.dream", self._on_dream)
+            bus.off("boss.appeared", self._on_boss_appeared)
+            bus.off("boss.defeated", self._on_boss_defeated)
+            bus.off("boss.damage", self._on_boss_damage)
+            bus.off("ghost.appears", self._on_ghost)
             self._handlers_registered = False
 
     def _register_handlers(self) -> None:
@@ -109,6 +117,13 @@ class AnimatedRenderer:
         bus.on("world.event", self._on_world_event)
         bus.on("guild.formed", self._on_guild_formed)
         bus.on("campfire.complete", self._on_campfire)
+        bus.on("world.clock", self._on_clock)
+        bus.on("fortune.given", self._on_fortune)
+        bus.on("agent.dream", self._on_dream)
+        bus.on("boss.appeared", self._on_boss_appeared)
+        bus.on("boss.defeated", self._on_boss_defeated)
+        bus.on("boss.damage", self._on_boss_damage)
+        bus.on("ghost.appears", self._on_ghost)
 
     def render(self) -> Layout:
         """Render the complete kawaii animated scene."""
@@ -161,6 +176,8 @@ class AnimatedRenderer:
         if self._round > 0:
             sparkle = SPARKLE_FRAMES[self._frame % len(SPARKLE_FRAMES)]
             title.append(f"| {sparkle} Round {self._round}/{self._max_rounds} {sparkle} ", style="yellow")
+        if self._sky_line:
+            title.append(f"| {self._sky_line} ", style="dim cyan")
         return Panel(Align.center(title), style="magenta", border_style="bright_magenta")
 
     def _render_stage(self) -> Panel:
@@ -425,10 +442,12 @@ class AnimatedRenderer:
     async def _on_task_completed(self, agent: str = "", title: str = "", **_: Any) -> None:
         self._log(f"[bold green]★ {agent}[/] done: {title} {MOOD_EMOTES['done']}")
 
-    async def _on_round(self, round: int = 0, max_rounds: int = 0, **_: Any) -> None:
+    async def _on_round(self, round: int = 0, max_rounds: int = 0, sky: str = "", **_: Any) -> None:
         self._round = round
         self._max_rounds = max_rounds
         self._frame = 0
+        if sky:
+            self._sky_line = sky
 
     async def _on_plan(self, task_count: int = 0, agent_count: int = 0, analysis: str = "", **_: Any) -> None:
         self._log(f"[bold yellow]♥ Director:[/] Plan ready - {task_count} tasks, {agent_count} agents {MOOD_EMOTES['proud']}")
@@ -446,15 +465,22 @@ class AnimatedRenderer:
             })
 
     async def _on_swarm_finished(
-        self, total_tokens: int = 0, epilogue: str = "", leaderboard: str = "", **_: Any,
+        self, total_tokens: int = 0, epilogue: str = "", leaderboard: str = "",
+        multiverse: str = "", graveyard: str = "", **_: Any,
     ) -> None:
         self._total_tokens = total_tokens
         if leaderboard:
             for line in leaderboard.split("\n"):
                 self._log(f"[bold yellow]{line}[/]")
+        if graveyard and "No ghosts" not in graveyard:
+            for line in graveyard.split("\n")[-4:]:
+                self._log(f"[dim]{line}[/]")
         if epilogue:
             for line in epilogue.split("\n")[-5:]:
                 self._log(f"[bold magenta]{line}[/]")
+        if multiverse and "No branching" not in multiverse:
+            for line in multiverse.split("\n")[-6:]:
+                self._log(f"[bold cyan]{line}[/]")
 
     async def _on_level_up(self, agent: str = "", level: int = 0, species: str = "", **_: Any) -> None:
         self._log(f"[bold yellow]★★★ {agent} LEVELED UP to Lv{level}! ★★★ {MOOD_EMOTES['excited']}[/]")
@@ -482,6 +508,42 @@ class AnimatedRenderer:
 
     async def _on_campfire(self, stories: int = 0, **_: Any) -> None:
         self._log(f"[bold yellow]🔥 Campfire! {stories} stories shared under the stars~ 🔥[/]")
+
+    async def _on_clock(self, sky: str = "", **_: Any) -> None:
+        if sky:
+            self._sky_line = sky
+
+    async def _on_fortune(self, agent: str = "", fortune: str = "", **_: Any) -> None:
+        self._log(f"[bold yellow]🥠 {agent} opens a fortune cookie: [italic]{fortune}[/][/]")
+
+    async def _on_dream(self, agent: str = "", dream: str = "", dream_type: str = "", **_: Any) -> None:
+        icons = {"prophetic": "🔮", "nightmare": "👻", "peaceful": "🌙", "surreal": "🌀"}
+        icon = icons.get(dream_type, "💤")
+        self._log(f"[dim]{icon} {agent} dreams: {dream}[/]")
+
+    async def _on_boss_appeared(self, name: str = "", species: str = "", level: int = 0, hp: int = 0, **_: Any) -> None:
+        self._log(f"[bold red]☠☠☠ BOSS APPEARED: {name} (Lv{level}, {hp}HP) ☠☠☠[/]")
+        for _ in range(8):
+            self._particles.append({
+                "x": random.randint(5, 75),
+                "y": random.randint(3, 15),
+                "char": random.choice(["☠", "⚔", "✖", "!"]),
+            })
+
+    async def _on_boss_defeated(self, name: str = "", xp_reward: int = 0, **_: Any) -> None:
+        self._log(f"[bold green]★★★ BOSS DEFEATED: {name}! +{xp_reward}XP to all! ★★★[/]")
+        for _ in range(15):
+            self._particles.append({
+                "x": random.randint(5, 75),
+                "y": random.randint(3, 15),
+                "char": random.choice(["★", "♥", "✦", "♪", "☆", "♡"]),
+            })
+
+    async def _on_boss_damage(self, agent: str = "", message: str = "", **_: Any) -> None:
+        self._log(f"[bold red]⚔ {message}[/]")
+
+    async def _on_ghost(self, message: str = "", **_: Any) -> None:
+        self._log(f"[dim italic]{message}[/]")
 
     def _log(self, msg: str) -> None:
         self._event_log.append(msg)
