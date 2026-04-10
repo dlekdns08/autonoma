@@ -5,7 +5,13 @@ dist/
 build/
 .venv/
 .env
+.env.local
 *.db
 .DS_Store
 output/
 .autonoma/
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
