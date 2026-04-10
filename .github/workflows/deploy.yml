@@ -2,131 +2,57 @@ name: Deploy
 
 on:
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Deployment target"
-        required: true
-        default: "staging"
-        type: choice
-        options:
-          - staging
-          - production
-
-  release:
-    types: [published]
+  push:
+    branches: [main]
 
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  group: deploy
   cancel-in-progress: false
 
-env:
-  REGISTRY: ghcr.io
-  API_IMAGE: ghcr.io/${{ github.repository }}/api
-  WEB_IMAGE: ghcr.io/${{ github.repository }}/web
-
 jobs:
-  # ── Build & Push Docker Images ────────────────────────────────────────
-  build:
-    name: Build Images
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.API_IMAGE }}
-          tags: |
-            type=sha,prefix=
-            type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build & push API image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.api
-          push: true
-          tags: |
-            ${{ env.API_IMAGE }}:${{ github.sha }}
-            ${{ env.API_IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push Web image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./web
-          file: web/Dockerfile
-          push: true
-          tags: |
-            ${{ env.WEB_IMAGE }}:${{ github.sha }}
-            ${{ env.WEB_IMAGE }}:latest
-          build-args: |
-            NEXT_PUBLIC_WS_URL=wss://autonoma.koala.ai.kr/api/ws
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ── Deploy via SSH ────────────────────────────────────────────────────
   deploy:
-    name: Deploy to ${{ github.event.inputs.environment || 'production' }}
-    runs-on: ubuntu-latest
-    needs: build
-    environment: ${{ github.event.inputs.environment || 'production' }}
+    name: Build & Deploy
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy compose files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: "docker-compose.yml,docker-compose.prod.yml,nginx/nginx.conf"
-          target: ~/autonoma
+      - name: Create .env file
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" > .env
 
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd ~/autonoma
+      - name: Build and start containers
+        run: |
+          docker compose down --remove-orphans || true
+          docker compose up -d --build
 
-            # Login to GHCR
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Wait for health checks
+        run: |
+          echo "Waiting for API health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3479/api/health > /dev/null 2>&1; then
+              echo "API is healthy!"
+              break
+            fi
+            sleep 2
+          done
 
-            # Set env vars
-            export GITHUB_REPOSITORY=${{ github.repository }}
-            export IMAGE_TAG=${{ github.sha }}
-            export ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            export WS_URL=${{ secrets.WS_URL }}
+          echo "Waiting for Web..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3478/ > /dev/null 2>&1; then
+              echo "Web is healthy!"
+              break
+            fi
+            sleep 2
+          done
 
-            # Pull & restart
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+      - name: Cleanup old images
+        run: docker image prune -f
 
-            # Cleanup old images
-            docker image prune -f
-
-            echo "Deployed ${{ github.sha }} successfully"
+      - name: Deploy summary
+        run: |
+          echo "### Deployed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- API: http://localhost:3479" >> $GITHUB_STEP_SUMMARY
+          echo "- Web: http://localhost:3478" >> $GITHUB_STEP_SUMMARY
+          echo "- URL: https://autonoma.koala.ai.kr" >> $GITHUB_STEP_SUMMARY
