@@ -1407,3 +1407,1239 @@ class WorldEventQueue:
 
     def resolve(self, event: WorldEvent) -> None:
         event.resolved = True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. Day/Night Cycle & Seasonal Weather
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TimeOfDay(str, Enum):
+    DAWN = "dawn"
+    MORNING = "morning"
+    AFTERNOON = "afternoon"
+    EVENING = "evening"
+    NIGHT = "night"
+
+
+class Season(str, Enum):
+    SPRING = "spring"
+    SUMMER = "summer"
+    AUTUMN = "autumn"
+    WINTER = "winter"
+
+
+class Weather(str, Enum):
+    SUNNY = "sunny"
+    CLOUDY = "cloudy"
+    RAINY = "rainy"
+    STORMY = "stormy"
+    SNOWY = "snowy"
+    WINDY = "windy"
+    STARRY = "starry"
+    FOGGY = "foggy"
+
+
+TIME_EMOJIS = {
+    TimeOfDay.DAWN: "🌅",
+    TimeOfDay.MORNING: "☀",
+    TimeOfDay.AFTERNOON: "🌤",
+    TimeOfDay.EVENING: "🌇",
+    TimeOfDay.NIGHT: "🌙",
+}
+
+WEATHER_EMOJIS = {
+    Weather.SUNNY: "☀",
+    Weather.CLOUDY: "☁",
+    Weather.RAINY: "🌧",
+    Weather.STORMY: "⛈",
+    Weather.SNOWY: "❄",
+    Weather.WINDY: "🍃",
+    Weather.STARRY: "✦",
+    Weather.FOGGY: "🌫",
+}
+
+SEASON_EMOJIS = {
+    Season.SPRING: "🌸",
+    Season.SUMMER: "🌻",
+    Season.AUTUMN: "🍂",
+    Season.WINTER: "❄",
+}
+
+# Weather probabilities per season
+SEASON_WEATHER: dict[Season, list[tuple[Weather, float]]] = {
+    Season.SPRING: [
+        (Weather.SUNNY, 0.3), (Weather.CLOUDY, 0.2), (Weather.RAINY, 0.3),
+        (Weather.WINDY, 0.15), (Weather.FOGGY, 0.05),
+    ],
+    Season.SUMMER: [
+        (Weather.SUNNY, 0.5), (Weather.CLOUDY, 0.15), (Weather.STORMY, 0.15),
+        (Weather.WINDY, 0.1), (Weather.RAINY, 0.1),
+    ],
+    Season.AUTUMN: [
+        (Weather.CLOUDY, 0.3), (Weather.RAINY, 0.25), (Weather.WINDY, 0.2),
+        (Weather.FOGGY, 0.15), (Weather.SUNNY, 0.1),
+    ],
+    Season.WINTER: [
+        (Weather.SNOWY, 0.35), (Weather.CLOUDY, 0.2), (Weather.STORMY, 0.15),
+        (Weather.WINDY, 0.15), (Weather.SUNNY, 0.1), (Weather.FOGGY, 0.05),
+    ],
+}
+
+
+class WorldClock:
+    """Tracks the passage of time in the agent world."""
+
+    TIMES = [TimeOfDay.DAWN, TimeOfDay.MORNING, TimeOfDay.AFTERNOON, TimeOfDay.EVENING, TimeOfDay.NIGHT]
+    SEASONS = [Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER]
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.time_of_day: TimeOfDay = TimeOfDay.MORNING
+        self.season: Season = Season.SPRING
+        self.weather: Weather = Weather.SUNNY
+        self.day: int = 1
+
+    def tick(self, round_number: int) -> dict[str, str]:
+        """Advance the clock. Returns dict of what changed."""
+        changes: dict[str, str] = {}
+
+        # Time advances every round (5 time slots per day)
+        time_idx = round_number % len(self.TIMES)
+        new_time = self.TIMES[time_idx]
+        if new_time != self.time_of_day:
+            changes["time"] = new_time.value
+            self.time_of_day = new_time
+
+        # New day every 5 rounds
+        new_day = (round_number // len(self.TIMES)) + 1
+        if new_day != self.day:
+            self.day = new_day
+            changes["day"] = str(self.day)
+            # Weather changes each day
+            self._roll_weather()
+            changes["weather"] = self.weather.value
+
+        # Season changes every 20 rounds (4 days per season)
+        season_idx = ((round_number - 1) // 20) % len(self.SEASONS)
+        new_season = self.SEASONS[season_idx]
+        if new_season != self.season:
+            self.season = new_season
+            changes["season"] = new_season.value
+            self._roll_weather()
+            changes["weather"] = self.weather.value
+
+        return changes
+
+    def _roll_weather(self) -> None:
+        """Roll weather based on season probabilities."""
+        weather_table = SEASON_WEATHER[self.season]
+        roll = self._rng.random()
+        cumulative = 0.0
+        for weather, prob in weather_table:
+            cumulative += prob
+            if roll <= cumulative:
+                self.weather = weather
+                return
+        self.weather = weather_table[0][0]
+
+    @property
+    def is_night(self) -> bool:
+        return self.time_of_day in (TimeOfDay.NIGHT, TimeOfDay.EVENING)
+
+    @property
+    def sky_line(self) -> str:
+        """Kawaii sky description for TUI."""
+        t_emoji = TIME_EMOJIS[self.time_of_day]
+        w_emoji = WEATHER_EMOJIS[self.weather]
+        s_emoji = SEASON_EMOJIS[self.season]
+        return f"{t_emoji} {self.time_of_day.value} {w_emoji} {self.weather.value} {s_emoji} {self.season.value} — Day {self.day}"
+
+    def get_mood_modifier(self) -> Mood | None:
+        """Some weather/time combos affect agent mood."""
+        if self.weather == Weather.STORMY:
+            return Mood.WORRIED
+        if self.weather == Weather.SUNNY and self.time_of_day == TimeOfDay.MORNING:
+            return Mood.HAPPY
+        if self.time_of_day == TimeOfDay.NIGHT:
+            return Mood.RELAXED
+        if self.weather == Weather.SNOWY:
+            return Mood.CURIOUS
+        return None
+
+    def get_xp_modifier(self) -> float:
+        """Weather can affect XP gains."""
+        if self.weather == Weather.SUNNY:
+            return 1.1  # +10%
+        if self.weather == Weather.STORMY:
+            return 0.9  # -10%
+        if self.time_of_day == TimeOfDay.NIGHT:
+            return 1.15  # Night owl bonus
+        return 1.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. Agent Dreams
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DREAM_TEMPLATES = {
+    "success": [
+        "dreamed of climbing a mountain of {item} and planting a flag at the top",
+        "had a vision of a golden {item} floating above the clouds",
+        "dreamed of racing through fields of code, every line compiling perfectly",
+        "saw a shimmering portal made of {item}s leading to a world of pure logic",
+    ],
+    "failure": [
+        "had a nightmare about an infinite loop of {item}s chasing them",
+        "dreamed of falling into a bottomless merge conflict",
+        "saw a giant {item} blocking the only exit from a maze of bugs",
+        "dreamed that every file they created turned into {item}",
+    ],
+    "observation": [
+        "dreamed of floating through a starry sky with {agent}",
+        "had a peaceful dream about a library made entirely of {item}",
+        "dreamed of a campfire where {agent} told the best story ever",
+        "saw a garden where each flower was a different {item}",
+    ],
+    "lesson": [
+        "had a profound dream where a wise {species} taught them about {item}",
+        "dreamed of discovering an ancient scroll about the secret of {item}",
+        "saw themselves as a legendary {species} solving the ultimate {item} puzzle",
+        "dreamed of a mirror that showed their future self mastering {item}",
+    ],
+}
+
+DREAM_ITEMS = [
+    "semicolons", "brackets", "functions", "variables", "commits",
+    "pull requests", "tests", "databases", "APIs", "algorithms",
+    "butterflies", "stars", "rainbows", "crystals", "cookies",
+]
+
+
+@dataclass
+class Dream:
+    """A dream that an agent experiences at night."""
+    dreamer: str
+    content: str
+    dream_type: str  # "prophetic", "nightmare", "peaceful", "surreal"
+    round_number: int
+    bonus_effect: str = ""  # Effect applied next round
+    bonus_xp: int = 0
+    bonus_mood: Mood | None = None
+
+    def __str__(self) -> str:
+        icons = {"prophetic": "🔮", "nightmare": "👻", "peaceful": "🌙", "surreal": "🌀"}
+        return f"{icons.get(self.dream_type, '💤')} {self.dreamer}: {self.content}"
+
+
+class DreamEngine:
+    """Generates dreams for agents based on their memories and experiences."""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.dreams: list[Dream] = []
+
+    def generate_dream(
+        self,
+        agent_name: str,
+        species: str,
+        memories: list[MemoryEntry],
+        mood: Mood,
+        relationships: list[str],
+        round_number: int,
+    ) -> Dream:
+        """Generate a dream based on agent's state and memories."""
+        # Pick a dream type based on mood
+        if mood in (Mood.FRUSTRATED, Mood.WORRIED):
+            dream_type = "nightmare"
+        elif mood in (Mood.HAPPY, Mood.RELAXED, Mood.PROUD):
+            dream_type = "peaceful"
+        elif mood in (Mood.CURIOUS, Mood.INSPIRED):
+            dream_type = "prophetic"
+        else:
+            dream_type = "surreal"
+
+        # Pick template based on recent memory types
+        recent_types = [m.memory_type for m in memories[-3:]] if memories else ["observation"]
+        dominant_type = max(set(recent_types), key=recent_types.count)
+
+        templates = DREAM_TEMPLATES.get(dominant_type, DREAM_TEMPLATES["observation"])
+        template = self._rng.choice(templates)
+
+        item = self._rng.choice(DREAM_ITEMS)
+        agent_ref = self._rng.choice(relationships) if relationships else "a mysterious stranger"
+
+        content = template.format(item=item, agent=agent_ref, species=species)
+
+        # Dream effects
+        bonus_xp = 0
+        bonus_mood = None
+        bonus_effect = ""
+
+        if dream_type == "prophetic":
+            bonus_xp = 15
+            bonus_mood = Mood.INSPIRED
+            bonus_effect = "Prophetic vision: +15 XP bonus!"
+        elif dream_type == "nightmare":
+            bonus_mood = Mood.DETERMINED
+            bonus_effect = "Nightmare fuel: extra determination!"
+        elif dream_type == "peaceful":
+            bonus_xp = 5
+            bonus_mood = Mood.RELAXED
+            bonus_effect = "Restful sleep: +5 XP"
+        else:  # surreal
+            bonus_xp = 10
+            bonus_effect = "Surreal insight: +10 XP"
+
+        dream = Dream(
+            dreamer=agent_name,
+            content=content,
+            dream_type=dream_type,
+            round_number=round_number,
+            bonus_effect=bonus_effect,
+            bonus_xp=bonus_xp,
+            bonus_mood=bonus_mood,
+        )
+        self.dreams.append(dream)
+        return dream
+
+    def get_recent_dreams(self, agent_name: str, count: int = 3) -> list[Dream]:
+        return [d for d in self.dreams if d.dreamer == agent_name][-count:]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. Agent Diary
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class DiaryEntry:
+    """A personal diary entry written by an agent."""
+    round_number: int
+    mood: Mood
+    content: str
+    weather: str = ""
+    time_of_day: str = ""
+
+    def __str__(self) -> str:
+        mood_faces = {
+            "happy": "(^w^)", "focused": "(>_<)", "frustrated": "(>.<)",
+            "excited": "(*^*)", "tired": "(-_-)", "proud": "(^_~)",
+            "worried": "(o_o)", "curious": "(?.?)", "determined": "(!_!)",
+            "relaxed": "(~_~)", "inspired": "(!!)", "mischievous": "(>w<)",
+            "nostalgic": "(._.):",
+        }
+        face = mood_faces.get(self.mood.value, "(._.)") if isinstance(self.mood, Mood) else "(._. )"
+        return f"Day R{self.round_number} {face}: {self.content}"
+
+
+DIARY_TEMPLATES = {
+    "task_complete": [
+        "Finished {task}! Feeling accomplished~",
+        "Another task down: {task}. I'm getting better at this!",
+        "Crushed {task} today. {catchphrase}",
+    ],
+    "new_friend": [
+        "Made a new friend today: {agent}! They seem nice~",
+        "{agent} and I are getting along great!",
+        "Bonding with {agent} over shared work. Good vibes~",
+    ],
+    "error": [
+        "Had a rough time today... errors everywhere (>.<)",
+        "Things went wrong, but I'll bounce back tomorrow!",
+        "Bugs bugs bugs. Tomorrow will be better.",
+    ],
+    "idle": [
+        "Quiet day today. Watched the {weather} outside.",
+        "Not much happened. Just vibing in the {time}~",
+        "Peaceful {time}. Sometimes doing nothing is nice.",
+    ],
+    "dream_reflection": [
+        "Last night's dream was wild... something about {dream}",
+        "Still thinking about that dream with {dream}",
+        "The dream gave me an idea about {dream}!",
+    ],
+    "campfire": [
+        "Campfire night! Heard amazing stories from the team.",
+        "Shared my story at the campfire. Everyone listened~",
+        "The campfire was so warm tonight. I love this team.",
+    ],
+    "achievement": [
+        "ACHIEVEMENT UNLOCKED! {achievement}! I can't believe it!",
+        "Finally earned {achievement}! All that work paid off~",
+    ],
+    "guild": [
+        "Joined {guild}! Excited to work with this crew~",
+        "Our guild {guild} is the best! Together we're unstoppable!",
+    ],
+}
+
+
+class AgentDiary:
+    """Personal diary for each agent - generates entries from events."""
+
+    MAX_ENTRIES = 30
+
+    def __init__(self, agent_name: str, species: str, catchphrase: str) -> None:
+        self.agent_name = agent_name
+        self.species = species
+        self.catchphrase = catchphrase
+        self.entries: list[DiaryEntry] = []
+
+    def write(
+        self,
+        event_type: str,
+        mood: Mood,
+        round_number: int,
+        weather: str = "",
+        time_of_day: str = "",
+        **kwargs: str,
+    ) -> DiaryEntry:
+        """Auto-generate a diary entry from an event."""
+        templates = DIARY_TEMPLATES.get(event_type, DIARY_TEMPLATES["idle"])
+        template = random.choice(templates)
+
+        # Fill in template variables
+        content = template.format(
+            catchphrase=self.catchphrase,
+            weather=weather or "sky",
+            time=time_of_day or "day",
+            **kwargs,
+        )
+
+        entry = DiaryEntry(
+            round_number=round_number,
+            mood=mood,
+            content=content,
+            weather=weather,
+            time_of_day=time_of_day,
+        )
+        self.entries.append(entry)
+        if len(self.entries) > self.MAX_ENTRIES:
+            self.entries = self.entries[-self.MAX_ENTRIES:]
+        return entry
+
+    def get_memoir(self) -> str:
+        """Generate a complete memoir from all diary entries."""
+        if not self.entries:
+            return f"📔 {self.agent_name}'s Diary: (empty - no adventures yet~)"
+
+        lines = [
+            f"╔══════════════════════════════════════╗",
+            f"║  📔 {self.agent_name}'s Diary  ({self.species})  ║",
+            f"╚══════════════════════════════════════╝",
+            "",
+        ]
+        for entry in self.entries:
+            lines.append(f"  {entry}")
+
+        # Mood journey
+        moods = [e.mood.value if isinstance(e.mood, Mood) else str(e.mood) for e in self.entries]
+        mood_journey = " → ".join(moods[-5:])
+        lines.append(f"\n  Emotional Journey: {mood_journey}")
+        lines.append(f"  Total entries: {len(self.entries)}")
+        return "\n".join(lines)
+
+    def get_recent(self, count: int = 5) -> list[DiaryEntry]:
+        return self.entries[-count:]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. Random Quests / Side Missions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class QuestStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+
+
+@dataclass
+class Quest:
+    """A side mission for an agent to complete."""
+    quest_id: str
+    title: str
+    description: str
+    assigned_to: str
+    condition: str  # What triggers completion
+    xp_reward: int
+    status: QuestStatus = QuestStatus.ACTIVE
+    round_assigned: int = 0
+    round_deadline: int = 0  # 0 = no deadline
+    secret: bool = False  # Hidden achievement
+
+    def __str__(self) -> str:
+        icon = "🗡" if not self.secret else "🔮"
+        status_icon = {"active": "◇", "completed": "◆", "expired": "✖"}
+        return f"{icon}{status_icon.get(self.status.value, '?')} {self.title} (+{self.xp_reward}XP)"
+
+
+QUEST_TEMPLATES = [
+    {
+        "id": "social_sprint",
+        "title": "Social Sprint",
+        "description": "Send 3 messages in one round!",
+        "condition": "messages_in_round>=3",
+        "xp": 30,
+    },
+    {
+        "id": "night_owl",
+        "title": "Night Owl",
+        "description": "Complete a task during the night phase.",
+        "condition": "task_at_night",
+        "xp": 25,
+    },
+    {
+        "id": "speed_demon",
+        "title": "Speed Demon",
+        "description": "Complete a task within 2 rounds of assignment.",
+        "condition": "fast_task",
+        "xp": 40,
+    },
+    {
+        "id": "peacemaker",
+        "title": "Peacemaker",
+        "description": "Send a positive message to someone you've had a conflict with.",
+        "condition": "reconcile",
+        "xp": 35,
+    },
+    {
+        "id": "campfire_star",
+        "title": "Campfire Star",
+        "description": "Tell a story at the campfire.",
+        "condition": "tell_campfire_story",
+        "xp": 20,
+    },
+    {
+        "id": "gossip_master",
+        "title": "Gossip Master",
+        "description": "Share gossip with 3 different agents.",
+        "condition": "gossip_spread>=3",
+        "xp": 25,
+    },
+    {
+        "id": "file_frenzy",
+        "title": "File Frenzy",
+        "description": "Create 3+ files in a single round.",
+        "condition": "files_in_round>=3",
+        "xp": 35,
+    },
+    {
+        "id": "dreamer",
+        "title": "Lucid Dreamer",
+        "description": "Have a prophetic dream.",
+        "condition": "prophetic_dream",
+        "xp": 20,
+        "secret": True,
+    },
+    {
+        "id": "storm_worker",
+        "title": "Storm Chaser",
+        "description": "Complete a task during a thunderstorm.",
+        "condition": "task_in_storm",
+        "xp": 45,
+        "secret": True,
+    },
+    {
+        "id": "fortune_blessed",
+        "title": "Fortune's Favorite",
+        "description": "Fulfill a fortune cookie prediction.",
+        "condition": "fortune_fulfilled",
+        "xp": 50,
+        "secret": True,
+    },
+]
+
+
+class QuestBoard:
+    """Manages active quests for all agents."""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.active_quests: dict[str, list[Quest]] = {}  # agent_name -> quests
+        self.completed_quests: list[Quest] = []
+
+    def assign_quest(self, agent_name: str, round_number: int) -> Quest | None:
+        """Assign a random quest to an agent."""
+        current = self.active_quests.get(agent_name, [])
+        active = [q for q in current if q.status == QuestStatus.ACTIVE]
+        if len(active) >= 2:  # Max 2 active quests
+            return None
+
+        # Pick a quest they haven't done
+        completed_ids = {q.quest_id for q in self.completed_quests if q.assigned_to == agent_name}
+        available = [t for t in QUEST_TEMPLATES if t["id"] not in completed_ids]
+        if not available:
+            return None
+
+        template = self._rng.choice(available)
+        quest = Quest(
+            quest_id=template["id"],
+            title=template["title"],
+            description=template["description"],
+            assigned_to=agent_name,
+            condition=template["condition"],
+            xp_reward=template["xp"],
+            round_assigned=round_number,
+            round_deadline=round_number + 10,
+            secret=template.get("secret", False),
+        )
+        self.active_quests.setdefault(agent_name, []).append(quest)
+        return quest
+
+    def check_completion(self, agent_name: str, condition: str, round_number: int) -> list[Quest]:
+        """Check if any active quests match the given condition."""
+        completed: list[Quest] = []
+        for quest in self.active_quests.get(agent_name, []):
+            if quest.status != QuestStatus.ACTIVE:
+                continue
+            if quest.condition == condition or condition.startswith(quest.condition.split(">=")[0]):
+                quest.status = QuestStatus.COMPLETED
+                self.completed_quests.append(quest)
+                completed.append(quest)
+        return completed
+
+    def expire_quests(self, round_number: int) -> list[Quest]:
+        """Expire quests past their deadline."""
+        expired: list[Quest] = []
+        for quests in self.active_quests.values():
+            for quest in quests:
+                if quest.status == QuestStatus.ACTIVE and quest.round_deadline > 0 and round_number > quest.round_deadline:
+                    quest.status = QuestStatus.EXPIRED
+                    expired.append(quest)
+        return expired
+
+    def get_active_quests(self, agent_name: str) -> list[Quest]:
+        return [q for q in self.active_quests.get(agent_name, []) if q.status == QuestStatus.ACTIVE]
+
+    def get_board_display(self) -> str:
+        """Kawaii quest board display."""
+        lines = ["~*~ QUEST BOARD ~*~", ""]
+        for agent_name, quests in self.active_quests.items():
+            active = [q for q in quests if q.status == QuestStatus.ACTIVE]
+            if active:
+                lines.append(f"  {agent_name}:")
+                for q in active:
+                    lines.append(f"    {q}")
+        if len(lines) == 2:
+            lines.append("  (No active quests~)")
+        return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 16. Trading Post (Skill Point Exchange)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Trade:
+    """A skill point trade between two agents."""
+    trader: str
+    receiver: str
+    offered_stat: str
+    offered_amount: int
+    requested_stat: str
+    requested_amount: int
+    round_number: int
+    accepted: bool = False
+
+    def __str__(self) -> str:
+        status = "✓" if self.accepted else "?"
+        return (
+            f"{status} {self.trader} offers {self.offered_stat}+{self.offered_amount} "
+            f"for {self.requested_stat}+{self.requested_amount} from {self.receiver}"
+        )
+
+
+class TradingPost:
+    """Manages skill point trading between agents."""
+
+    def __init__(self) -> None:
+        self.trades: list[Trade] = []
+        self.balances: dict[str, dict[str, int]] = {}  # agent -> stat bonuses
+
+    def propose_trade(
+        self,
+        trader: str,
+        receiver: str,
+        offered_stat: str,
+        offered_amount: int,
+        requested_stat: str,
+        requested_amount: int,
+        round_number: int,
+    ) -> Trade:
+        trade = Trade(
+            trader=trader,
+            receiver=receiver,
+            offered_stat=offered_stat,
+            offered_amount=offered_amount,
+            requested_stat=requested_stat,
+            requested_amount=requested_amount,
+            round_number=round_number,
+        )
+        self.trades.append(trade)
+        return trade
+
+    def accept_trade(self, trade: Trade) -> bool:
+        """Execute a trade - swap stat bonuses."""
+        if trade.accepted:
+            return False
+        trade.accepted = True
+
+        # Apply bonuses
+        self.balances.setdefault(trade.receiver, {})
+        self.balances.setdefault(trade.trader, {})
+
+        self.balances[trade.receiver][trade.offered_stat] = (
+            self.balances[trade.receiver].get(trade.offered_stat, 0) + trade.offered_amount
+        )
+        self.balances[trade.trader][trade.requested_stat] = (
+            self.balances[trade.trader].get(trade.requested_stat, 0) + trade.requested_amount
+        )
+
+        # Deduct from traders
+        self.balances[trade.trader][trade.offered_stat] = (
+            self.balances[trade.trader].get(trade.offered_stat, 0) - trade.offered_amount
+        )
+        self.balances[trade.receiver][trade.requested_stat] = (
+            self.balances[trade.receiver].get(trade.requested_stat, 0) - trade.requested_amount
+        )
+
+        return True
+
+    def get_bonus(self, agent_name: str, stat: str) -> int:
+        """Get the trade bonus for a given stat."""
+        return self.balances.get(agent_name, {}).get(stat, 0)
+
+    def auto_trade(
+        self,
+        agent_a: str,
+        agent_b: str,
+        stats_a: dict[str, int],
+        stats_b: dict[str, int],
+        trust: float,
+        round_number: int,
+    ) -> Trade | None:
+        """Automatically propose a trade if trust is high enough."""
+        if trust < 0.6:
+            return None
+
+        # Find complementary stats: A's highest vs B's highest
+        a_best = max(stats_a, key=stats_a.get)  # type: ignore[arg-type]
+        b_best = max(stats_b, key=stats_b.get)  # type: ignore[arg-type]
+
+        if a_best == b_best:
+            return None
+
+        trade = self.propose_trade(
+            agent_a, agent_b,
+            a_best, 1, b_best, 1,
+            round_number,
+        )
+        self.accept_trade(trade)
+        return trade
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 17. Rival Boss Fight
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BossPhase(str, Enum):
+    APPEARING = "appearing"
+    FIGHTING = "fighting"
+    DEFEATED = "defeated"
+    ESCAPED = "escaped"
+
+
+@dataclass
+class BossAgent:
+    """A rival boss that appears to challenge the team."""
+    name: str
+    species: str
+    level: int
+    hp: int
+    max_hp: int
+    attack_power: int
+    phase: BossPhase = BossPhase.APPEARING
+    round_appeared: int = 0
+    damage_log: list[str] = field(default_factory=list)
+    drops: dict[str, int] = field(default_factory=dict)  # reward on defeat
+
+    @staticmethod
+    def generate(round_number: int, team_avg_level: int, rng: random.Random) -> BossAgent:
+        """Generate a boss scaled to the team's level."""
+        boss_species = rng.choice(["dragon", "kraken", "golem", "shadow", "phoenix"])
+        boss_names = {
+            "dragon": "Draco the Debugger",
+            "kraken": "Krakode the Merge Monster",
+            "golem": "Legacy Golem",
+            "shadow": "Shadow of Tech Debt",
+            "phoenix": "Phoenix of Refactor",
+        }
+        level = max(team_avg_level + 2, 3)
+        hp = level * 30
+        return BossAgent(
+            name=boss_names[boss_species],
+            species=boss_species,
+            level=level,
+            hp=hp,
+            max_hp=hp,
+            attack_power=level * 5,
+            round_appeared=round_number,
+            drops={"xp": level * 25, "achievement_points": 1},
+        )
+
+    def take_damage(self, agent_name: str, damage: int) -> str:
+        """Boss takes damage from an agent's contribution."""
+        self.hp = max(0, self.hp - damage)
+        msg = f"{agent_name} dealt {damage} damage to {self.name}! ({self.hp}/{self.max_hp} HP)"
+        self.damage_log.append(msg)
+        if self.hp <= 0:
+            self.phase = BossPhase.DEFEATED
+            msg += f" {self.name} is DEFEATED!"
+        return msg
+
+    @property
+    def hp_bar(self) -> str:
+        """Kawaii HP bar."""
+        bar_width = 20
+        filled = int((self.hp / self.max_hp) * bar_width) if self.max_hp > 0 else 0
+        bar = "█" * filled + "░" * (bar_width - filled)
+        return f"[{bar}] {self.hp}/{self.max_hp}"
+
+    def get_boss_card(self) -> str:
+        """Render a boss encounter card."""
+        return (
+            f"╔═══════════════════════════════════╗\n"
+            f"║  ☠ BOSS ENCOUNTER! ☠              ║\n"
+            f"║  {self.name:<33}║\n"
+            f"║  Species: {self.species:<23}║\n"
+            f"║  Level: {self.level:<25}║\n"
+            f"║  HP: {self.hp_bar:<28}║\n"
+            f"╚═══════════════════════════════════╝"
+        )
+
+
+class BossArena:
+    """Manages boss encounters."""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.current_boss: BossAgent | None = None
+        self.defeated_bosses: list[BossAgent] = []
+        self._boss_probability = 0.1
+        self._min_round = 8
+
+    def maybe_spawn_boss(self, round_number: int, team_avg_level: int) -> BossAgent | None:
+        if self.current_boss and self.current_boss.phase in (BossPhase.APPEARING, BossPhase.FIGHTING):
+            return None
+        if round_number < self._min_round:
+            return None
+        if self._rng.random() > self._boss_probability:
+            return None
+
+        self.current_boss = BossAgent.generate(round_number, team_avg_level, self._rng)
+        self.current_boss.phase = BossPhase.FIGHTING
+        return self.current_boss
+
+    def agent_attack(self, agent_name: str, agent_stats: dict[str, int], agent_level: int) -> str | None:
+        """Agent contributes damage based on their stats."""
+        if not self.current_boss or self.current_boss.phase != BossPhase.FIGHTING:
+            return None
+
+        # Damage based on agent stats + level
+        base_damage = sum(agent_stats.values()) + agent_level * 3
+        damage = max(1, base_damage + self._rng.randint(-5, 10))
+        result = self.current_boss.take_damage(agent_name, damage)
+
+        if self.current_boss.phase == BossPhase.DEFEATED:
+            self.defeated_bosses.append(self.current_boss)
+
+        return result
+
+    def check_escape(self, round_number: int) -> bool:
+        """Boss escapes if not defeated within 5 rounds."""
+        if not self.current_boss or self.current_boss.phase != BossPhase.FIGHTING:
+            return False
+        if round_number - self.current_boss.round_appeared > 5:
+            self.current_boss.phase = BossPhase.ESCAPED
+            return True
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 18. Love Letters & Hate Mail
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Letter:
+    """A letter sent between agents based on their relationship."""
+    sender: str
+    recipient: str
+    letter_type: str  # "love", "rivalry", "thank_you", "challenge"
+    content: str
+    round_number: int
+
+    def __str__(self) -> str:
+        icons = {"love": "💌", "rivalry": "⚔", "thank_you": "🎁", "challenge": "🗡"}
+        return f"{icons.get(self.letter_type, '✉')} {self.sender} → {self.recipient}: {self.content}"
+
+
+LOVE_TEMPLATES = [
+    "Dear {recipient}, working with you makes every bug worth fixing! ♥ From, {sender}",
+    "{recipient}~! You're the best teammate a {species} could ask for! ♥♥ Love, {sender}",
+    "To {recipient}: Our friendship is my favorite achievement. Never change! ♥ — {sender}",
+    "Hey {recipient}, you + me = unstoppable! Let's keep being awesome~ ♥ {sender}",
+]
+
+RIVALRY_TEMPLATES = [
+    "Dear {recipient}, I WILL surpass you. Watch your back! ✖ — {sender}",
+    "{recipient}... the leaderboard gap between us is about to CLOSE. ✖ — {sender}",
+    "To my rival {recipient}: May the best {species} win! ⚔ — {sender}",
+    "Hey {recipient}, your code is... fine. Mine's better though. ✖ {sender}",
+]
+
+THANK_YOU_TEMPLATES = [
+    "Dear {recipient}, thanks for the help today! You're a real one. ★ — {sender}",
+    "{recipient}! That mentorship moment meant everything. Thank you~ ★ — {sender}",
+]
+
+CHALLENGE_TEMPLATES = [
+    "CHALLENGE: {recipient}, I bet I can complete more tasks than you this round! ⚔ — {sender}",
+    "{recipient}, race you to the next level up! Loser tells a campfire story. ⚔ — {sender}",
+]
+
+
+class PostOffice:
+    """Manages letters between agents based on relationship changes."""
+
+    def __init__(self) -> None:
+        self.mailbox: dict[str, list[Letter]] = {}  # recipient -> letters
+        self.all_letters: list[Letter] = []
+
+    def check_and_send(
+        self,
+        sender: str,
+        recipient: str,
+        trust: float,
+        sender_species: str,
+        round_number: int,
+    ) -> Letter | None:
+        """Auto-generate a letter based on relationship trust level."""
+        # Already sent a letter this round?
+        recent = [l for l in self.all_letters if l.sender == sender and l.recipient == recipient and l.round_number == round_number]
+        if recent:
+            return None
+
+        letter_type = None
+        templates = None
+
+        if trust >= 0.9:
+            letter_type = "love"
+            templates = LOVE_TEMPLATES
+        elif trust <= 0.15:
+            letter_type = "rivalry"
+            templates = RIVALRY_TEMPLATES
+        elif trust >= 0.7:
+            letter_type = "thank_you"
+            templates = THANK_YOU_TEMPLATES
+        else:
+            return None
+
+        content = random.choice(templates).format(
+            sender=sender, recipient=recipient, species=sender_species,
+        )
+        letter = Letter(
+            sender=sender,
+            recipient=recipient,
+            letter_type=letter_type,
+            content=content,
+            round_number=round_number,
+        )
+        self.mailbox.setdefault(recipient, []).append(letter)
+        self.all_letters.append(letter)
+        return letter
+
+    def send_challenge(self, sender: str, recipient: str, sender_species: str, round_number: int) -> Letter:
+        content = random.choice(CHALLENGE_TEMPLATES).format(
+            sender=sender, recipient=recipient, species=sender_species,
+        )
+        letter = Letter(sender=sender, recipient=recipient, letter_type="challenge",
+                        content=content, round_number=round_number)
+        self.mailbox.setdefault(recipient, []).append(letter)
+        self.all_letters.append(letter)
+        return letter
+
+    def get_mail(self, agent_name: str) -> list[Letter]:
+        return self.mailbox.get(agent_name, [])
+
+    def get_unread(self, agent_name: str) -> list[Letter]:
+        """Get all letters for an agent (and clear the mailbox)."""
+        letters = self.mailbox.pop(agent_name, [])
+        return letters
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 19. Fortune Cookies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class FortuneCookie:
+    """A fortune cookie with a prediction and bonus effect."""
+    recipient: str
+    fortune: str
+    condition: str  # What fulfills the fortune
+    bonus_xp: int
+    round_given: int
+    fulfilled: bool = False
+
+    def __str__(self) -> str:
+        status = "✓" if self.fulfilled else "◇"
+        return f"🥠{status} {self.fortune} (+{self.bonus_xp}XP if fulfilled)"
+
+
+FORTUNE_TEMPLATES = [
+    {"fortune": "Create a file today and good luck will follow~", "condition": "create_file", "xp": 20},
+    {"fortune": "Send a message to a friend for double karma!", "condition": "send_message", "xp": 15},
+    {"fortune": "Complete a task before nightfall for bonus XP!", "condition": "complete_task", "xp": 25},
+    {"fortune": "Help someone today and the universe will reward you~", "condition": "request_help", "xp": 20},
+    {"fortune": "A surprise awaits if you survive the next storm...", "condition": "survive_storm", "xp": 30},
+    {"fortune": "Your lucky number is 7. Do 7 things today!", "condition": "seven_actions", "xp": 35},
+    {"fortune": "Share gossip with someone new for a twist of fate!", "condition": "share_gossip", "xp": 15},
+    {"fortune": "Tell a story at the campfire to unlock your potential~", "condition": "tell_story", "xp": 20},
+    {"fortune": "Your bond with a teammate will grow stronger today!", "condition": "strengthen_bond", "xp": 15},
+    {"fortune": "A dream tonight will reveal hidden truths...", "condition": "have_dream", "xp": 10},
+]
+
+
+class FortuneCookieJar:
+    """Distributes fortune cookies to agents."""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.active_fortunes: dict[str, FortuneCookie] = {}  # agent -> active fortune
+        self.history: list[FortuneCookie] = []
+
+    def give_cookie(self, agent_name: str, round_number: int) -> FortuneCookie | None:
+        """Give a fortune cookie to an agent (one at a time)."""
+        if agent_name in self.active_fortunes:
+            return None
+
+        template = self._rng.choice(FORTUNE_TEMPLATES)
+        cookie = FortuneCookie(
+            recipient=agent_name,
+            fortune=template["fortune"],
+            condition=template["condition"],
+            bonus_xp=template["xp"],
+            round_given=round_number,
+        )
+        self.active_fortunes[agent_name] = cookie
+        self.history.append(cookie)
+        return cookie
+
+    def check_fulfillment(self, agent_name: str, action: str) -> FortuneCookie | None:
+        """Check if an action fulfills the agent's fortune."""
+        cookie = self.active_fortunes.get(agent_name)
+        if not cookie or cookie.fulfilled:
+            return None
+
+        if cookie.condition == action:
+            cookie.fulfilled = True
+            del self.active_fortunes[agent_name]
+            return cookie
+        return None
+
+    def get_active_fortune(self, agent_name: str) -> FortuneCookie | None:
+        return self.active_fortunes.get(agent_name)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 20. Agent Ghosts
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class GhostAgent:
+    """A ghost of a retired/crashed agent that lingers and gives hints."""
+    name: str
+    species: str
+    species_emoji: str
+    cause_of_death: str  # "timeout", "errors", "retired", "sacrificed"
+    round_died: int
+    last_words: str
+    memories: list[str] = field(default_factory=list)  # Preserved wisdom
+    appearances: int = 0
+    max_appearances: int = 5
+
+    def __str__(self) -> str:
+        return f"👻 {self.species_emoji} {self.name} (ghost) — \"{self.last_words}\""
+
+    def appear(self) -> str | None:
+        """Ghost appears and shares wisdom. Returns hint or None if max appearances reached."""
+        if self.appearances >= self.max_appearances:
+            return None
+        self.appearances += 1
+        if self.memories:
+            hint = random.choice(self.memories)
+            return f"👻 The ghost of {self.name} whispers: \"{hint}\""
+        return f"👻 The ghost of {self.name} watches silently..."
+
+    @property
+    def is_fading(self) -> bool:
+        return self.appearances >= self.max_appearances
+
+
+class GhostRealm:
+    """Manages ghosts of fallen agents."""
+
+    def __init__(self) -> None:
+        self.ghosts: list[GhostAgent] = []
+
+    def create_ghost(
+        self,
+        name: str,
+        species: str,
+        species_emoji: str,
+        cause: str,
+        round_died: int,
+        memories: list[str],
+    ) -> GhostAgent:
+        """Create a ghost from a fallen agent."""
+        last_words_map = {
+            "timeout": "I... ran out of time... don't make the same mistake...",
+            "errors": "The bugs... they got me... avenge me...",
+            "retired": "My work here is done. Carry on, friends~",
+            "sacrificed": "I did it for the team. Remember me...",
+        }
+        ghost = GhostAgent(
+            name=name,
+            species=species,
+            species_emoji=species_emoji,
+            cause_of_death=cause,
+            round_died=round_died,
+            last_words=last_words_map.get(cause, "..."),
+            memories=memories[-5:],  # Keep last 5 memories as wisdom
+        )
+        self.ghosts.append(ghost)
+        return ghost
+
+    def maybe_appear(self, round_number: int) -> list[str]:
+        """Ghosts have a chance of appearing each round."""
+        messages: list[str] = []
+        for ghost in self.ghosts:
+            if not ghost.is_fading and random.random() < 0.3:
+                msg = ghost.appear()
+                if msg:
+                    messages.append(msg)
+        return messages
+
+    def get_active_ghosts(self) -> list[GhostAgent]:
+        return [g for g in self.ghosts if not g.is_fading]
+
+    def get_graveyard(self) -> str:
+        """Render the graveyard display."""
+        if not self.ghosts:
+            return "(^_^) No ghosts yet~ Everyone is alive!"
+        lines = ["~*~ GRAVEYARD ~*~", ""]
+        for ghost in self.ghosts:
+            status = "👻" if not ghost.is_fading else "💀"
+            lines.append(f"  {status} {ghost.species_emoji} {ghost.name} — {ghost.cause_of_death} (R{ghost.round_died})")
+            lines.append(f"    Last words: \"{ghost.last_words}\"")
+        return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 21. Multiverse Branching
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class MultiverseChoice:
+    """A decision point that creates a branching timeline."""
+    round_number: int
+    description: str
+    chosen_path: str
+    alternate_path: str
+    chosen_outcome: str = ""
+    alternate_outcome: str = ""
+
+    def __str__(self) -> str:
+        return f"[R{self.round_number}] {self.description}: chose '{self.chosen_path}' over '{self.alternate_path}'"
+
+
+ALTERNATE_OUTCOMES = {
+    "task_complete": [
+        "In the alternate timeline, the task was never completed and chaos ensued...",
+        "In another universe, a different agent handled this and created 3x more bugs.",
+        "The multiverse shows: skipping this task caused a cascade of failures.",
+    ],
+    "spawn": [
+        "In an alternate timeline, this agent was never created. The team struggled without them.",
+        "The multiverse reveals: a different agent was spawned here, with very different skills.",
+    ],
+    "guild_formed": [
+        "In another reality, this guild never formed and agents worked alone. Efficiency dropped 40%.",
+        "The multiverse shows: rival guilds formed instead, leading to epic debates.",
+    ],
+    "boss_defeated": [
+        "In the alternate timeline, the boss won. All agents lost 50% XP. Dark times...",
+        "Another universe: the team tried to negotiate instead of fight. It... didn't go well.",
+    ],
+    "evolution": [
+        "In another timeline, this evolution happened 3 rounds earlier. Butterfly effect...",
+        "The multiverse reveals: this agent evolved into a completely different species!",
+    ],
+}
+
+
+class MultiverseEngine:
+    """Tracks branching decision points and generates alternate timelines."""
+
+    def __init__(self, seed: int = 42) -> None:
+        self._rng = random.Random(seed)
+        self.branches: list[MultiverseChoice] = []
+
+    def record_branch(
+        self,
+        round_number: int,
+        description: str,
+        chosen_path: str,
+        alternate_path: str,
+        event_type: str = "task_complete",
+    ) -> MultiverseChoice:
+        """Record a decision point with what-if."""
+        alternates = ALTERNATE_OUTCOMES.get(event_type, ALTERNATE_OUTCOMES["task_complete"])
+        branch = MultiverseChoice(
+            round_number=round_number,
+            description=description,
+            chosen_path=chosen_path,
+            alternate_path=alternate_path,
+            chosen_outcome=f"Our timeline: {chosen_path} succeeded!",
+            alternate_outcome=self._rng.choice(alternates),
+        )
+        self.branches.append(branch)
+        return branch
+
+    def get_what_if_report(self) -> str:
+        """Generate the final multiverse comparison report."""
+        if not self.branches:
+            return "No branching points recorded~ This timeline was the only one."
+
+        lines = [
+            "╔═══════════════════════════════════════════╗",
+            "║    ~*~ MULTIVERSE REPORT ~*~              ║",
+            "║    What could have been...                ║",
+            "╚═══════════════════════════════════════════╝",
+            "",
+        ]
+
+        for i, branch in enumerate(self.branches[-8:], 1):
+            lines.append(f"  ━━━ Branch Point #{i} (Round {branch.round_number}) ━━━")
+            lines.append(f"  Decision: {branch.description}")
+            lines.append(f"  ✓ Our path: {branch.chosen_path}")
+            lines.append(f"  ✖ Alt path: {branch.alternate_path}")
+            lines.append(f"    → {branch.alternate_outcome}")
+            lines.append("")
+
+        our_score = len([b for b in self.branches if "succeeded" in b.chosen_outcome])
+        lines.append(f"  ~*~ Our timeline scored {our_score}/{len(self.branches)} optimal decisions! ~*~")
+
+        return "\n".join(lines)
+
+    def get_branch_count(self) -> int:
+        return len(self.branches)
