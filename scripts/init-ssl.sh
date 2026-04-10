@@ -1,75 +1,46 @@
 #!/bin/bash
-# Initial SSL certificate setup for autonoma.koala.ai.kr
-# Run this ONCE on the server before starting with HTTPS.
-#
-# Prerequisites:
-#   - DNS A record for autonoma.koala.ai.kr pointing to this server
-#   - Port 80 open
-#
-# Usage: ./scripts/init-ssl.sh [email]
-
 set -euo pipefail
 
 DOMAIN="autonoma.koala.ai.kr"
 EMAIL="${1:-admin@koala.ai.kr}"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "=== Autonoma SSL Setup ==="
 echo "Domain: $DOMAIN"
 echo "Email:  $EMAIL"
+echo "Dir:    $PROJECT_DIR"
 echo ""
 
-# Step 1: Start nginx with HTTP-only config for ACME challenge
-echo "[1/4] Creating temporary HTTP-only nginx config..."
-mkdir -p nginx
-cat > nginx/nginx.conf.tmp <<'NGINX'
-server {
-    listen 80;
-    server_name autonoma.koala.ai.kr;
+# Step 1: Use HTTP-only nginx config
+echo "[1/5] Switching to HTTP-only nginx config..."
+cp "$PROJECT_DIR/nginx/nginx.init.conf" "$PROJECT_DIR/nginx/active.conf"
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
+# Step 2: Start services with HTTP-only
+echo "[2/5] Starting services (HTTP only)..."
+cd "$PROJECT_DIR"
+NGINX_CONF=nginx/active.conf docker compose up -d nginx web api
 
-    location / {
-        return 200 'Waiting for SSL setup...';
-        add_header Content-Type text/plain;
-    }
-}
-NGINX
-
-# Step 2: Start nginx with temp config
-echo "[2/4] Starting nginx for ACME challenge..."
-docker compose run -d --rm \
-  -v "$(pwd)/nginx/nginx.conf.tmp:/etc/nginx/conf.d/default.conf:ro" \
-  -p 80:80 \
-  nginx || docker run -d --name autonoma-certbot-nginx \
-  -v "$(pwd)/nginx/nginx.conf.tmp:/etc/nginx/conf.d/default.conf:ro" \
-  -v "autonoma_certbot-webroot:/var/www/certbot" \
-  -p 80:80 \
-  nginx:alpine
-
-sleep 3
+echo "Waiting for nginx to be ready..."
+sleep 5
 
 # Step 3: Request certificate
-echo "[3/4] Requesting certificate from Let's Encrypt..."
-docker run --rm \
-  -v "autonoma_certbot-webroot:/var/www/certbot" \
-  -v "autonoma_certbot-certs:/etc/letsencrypt" \
-  certbot/certbot certonly \
-    --webroot \
-    --webroot-path=/var/www/certbot \
-    --email "$EMAIL" \
-    --agree-tos \
-    --no-eff-email \
-    -d "$DOMAIN"
+echo "[3/5] Requesting SSL certificate..."
+docker compose run --rm certbot certonly \
+  --webroot \
+  --webroot-path=/var/www/certbot \
+  --email "$EMAIL" \
+  --agree-tos \
+  --no-eff-email \
+  -d "$DOMAIN"
 
-# Step 4: Cleanup temp nginx
-echo "[4/4] Cleaning up..."
-docker stop autonoma-certbot-nginx 2>/dev/null || true
-docker rm autonoma-certbot-nginx 2>/dev/null || true
-rm -f nginx/nginx.conf.tmp
+# Step 4: Switch to full HTTPS config
+echo "[4/5] Switching to HTTPS nginx config..."
+cp "$PROJECT_DIR/nginx/nginx.conf" "$PROJECT_DIR/nginx/active.conf"
+
+# Step 5: Restart nginx with HTTPS
+echo "[5/5] Restarting nginx with SSL..."
+docker compose restart nginx
 
 echo ""
-echo "=== SSL certificate obtained! ==="
-echo "Now run: docker compose up -d"
-echo "Site will be available at: https://$DOMAIN"
+echo "=== Done! ==="
+echo "https://$DOMAIN is now live."
