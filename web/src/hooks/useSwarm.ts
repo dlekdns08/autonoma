@@ -279,6 +279,12 @@ export function useSwarm() {
     }
   }, []);
 
+  const startSwarm = useCallback((goal: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: "start", goal }));
+    }
+  }, []);
+
   useEffect(() => {
     connect();
     return () => {
@@ -287,5 +293,5 @@ export function useSwarm() {
     };
   }, [connect]);
 
-  return { state, connected, toasts, dismissToast, sendMessage };
+  return { state, connected, toasts, dismissToast, sendMessage, startSwarm };
 }

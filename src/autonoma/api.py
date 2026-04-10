@@ -18,6 +18,13 @@ from autonoma.event_bus import bus
 
 logger = logging.getLogger(__name__)
 
+# ── Swarm State (managed by the API) ────────────────────────────────────
+
+_swarm: Any = None       # AgentSwarm instance
+_project: Any = None     # ProjectState instance
+_swarm_task: asyncio.Task | None = None  # Background task running the swarm
+
+
 # ── Connection Manager ────────────────────────────────────────────────────
 
 class ConnectionManager:
@@ -32,7 +39,8 @@ class ConnectionManager:
         logger.info(f"[WS] Client connected ({len(self.connections)} total)")
 
     def disconnect(self, ws: WebSocket) -> None:
-        self.connections.remove(ws)
+        if ws in self.connections:
+            self.connections.remove(ws)
         logger.info(f"[WS] Client disconnected ({len(self.connections)} total)")
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
@@ -45,7 +53,8 @@ class ConnectionManager:
             except Exception:
                 disconnected.append(ws)
         for ws in disconnected:
-            self.connections.remove(ws)
+            if ws in self.connections:
+                self.connections.remove(ws)
 
 
 manager = ConnectionManager()
@@ -130,17 +139,62 @@ def _unregister_event_bridge() -> None:
     _handlers.clear()
 
 
+# ── Swarm Runner ─────────────────────────────────────────────────────────
+
+async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
+    """Run the swarm in the background."""
+    global _swarm, _project
+
+    from autonoma.agents.swarm import AgentSwarm
+    from autonoma.config import settings
+    from autonoma.models import ProjectState
+    from autonoma.workspace import WorkspaceManager
+
+    # Create project name from goal
+    name = goal.lower().replace(" ", "-")[:40]
+    project = ProjectState(name=name, description=goal)
+    swarm = AgentSwarm()
+
+    _swarm = swarm
+    _project = project
+
+    try:
+        await swarm.initialize(project)
+
+        for agent_name, agent in swarm.agents.items():
+            if not any(a.name == agent_name for a in project.agents):
+                project.agents.append(agent.persona)
+
+        await swarm.run(project, max_rounds=max_rounds)
+
+        # Write files
+        if project.files:
+            workspace = WorkspaceManager()
+            out = settings.output_dir / name
+            await workspace.write_all(project)
+            logger.info(f"[Swarm] Files written to {out}")
+
+    except asyncio.CancelledError:
+        swarm.stop()
+        logger.info("[Swarm] Cancelled")
+    except Exception as e:
+        logger.error(f"[Swarm] Error: {e}")
+        await manager.broadcast("swarm.error", {"error": str(e)})
+    finally:
+        _swarm = None
+        _project = None
+
+
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
 
 def _get_snapshot() -> dict[str, Any]:
     """Get current swarm state for newly connected clients."""
     try:
-        from autonoma.engine.runner import _current_swarm, _current_project
-        if not _current_swarm or not _current_project:
+        if not _swarm or not _project:
             return {"status": "idle"}
 
-        swarm = _current_swarm
-        project = _current_project
+        swarm = _swarm
+        project = _project
 
         agents = []
         for name, agent in swarm.agents.items():
@@ -180,16 +234,16 @@ def _get_snapshot() -> dict[str, Any]:
             for t in project.tasks
         ]
 
-        # Build relationship data from trust matrix
+        # Build relationship data from graph
         relationships = []
         if hasattr(swarm, "relationships"):
-            trust_matrix = swarm.relationships.trust
-            for (a, b), val in trust_matrix.items():
-                relationships.append({
-                    "from": a,
-                    "to": b,
-                    "trust": val,
-                })
+            for (a, b), rel in swarm.relationships._graph.items():
+                if rel.familiarity > 0:
+                    relationships.append({
+                        "from": a,
+                        "to": b,
+                        "trust": rel.trust,
+                    })
 
         return {
             "status": "running",
@@ -232,6 +286,8 @@ app.add_middleware(
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
+    global _swarm_task
+
     await manager.connect(ws)
     try:
         # Send initial snapshot
@@ -248,6 +304,22 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 snapshot = _get_snapshot()
                 await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
 
+            elif cmd == "start":
+                goal = msg.get("goal", "").strip()
+                if not goal:
+                    await ws.send_text(json.dumps({"event": "error", "data": {"message": "Goal is required"}}))
+                elif _swarm_task and not _swarm_task.done():
+                    await ws.send_text(json.dumps({"event": "error", "data": {"message": "Swarm is already running"}}))
+                else:
+                    max_rounds = msg.get("max_rounds", 30)
+                    _swarm_task = asyncio.create_task(_run_swarm(goal, max_rounds))
+                    await ws.send_text(json.dumps({"event": "swarm.starting", "data": {"goal": goal}}))
+
+            elif cmd == "stop":
+                if _swarm_task and not _swarm_task.done():
+                    _swarm_task.cancel()
+                    await ws.send_text(json.dumps({"event": "swarm.stopped", "data": {}}))
+
             elif cmd == "message":
                 text = msg.get("text", "")
                 # Handle chat commands from the frontend
@@ -259,6 +331,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 elif text.startswith("/snapshot"):
                     snapshot = _get_snapshot()
                     await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
+                elif text.startswith("/stop"):
+                    if _swarm_task and not _swarm_task.done():
+                        _swarm_task.cancel()
                 else:
                     # Echo back as a chat message event
                     await manager.broadcast("chat.message", {"text": text, "source": "user"})
@@ -272,4 +347,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "connections": len(manager.connections)}
+    return {
+        "status": "ok",
+        "connections": len(manager.connections),
+        "swarm_running": _swarm_task is not None and not _swarm_task.done(),
+    }

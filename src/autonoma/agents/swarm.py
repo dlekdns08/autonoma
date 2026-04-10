@@ -143,8 +143,9 @@ class AgentSwarm:
 
             # Build relationship data for frontend
             relationships = []
-            for (a, b), val in self.relationships.trust.items():
-                relationships.append({"from": a, "to": b, "trust": val})
+            for (a, b), rel in self.relationships._graph.items():
+                if rel.familiarity > 0:
+                    relationships.append({"from": a, "to": b, "trust": rel.trust})
 
             await bus.emit(
                 "swarm.round", round=self._round, max_rounds=max_rounds,

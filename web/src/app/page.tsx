@@ -19,7 +19,7 @@ import Minimap from "@/components/Minimap";
 import type { AgentData } from "@/lib/types";
 
 export default function Home() {
-  const { state, connected, toasts, dismissToast, sendMessage } = useSwarm();
+  const { state, connected, toasts, dismissToast, sendMessage, startSwarm } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
 
   const handleSelectAgent = useCallback(
@@ -37,7 +37,7 @@ export default function Home() {
         <Starfield intensity={0.3} />
         <Header projectName="" round={0} maxRounds={0} sky="" connected={connected} />
         <main className="flex-1 relative z-10">
-          <IdleScreen connected={connected} />
+          <IdleScreen connected={connected} onStart={startSwarm} />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
