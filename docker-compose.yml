@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "8000:8000"
+      - "3479:8000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - AUTONOMA_MODEL=${AUTONOMA_MODEL:-claude-sonnet-4-20250514}
@@ -25,9 +25,9 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+        NEXT_PUBLIC_WS_URL: ws://localhost:3479/ws
     ports:
-      - "3000:3000"
+      - "3478:3000"
     depends_on:
       api:
         condition: service_healthy

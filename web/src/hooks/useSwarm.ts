@@ -5,7 +5,7 @@ import type { AgentData, BossData, EventLogEntry, RelationshipData, SwarmState, 
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3479/ws";
 
 const INITIAL_STATE: SwarmState = {
   status: "idle",
