@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { useId } from "react";
 import type { ChibiRole, PaletteSlot } from "../types";
 
 export interface HeldItemProps {
@@ -47,8 +48,9 @@ interface SubProps {
 
 /* director — golden scepter with 5-point star and gem ------------- */
 function DirectorScepter({ palette, outline }: SubProps): React.JSX.Element {
-  const gRod = "item-director-rod";
-  const gGem = "item-director-gem";
+  const uid = useId();
+  const gRod = `${uid}-item-director-rod`;
+  const gGem = `${uid}-item-director-gem`;
   return (
     <g>
       <defs>
@@ -82,8 +84,9 @@ function DirectorScepter({ palette, outline }: SubProps): React.JSX.Element {
 
 /* coder — glowing magic orb --------------------------------------- */
 function CoderOrb({ palette, outline }: SubProps): React.JSX.Element {
-  const gOrb = "item-coder-orb";
-  const gGlow = "item-coder-glow";
+  const uid = useId();
+  const gOrb = `${uid}-item-coder-orb`;
+  const gGlow = `${uid}-item-coder-glow`;
   return (
     <g>
       <defs>
@@ -113,8 +116,9 @@ function CoderOrb({ palette, outline }: SubProps): React.JSX.Element {
 
 /* reviewer — magnifying glass ------------------------------------- */
 function ReviewerMagnifier({ palette, outline }: SubProps): React.JSX.Element {
-  const gRing = "item-reviewer-ring";
-  const gGlass = "item-reviewer-glass";
+  const uid = useId();
+  const gRing = `${uid}-item-reviewer-ring`;
+  const gGlass = `${uid}-item-reviewer-glass`;
   const warm = isWarm(palette.aura);
   const ringColor = warm ? "#d8961a" : "#3a2a4a";
   return (
@@ -143,8 +147,9 @@ function ReviewerMagnifier({ palette, outline }: SubProps): React.JSX.Element {
 
 /* tester — potion flask ------------------------------------------- */
 function TesterFlask({ palette, outline }: SubProps): React.JSX.Element {
-  const gLiquid = "item-tester-liquid";
-  const gGlass = "item-tester-glass";
+  const uid = useId();
+  const gLiquid = `${uid}-item-tester-liquid`;
+  const gGlass = `${uid}-item-tester-glass`;
   return (
     <g>
       <defs>
