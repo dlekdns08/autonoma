@@ -85,6 +85,8 @@ function AgentOnMap({ agent, motion }: { agent: AgentData; motion: MotionState }
           species={agent.species}
           mood={agent.mood}
           state={agent.state}
+          role={agent.role}
+          seed={agent.name}
           facingLeft={motion.facingLeft}
           walkPhase={motion.isMoving ? motion.walkPhase : undefined}
           rarity={agent.rarity}
