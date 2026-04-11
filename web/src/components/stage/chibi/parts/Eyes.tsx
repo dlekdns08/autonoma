@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useId } from "react";
 import type { ChibiMood } from "../types";
 
 export interface EyesProps {
