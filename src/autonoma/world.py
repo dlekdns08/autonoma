@@ -1185,10 +1185,10 @@ class NarrativeEngine:
 
     def narrate_project_complete(self, project_name: str, agents: list[str], round_number: int) -> str:
         text = (
-            f"~*~*~ PROJECT COMPLETE! ~*~*~ "
-            f"'{project_name}' is finished! "
-            f"{len(agents)} brave agents celebrate together! "
-            f"Fireworks fill the sky! ♥★♪"
+            f"~*~*~ 프로젝트 완료! ~*~*~ "
+            f"'{project_name}' 프로젝트가 마무리되었습니다! "
+            f"{len(agents)}명의 용감한 에이전트들이 함께 축하합니다! "
+            f"불꽃놀이가 밤하늘을 수놓습니다! ♥★♪"
         )
         self._add(NarrativeEvent.PROJECT_COMPLETE, text, round_number, agents, dramatic_weight=5)
         return text
@@ -1221,9 +1221,9 @@ class NarrativeEngine:
         return sorted(self.chronicle, key=lambda e: e.dramatic_weight, reverse=True)[:top_n]
 
     def render_epilogue(self) -> str:
-        """Render a final narrative summary of the entire project."""
+        """Render a final narrative summary of the entire project (in Korean)."""
         if not self.chronicle:
-            return "No story to tell yet~"
+            return "아직 들려드릴 이야기가 없습니다~"
 
         total_rounds = max(e.round_number for e in self.chronicle) if self.chronicle else 0
         all_agents = set()
@@ -1234,18 +1234,18 @@ class NarrativeEngine:
 
         lines = [
             "╔═══════════════════════════════╗",
-            "║    ~*~ THE STORY SO FAR ~*~   ║",
+            "║    ~*~ 지금까지의 이야기 ~*~  ║",
             "╚═══════════════════════════════╝",
             "",
-            f"Over {total_rounds} rounds, {len(all_agents)} brave agents embarked on an adventure.",
+            f"총 {total_rounds} 라운드에 걸쳐, {len(all_agents)}명의 용감한 에이전트들이 모험을 떠났습니다.",
             "",
-            "Key moments:",
+            "핵심 순간들:",
         ]
         for h in highlights:
             lines.append(f"  ★ {h.text}")
 
         lines.append("")
-        lines.append("And so the story continues... ~*~")
+        lines.append("그리고 이야기는 계속됩니다... ~*~")
         return "\n".join(lines)
 
 
