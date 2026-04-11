@@ -58,10 +58,13 @@ export default function Home() {
         />
         <main className="flex-1 overflow-hidden relative z-10">
           <EndScreen
+            finalAnswer={state.final_answer}
             epilogue={state.epilogue}
             leaderboard={state.leaderboard}
             multiverse={state.multiverse}
             graveyard={state.graveyard}
+            files={state.files}
+            projectName={state.project_name}
           />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
