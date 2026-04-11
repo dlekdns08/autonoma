@@ -23,11 +23,12 @@ export interface EyesProps {
  */
 export function Eyes(props: EyesProps): React.JSX.Element {
   const { mood, irisColor, outline } = props;
+  const uid = useId();
 
   // ---- shared gradient + clip ids ---------------------------------------
-  const irisGradId = `eyes-${mood}-iris-grad`;
-  const clipLId = `eyes-${mood}-clip-l`;
-  const clipRId = `eyes-${mood}-clip-r`;
+  const irisGradId = `${uid}-eyes-${mood}-iris-grad`;
+  const clipLId = `${uid}-eyes-${mood}-clip-l`;
+  const clipRId = `${uid}-eyes-${mood}-clip-r`;
 
   // ---- shared definitions block (only emitted when iris is visible) -----
   const IrisDefs = (
