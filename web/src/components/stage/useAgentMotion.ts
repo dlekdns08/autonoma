@@ -47,10 +47,11 @@ function rand(min: number, max: number) {
 export function useAgentMotion({ agents, groundYPercent }: Options): Record<string, MotionState> {
   const [tick, setTick] = useState(0);
   const internalRef = useRef<Map<string, MotionInternal>>(new Map());
-  const lastFrameRef = useRef<number>(performance.now());
+  const lastFrameRef = useRef<number>(0);
 
   useEffect(() => {
     const now = performance.now();
+    lastFrameRef.current = now;
     const next = new Map<string, MotionInternal>();
     const existing = internalRef.current;
     const usedX: number[] = [];
