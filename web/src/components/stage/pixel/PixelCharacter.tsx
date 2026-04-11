@@ -2,7 +2,12 @@
 
 import React, { useEffect, useMemo, useRef } from "react";
 
-import { WALK_FRAMES, IDLE_FRAME, walkPhaseToFrame } from "./characterSprite";
+import {
+  buildFrames,
+  resolveFeatures,
+  walkPhaseToFrame,
+  type CharacterFeatures,
+} from "./characterSprite";
 import { buildCharacterPalette } from "./palette";
 import { drawGrid } from "./drawGrid";
 import { CHAR } from "./types";
@@ -17,6 +22,8 @@ export interface PixelCharacterProps {
   facingLeft?: boolean;
   /** optional external pixel scale for the gallery (the Stage uses 100% sizing) */
   pixelScale?: number;
+  /** override seed-derived features (gallery/preview only) */
+  featureOverride?: Partial<CharacterFeatures>;
 }
 
 /**
@@ -35,6 +42,7 @@ export default function PixelCharacter({
   walkPhase,
   facingLeft = false,
   pixelScale,
+  featureOverride,
 }: PixelCharacterProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -43,9 +51,20 @@ export default function PixelCharacter({
     [role, species, mood, seed],
   );
 
+  const overrideKey = featureOverride
+    ? JSON.stringify(featureOverride)
+    : "";
+  const features = useMemo(
+    () => ({ ...resolveFeatures(seed, species, role), ...featureOverride }),
+    // featureOverride is serialized to a stable key to keep the memo honest
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seed, species, role, overrideKey],
+  );
+  const frames = useMemo(() => buildFrames(features), [features]);
+
   const frameIdx =
-    walkPhase !== undefined ? walkPhaseToFrame(walkPhase) : -1;
-  const grid = frameIdx >= 0 ? WALK_FRAMES[frameIdx] : IDLE_FRAME;
+    walkPhase !== undefined ? walkPhaseToFrame(walkPhase) : 0;
+  const grid = frames[frameIdx];
 
   useEffect(() => {
     const canvas = ref.current;
