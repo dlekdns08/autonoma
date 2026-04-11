@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import type { AgentData } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AgentData, BossData, CookieData } from "@/lib/types";
 import PixelMap from "./stage/pixel/PixelMap";
 import PixelCharacter from "./stage/pixel/PixelCharacter";
 import { STAGE, CHAR } from "./stage/pixel/types";
@@ -19,6 +19,8 @@ interface Props {
   agents: AgentData[];
   sky?: string;
   theme?: MapTheme;
+  boss?: BossData | null;
+  cookies?: CookieData[];
   onSelectAgent?: (name: string) => void;
 }
 
@@ -41,15 +43,30 @@ function resolveSky(sky: string | undefined): SkyMode {
 const CHAR_W_PCT = (CHAR.width / STAGE.width) * 100;
 const CHAR_H_PCT = (CHAR.height / STAGE.height) * 100;
 
+const BOSS_SPECIES_ICON: Record<string, string> = {
+  dragon: "🐉",
+  kraken: "🐙",
+  golem: "🗿",
+  shadow: "👤",
+  phoenix: "🔥",
+};
+
 export default function Stage({
   agents,
   sky,
   theme = "hq",
+  boss = null,
+  cookies = [],
   onSelectAgent,
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
-  const { motions, bubbles, pairs } = useAgentMotion({ agents, map });
+  const { motions, bubbles, pairs } = useAgentMotion({
+    agents,
+    map,
+    boss,
+    cookies,
+  });
 
   if (agents.length === 0) {
     return (
@@ -68,6 +85,14 @@ export default function Stage({
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20">
       <PixelMap sky={skyMode} theme={theme}>
+        {/* Cookies sit under the characters so an agent walking onto one
+            is drawn on top of it. */}
+        {cookies.map((c) => (
+          <CookieSprite key={`cookie-${c.recipient}`} cookie={c} />
+        ))}
+
+        {boss && <BossSprite boss={boss} />}
+
         <DialogueLinks pairs={pairs} motions={motions} />
         {pairs.map((p) => (
           <div
@@ -120,7 +145,6 @@ function DialogueLinks({
         const a = motions[p.a];
         const b = motions[p.b];
         if (!a || !b) return null;
-        // Connect the characters' "heads" (~8% above feet).
         const ax = a.x;
         const ay = a.y - 8;
         const bx = b.x;
@@ -141,6 +165,212 @@ function DialogueLinks({
         );
       })}
     </svg>
+  );
+}
+
+// ── Boss sprite on the stage ─────────────────────────────────────────────
+//
+// The backend places the boss at the centre of the War Room. We render a
+// big emoji for the species, a red HP bar under it, and a hit-flash that
+// triggers from the `hitSeq` counter bumped by useSwarm. A floating
+// damage number shoots up from the boss whenever a new hit lands.
+
+function BossSprite({ boss }: { boss: BossData }) {
+  const [shakeKey, setShakeKey] = useState(0);
+  const [damagePops, setDamagePops] = useState<
+    Array<{ id: number; value: number; agent: string }>
+  >([]);
+  const popIdRef = useRef(0);
+  const lastHitRef = useRef(0);
+
+  useEffect(() => {
+    if (boss.hitSeq === 0 || boss.hitSeq === lastHitRef.current) return;
+    lastHitRef.current = boss.hitSeq;
+    setShakeKey((k) => k + 1);
+    if (boss.lastDamage > 0) {
+      const id = ++popIdRef.current;
+      const value = boss.lastDamage;
+      const agent = boss.lastAttacker;
+      setDamagePops((prev) => [...prev.slice(-3), { id, value, agent }]);
+      setTimeout(() => {
+        setDamagePops((prev) => prev.filter((p) => p.id !== id));
+      }, 1100);
+    }
+  }, [boss.hitSeq, boss.lastDamage, boss.lastAttacker]);
+
+  const icon = BOSS_SPECIES_ICON[boss.species] ?? "☠";
+  const hpPct = boss.max_hp > 0 ? (boss.hp / boss.max_hp) * 100 : 0;
+  const hpColor =
+    hpPct > 60 ? "bg-red-500" : hpPct > 30 ? "bg-orange-500" : "bg-red-700";
+
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${boss.x}%`,
+        top: `${boss.y}%`,
+        transform: "translate(-50%, -100%)",
+      }}
+    >
+      {/* Damage numbers — positioned absolutely above the sprite. */}
+      {damagePops.map((pop, idx) => (
+        <div
+          key={pop.id}
+          className="absolute left-1/2 -translate-x-1/2 font-mono text-xs font-bold text-yellow-300 drop-shadow-[0_0_3px_rgba(0,0,0,0.9)] animate-[floatUp_1.1s_ease-out_forwards]"
+          style={{
+            bottom: "100%",
+            marginBottom: `${4 + idx * 2}px`,
+            textShadow: "0 0 4px rgba(0,0,0,0.9)",
+          }}
+        >
+          -{pop.value}
+          {pop.agent && (
+            <span className="ml-1 text-[9px] text-white/70">{pop.agent}</span>
+          )}
+        </div>
+      ))}
+
+      <div
+        key={shakeKey}
+        className="flex flex-col items-center animate-[bossShake_0.35s_ease-out]"
+      >
+        {/* Glow aura */}
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-red-500/30 blur-md animate-pulse" />
+          <div
+            className="relative text-4xl leading-none drop-shadow-[0_0_6px_rgba(255,0,0,0.8)]"
+            style={{ filter: "saturate(1.3)" }}
+          >
+            {icon}
+          </div>
+        </div>
+
+        {/* Name + HP */}
+        <div className="mt-0.5 rounded border border-red-500/60 bg-black/80 px-1.5 py-0.5 font-mono text-[8px] text-red-200 whitespace-nowrap">
+          ☠ {boss.name} Lv{boss.level}
+        </div>
+        <div className="mt-0.5 h-1 w-16 overflow-hidden rounded-full border border-red-900/80 bg-black/70">
+          <div
+            className={`h-full transition-all duration-200 ${hpColor}`}
+            style={{ width: `${hpPct}%` }}
+          />
+        </div>
+        <div className="font-mono text-[7px] text-red-300/80 leading-none">
+          {boss.hp}/{boss.max_hp}
+        </div>
+      </div>
+
+      <style jsx>{`
+        @keyframes bossShake {
+          0% {
+            transform: translate(0, 0);
+          }
+          20% {
+            transform: translate(-2px, 1px);
+          }
+          40% {
+            transform: translate(2px, -1px);
+          }
+          60% {
+            transform: translate(-1px, 1px);
+          }
+          80% {
+            transform: translate(1px, 0);
+          }
+          100% {
+            transform: translate(0, 0);
+          }
+        }
+        @keyframes floatUp {
+          0% {
+            transform: translate(-50%, 0) scale(0.7);
+            opacity: 0;
+          }
+          20% {
+            transform: translate(-50%, -6px) scale(1.15);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -28px) scale(1);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Fortune cookie sprite ───────────────────────────────────────────────
+
+function CookieSprite({ cookie }: { cookie: CookieData }) {
+  const opened = cookie.openedAt !== undefined;
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${cookie.x}%`,
+        top: `${cookie.y}%`,
+        transform: "translate(-50%, -100%)",
+      }}
+    >
+      {opened ? (
+        <div className="relative">
+          <div className="text-xl animate-[cookiePop_1.1s_ease-out_forwards]">
+            ✨
+          </div>
+          <div className="absolute -top-3 left-1/2 -translate-x-1/2 font-mono text-[8px] font-bold text-amber-200 whitespace-nowrap animate-[floatUp_1.1s_ease-out_forwards]">
+            +XP!
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center animate-[cookieBob_2s_ease-in-out_infinite]">
+          <div className="text-lg drop-shadow-[0_0_3px_rgba(251,191,36,0.6)]">
+            🥠
+          </div>
+          <div className="mt-0.5 rounded bg-amber-500/20 px-1 text-[7px] font-mono text-amber-200 whitespace-nowrap">
+            {cookie.recipient.slice(0, 8)}
+          </div>
+        </div>
+      )}
+      <style jsx>{`
+        @keyframes cookieBob {
+          0%,
+          100% {
+            transform: translateY(0);
+          }
+          50% {
+            transform: translateY(-2px);
+          }
+        }
+        @keyframes cookiePop {
+          0% {
+            transform: scale(0.6);
+            opacity: 0.6;
+          }
+          40% {
+            transform: scale(1.6);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(2.2);
+            opacity: 0;
+          }
+        }
+        @keyframes floatUp {
+          0% {
+            transform: translate(-50%, 0);
+            opacity: 0;
+          }
+          25% {
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -18px);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
   );
 }
 
