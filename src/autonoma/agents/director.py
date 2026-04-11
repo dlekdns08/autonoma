@@ -12,6 +12,7 @@ from autonoma.agents.base import AutonomousAgent, _extract_json
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.tracing import traced_messages_create
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -97,7 +98,10 @@ Rules:
         )
 
         try:
-            response = await self.client.messages.create(
+            response = await traced_messages_create(
+                self.client,
+                agent="Director",
+                phase="decompose_goal",
                 model=settings.model,
                 max_tokens=settings.max_tokens,
                 temperature=0.2,
