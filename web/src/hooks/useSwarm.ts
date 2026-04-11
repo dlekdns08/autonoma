@@ -97,6 +97,14 @@ export function useSwarm() {
           case "agent.spawned":
             addToast("info", "Agent Spawned", `${data.emoji} ${data.name} (${data.role})`, `${data.emoji}`);
             break;
+          case "human.feedback":
+            addToast(
+              "info",
+              "Feedback delivered",
+              `${(data.text as string)?.slice(0, 60) ?? ""}`,
+              "✉",
+            );
+            break;
         }
 
         setState((prev) => {
@@ -279,9 +287,14 @@ export function useSwarm() {
     }
   }, []);
 
-  const startSwarm = useCallback((goal: string) => {
+  const startSwarm = useCallback((goal: string, agentCount?: number) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ command: "start", goal }));
+      const payload: { command: string; goal: string; agent_count?: number } = {
+        command: "start",
+        goal,
+      };
+      if (typeof agentCount === "number") payload.agent_count = agentCount;
+      wsRef.current.send(JSON.stringify(payload));
     }
   }, []);
 
