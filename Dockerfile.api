@@ -26,6 +26,14 @@ FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
+# Install bubblewrap so agents can execute code they write inside an
+# isolated sandbox (see src/autonoma/sandbox.py). Marking bwrap setuid
+# lets it create user namespaces even in unprivileged containers.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bubblewrap libseccomp2 ca-certificates \
+ && chmod u+s /usr/bin/bwrap \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy the virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
