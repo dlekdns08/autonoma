@@ -241,9 +241,18 @@ function buildDialogue(aName: string, bName: string, seed: number): string[] {
 
 let dialogueSeedCounter = 0;
 
+export interface DialoguePair {
+  a: string;
+  b: string;
+  /** midpoint x in percent space — useful for rendering a heart icon */
+  midX: number;
+  midY: number;
+}
+
 interface MotionResult {
   motions: Record<string, MotionState>;
   bubbles: DialogueBubble[];
+  pairs: DialoguePair[];
 }
 
 export function useAgentMotion({ agents, map }: Options): MotionResult {
@@ -514,16 +523,16 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
         }
       });
 
-      // After motion: try to kick off dialogues between nearby idle pairs.
+      // After motion: try to kick off dialogues between nearby pairs.
+      // We intentionally allow moving agents to strike up conversations when
+      // they pass each other — that's what makes the swarm feel alive.
       const list = Array.from(motions.values());
       for (let i = 0; i < list.length; i++) {
         const a = list[i];
         if (a.dialogueWith) continue;
-        if (a.isMoving) continue;
         for (let j = i + 1; j < list.length; j++) {
           const b = list[j];
           if (b.dialogueWith) continue;
-          if (b.isMoving) continue;
           tryStartDialogue(a, b, now);
           if (a.dialogueWith) break;
         }
@@ -554,8 +563,26 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
       jumpOffset: m.jumpOffset,
     };
   });
+
+  const seen = new Set<string>();
+  const pairs: DialoguePair[] = [];
+  internalRef.current.forEach((m) => {
+    if (!m.dialogueWith) return;
+    const key = [m.name, m.dialogueWith].sort().join("↔");
+    if (seen.has(key)) return;
+    seen.add(key);
+    const partner = internalRef.current.get(m.dialogueWith);
+    if (!partner) return;
+    pairs.push({
+      a: m.name,
+      b: partner.name,
+      midX: (m.x + partner.x) / 2,
+      midY: (m.y + partner.y) / 2,
+    });
+  });
+
   void tick;
-  return { motions: snapshot, bubbles: bubblesRef.current.slice() };
+  return { motions: snapshot, bubbles: bubblesRef.current.slice(), pairs };
 }
 
 function findInteractionPartner(
@@ -569,14 +596,11 @@ function findInteractionPartner(
   let bestDist = Infinity;
   for (const other of all) {
     if (other.name === self.name) continue;
-    if (
-      other.state !== "talking" &&
-      other.state !== "thinking" &&
-      other.state !== "idle"
-    )
-      continue;
+    // Don't try to chat with celebrating/error agents; everything else is fair game.
+    if (other.state === "celebrating" || other.state === "error") continue;
     const om = motions.get(other.name);
     if (!om) continue;
+    if (om.dialogueWith) continue;
     const d = Math.hypot(om.x - selfMotion.x, om.y - selfMotion.y);
     if (d < bestDist) {
       bestDist = d;
