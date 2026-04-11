@@ -93,6 +93,8 @@ export default function Home() {
             <Stage
               agents={state.agents}
               sky={state.sky}
+              boss={state.boss}
+              cookies={state.cookies}
               onSelectAgent={handleSelectAgent}
             />
             {state.boss && <BossOverlay boss={state.boss} />}
