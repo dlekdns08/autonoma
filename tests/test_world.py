@@ -792,8 +792,8 @@ class TestNarrativeEngine:
     def test_narrate_project_complete(self):
         engine = NarrativeEngine()
         text = engine.narrate_project_complete("MyApp", ["A", "B", "C"], round_number=10)
-        assert "PROJECT COMPLETE" in text
-        assert "3 brave agents" in text
+        assert "프로젝트 완료" in text
+        assert "3명" in text
 
     def test_get_chapter(self):
         engine = NarrativeEngine()
@@ -813,13 +813,13 @@ class TestNarrativeEngine:
 
     def test_render_epilogue(self):
         engine = NarrativeEngine()
-        assert "No story" in engine.render_epilogue()
+        assert "이야기" in engine.render_epilogue()
 
         engine.narrate_spawn("Alice", "cat", "coder", "common", round_number=1)
         engine.narrate_project_complete("App", ["Alice"], round_number=5)
         epilogue = engine.render_epilogue()
-        assert "STORY SO FAR" in epilogue
-        assert "5 rounds" in epilogue
+        assert "지금까지의 이야기" in epilogue
+        assert "5 라운드" in epilogue
 
     def test_relationship_milestone(self):
         engine = NarrativeEngine()
