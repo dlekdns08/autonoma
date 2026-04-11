@@ -19,7 +19,7 @@ import Minimap from "@/components/Minimap";
 import type { AgentData } from "@/lib/types";
 
 export default function Home() {
-  const { state, connected, toasts, dismissToast, sendMessage, startSwarm } = useSwarm();
+  const { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
 
   const handleSelectAgent = useCallback(
@@ -150,7 +150,11 @@ export default function Home() {
 
       {/* Agent Modal */}
       {selectedAgent && (
-        <AgentModal agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
+        <AgentModal
+          agent={selectedAgent}
+          onClose={() => setSelectedAgent(null)}
+          onSend={sendToAgent}
+        />
       )}
     </div>
   );
