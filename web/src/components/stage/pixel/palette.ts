@@ -93,6 +93,27 @@ export interface HairColors {
   light: string;
 }
 
+// ── headwear variants (cap / beanie / wizard hat) ────────────────────────
+export interface HeadwearColors {
+  dark: string;
+  light: string;
+}
+
+export const HEADWEAR_SLOTS: HeadwearColors[] = [
+  { dark: "#7a2318", light: "#c84a32" }, // red
+  { dark: "#1a4b7a", light: "#3a8bd6" }, // blue
+  { dark: "#2d5e3e", light: "#5ab973" }, // green
+  { dark: "#8b5a1f", light: "#e8b447" }, // gold
+  { dark: "#1a1a22", light: "#3a3a44" }, // black
+  { dark: "#5c2b7a", light: "#a55ad9" }, // purple
+  { dark: "#a86020", light: "#e89058" }, // orange
+  { dark: "#2a3a5a", light: "#4a6890" }, // navy
+];
+
+export function pickHeadwearColors(seed: string): HeadwearColors {
+  return HEADWEAR_SLOTS[seedHash(seed + "_hw") % HEADWEAR_SLOTS.length];
+}
+
 export const HAIR_SLOTS: HairColors[] = [
   { dark: "#3a1810", light: "#7c3a1c" }, // brown
   { dark: "#1b1420", light: "#3a2844" }, // black-purple
@@ -192,6 +213,7 @@ export function buildCharacterPalette(input: CharacterPaletteInput): PixelPalett
   const roleKey = resolveRole(input.role);
   const speciesKey = resolveSpecies(input.species);
   const hair = pickHairColors(input.seed);
+  const headwear = pickHeadwearColors(input.seed);
   const outfit = ROLE_COLORS[roleKey];
   const skin = SPECIES_COLORS[speciesKey];
 
@@ -220,5 +242,9 @@ export function buildCharacterPalette(input: CharacterPaletteInput): PixelPalett
     p: outfit.pantsLight,
     B: outfit.bootsDark,
     b: outfit.bootsLight,
+    K: headwear.dark,
+    k: headwear.light,
+    A: skin.accent,
+    a: "#ffb8cc",
   };
 }
