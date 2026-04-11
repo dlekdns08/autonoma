@@ -476,9 +476,11 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
           const dirX = dx * invDist;
           const dirY = dy * invDist;
           const advance = Math.min(stepSize, dist);
-          const room = m.room;
-          const nx = clamp(m.x + dirX * advance, room.minX, room.maxX);
-          const ny = clamp(m.y + dirY * advance, room.minY, room.maxY);
+          // Full-map bounds during travel so agents can cross through
+          // doors and corridors; per-room clamping only applies when
+          // picking targets, not while walking.
+          const nx = clamp(m.x + dirX * advance, MIN_X, MAX_X);
+          const ny = clamp(m.y + dirY * advance, MIN_Y, MAX_Y);
 
           // Collision: try full step, then x-only, then y-only.
           if (canStand(map, nx, ny)) {
