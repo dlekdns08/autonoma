@@ -538,6 +538,7 @@ export function useAgentMotion({
             [m.targetX, m.targetY] = pickWalkableTarget(map, m.homeX, m.homeY, room);
             m.nextActionAt = now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX);
           }
+          }
         }
 
         const dx = m.targetX - m.x;
