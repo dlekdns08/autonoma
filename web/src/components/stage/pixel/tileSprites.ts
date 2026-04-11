@@ -14,7 +14,15 @@ export type TileKind =
   | "waterEdge"
   | "sand"
   | "stone"
-  | "flowerGrass";
+  | "flowerGrass"
+  // ── interior kinds ─────────────────────────────────────────────
+  | "floorWood"
+  | "floorTile"
+  | "carpet"
+  | "wallTop"
+  | "wallFront"
+  | "doormat"
+  | "roofTile";
 
 const TILE = 16;
 
@@ -242,6 +250,223 @@ function drawStone(
     ctx.fillRect(ox + x, oy + y, 1, 1);
   }
 }
+
+// ── interior tile palettes & drawers ────────────────────────────────────
+
+const WOOD_FLOOR: TilePalette = {
+  base: "#a47148",
+  shade: "#6b4424",
+  highlight: "#c48a5a",
+  accent: "#3a2210",
+};
+
+const TILE_FLOOR: TilePalette = {
+  base: "#d4d0c4",
+  shade: "#9b9688",
+  highlight: "#f0ecde",
+  accent: "#5a564a",
+};
+
+const CARPET_FLOOR: TilePalette = {
+  base: "#8a2c4e",
+  shade: "#5a1a2e",
+  highlight: "#c04a74",
+  accent: "#2a0a14",
+};
+
+const WALL_TOP: TilePalette = {
+  base: "#6b5a4a",
+  shade: "#3a2f24",
+  highlight: "#8a7660",
+  accent: "#1e140a",
+};
+
+const WALL_FRONT: TilePalette = {
+  base: "#c8a070",
+  shade: "#7a5a34",
+  highlight: "#e4bf94",
+  accent: "#3a2612",
+};
+
+const DOORMAT: TilePalette = {
+  base: "#4a3620",
+  shade: "#2a1e0e",
+  highlight: "#7a5a34",
+  accent: "#1a1004",
+};
+
+const ROOF_TILE: TilePalette = {
+  base: "#7a2a1a",
+  shade: "#4a1608",
+  highlight: "#b84830",
+  accent: "#2a0a04",
+};
+
+function drawFloorWood(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
+  paintBase(ctx, ox, oy, WOOD_FLOOR);
+  // horizontal plank lines every 4 rows
+  ctx.fillStyle = WOOD_FLOOR.shade;
+  for (let y = 3; y < TILE; y += 4) {
+    for (let x = 0; x < TILE; x++) ctx.fillRect(ox + x, oy + y, 1, 1);
+  }
+  // grain specks
+  ctx.fillStyle = WOOD_FLOOR.accent;
+  for (let i = 0; i < 4; i++) {
+    const x = Math.floor(rand01(seed, 80 + i * 3) * TILE);
+    const y = Math.floor(rand01(seed, 90 + i * 3) * TILE);
+    ctx.fillRect(ox + x, oy + y, 1, 1);
+  }
+  // plank-end verticals (deterministic per row)
+  ctx.fillStyle = WOOD_FLOOR.shade;
+  for (let band = 0; band < 4; band++) {
+    const rowY = band * 4;
+    const sx = (seed >> (band * 2)) % TILE;
+    ctx.fillRect(ox + sx, oy + rowY, 1, 3);
+  }
+  // highlight
+  sprinkle(ctx, ox, oy, WOOD_FLOOR.highlight, seed ^ 0xa3, 3);
+}
+
+function drawFloorTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
+  paintBase(ctx, ox, oy, TILE_FLOOR);
+  // grout lines forming 2×2 sub-tiles (8px each)
+  ctx.fillStyle = TILE_FLOOR.shade;
+  for (let x = 0; x < TILE; x++) {
+    ctx.fillRect(ox + x, oy + 7, 1, 1);
+    ctx.fillRect(ox + x, oy + 15, 1, 1);
+  }
+  for (let y = 0; y < TILE; y++) {
+    ctx.fillRect(ox + 7, oy + y, 1, 1);
+    ctx.fillRect(ox + 15, oy + y, 1, 1);
+  }
+  // highlight corners
+  ctx.fillStyle = TILE_FLOOR.highlight;
+  ctx.fillRect(ox + 0, oy + 0, 2, 1);
+  ctx.fillRect(ox + 8, oy + 0, 2, 1);
+  ctx.fillRect(ox + 0, oy + 8, 2, 1);
+  ctx.fillRect(ox + 8, oy + 8, 2, 1);
+  // occasional speck of dirt
+  if ((seed & 3) === 0) {
+    ctx.fillStyle = TILE_FLOOR.accent;
+    ctx.fillRect(ox + ((seed >> 2) % 6) + 2, oy + ((seed >> 5) % 6) + 2, 1, 1);
+  }
+}
+
+function drawCarpet(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
+  paintBase(ctx, ox, oy, CARPET_FLOOR);
+  // woven pattern — repeating diamond
+  ctx.fillStyle = CARPET_FLOOR.shade;
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      if (((x + y) & 3) === 0) ctx.fillRect(ox + x, oy + y, 1, 1);
+    }
+  }
+  ctx.fillStyle = CARPET_FLOOR.highlight;
+  for (let y = 1; y < TILE; y += 4) {
+    for (let x = 1; x < TILE; x += 4) {
+      ctx.fillRect(ox + x, oy + y, 1, 1);
+    }
+  }
+  // gold trim glints
+  if ((seed & 1) === 0) {
+    ctx.fillStyle = "#e6b04a";
+    ctx.fillRect(ox + 3, oy + 3, 1, 1);
+    ctx.fillRect(ox + 11, oy + 11, 1, 1);
+  }
+}
+
+function drawWallTop(ctx: Ctx, ox: number, oy: number): void {
+  // top face of a wall (darker), used for the top edge of each room
+  paintBase(ctx, ox, oy, WALL_TOP);
+  ctx.fillStyle = WALL_TOP.highlight;
+  ctx.fillRect(ox + 0, oy + 0, TILE, 1);
+  ctx.fillStyle = WALL_TOP.shade;
+  ctx.fillRect(ox + 0, oy + TILE - 1, TILE, 1);
+  // brick seams
+  ctx.fillStyle = WALL_TOP.accent;
+  for (let x = 3; x < TILE; x += 6) ctx.fillRect(ox + x, oy + 6, 1, 4);
+}
+
+function drawWallFront(ctx: Ctx, ox: number, oy: number, seed: number): void {
+  // front face of the wall — brick pattern
+  paintBase(ctx, ox, oy, WALL_FRONT);
+  ctx.fillStyle = WALL_FRONT.shade;
+  // horizontal mortar lines
+  for (let y = 3; y < TILE; y += 5) {
+    for (let x = 0; x < TILE; x++) ctx.fillRect(ox + x, oy + y, 1, 1);
+  }
+  // vertical mortar lines (offset every other row for brick bond)
+  for (let row = 0; row < 3; row++) {
+    const yTop = row * 5;
+    const offset = (row & 1) === 0 ? 0 : 4;
+    for (let x = offset; x < TILE; x += 8) {
+      ctx.fillRect(ox + x, oy + yTop, 1, 3);
+    }
+  }
+  // highlight top edge
+  ctx.fillStyle = WALL_FRONT.highlight;
+  ctx.fillRect(ox + 0, oy + 0, TILE, 1);
+  // weathering speck
+  if ((seed & 3) === 0) {
+    ctx.fillStyle = WALL_FRONT.accent;
+    ctx.fillRect(ox + 2 + ((seed >> 2) % 10), oy + 1 + ((seed >> 5) % 12), 1, 1);
+  }
+}
+
+function drawDoormat(ctx: Ctx, ox: number, oy: number, seed: number): void {
+  paintBase(ctx, ox, oy, DOORMAT);
+  ctx.fillStyle = DOORMAT.highlight;
+  // bristle lines
+  for (let y = 2; y < TILE; y += 3) {
+    for (let x = 0; x < TILE; x += 2) {
+      if (((x + seed) & 1) === 0) ctx.fillRect(ox + x, oy + y, 1, 1);
+    }
+  }
+  ctx.fillStyle = DOORMAT.accent;
+  ctx.fillRect(ox + 0, oy + 0, TILE, 1);
+  ctx.fillRect(ox + 0, oy + TILE - 1, TILE, 1);
+}
+
+function drawRoofTile(ctx: Ctx, ox: number, oy: number, seed: number): void {
+  paintBase(ctx, ox, oy, ROOF_TILE);
+  // shingles: scalloped rows
+  ctx.fillStyle = ROOF_TILE.shade;
+  for (let y = 3; y < TILE; y += 4) {
+    for (let x = 0; x < TILE; x++) ctx.fillRect(ox + x, oy + y, 1, 1);
+  }
+  ctx.fillStyle = ROOF_TILE.highlight;
+  for (let row = 0; row < 4; row++) {
+    const yTop = row * 4;
+    const off = (row & 1) * 2;
+    for (let x = off; x < TILE; x += 4) {
+      ctx.fillRect(ox + x, oy + yTop, 2, 1);
+    }
+  }
+  ctx.fillStyle = ROOF_TILE.accent;
+  for (let i = 0; i < 3; i++) {
+    const x = (seed + i * 5) % TILE;
+    const y = (seed + i * 3) % TILE;
+    ctx.fillRect(ox + x, oy + y, 1, 1);
+  }
+}
+
+// ── helper renamed to keep the Ctx alias local to interior funcs ────────
+type Ctx = CanvasRenderingContext2D;
 
 function drawFlowerGrass(
   ctx: CanvasRenderingContext2D,
