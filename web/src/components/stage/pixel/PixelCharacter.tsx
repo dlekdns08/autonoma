@@ -51,14 +51,21 @@ export default function PixelCharacter({
     [role, species, mood, seed],
   );
 
-  const overrideKey = featureOverride
-    ? JSON.stringify(featureOverride)
-    : "";
+  // Feature overrides are only used by the gallery, which passes stable
+  // literal objects per render, so a flat dep array on the individual
+  // override fields is cheaper and safer than stringifying every render.
   const features = useMemo(
     () => ({ ...resolveFeatures(seed, species, role), ...featureOverride }),
-    // featureOverride is serialized to a stable key to keep the memo honest
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [seed, species, role, overrideKey],
+    [
+      seed,
+      species,
+      role,
+      featureOverride?.hairStyle,
+      featureOverride?.headwear,
+      featureOverride?.ears,
+      featureOverride?.glasses,
+      featureOverride?.facialHair,
+    ],
   );
   const frames = useMemo(() => buildFrames(features), [features]);
 
