@@ -6,6 +6,12 @@ import PixelCharacter from "@/components/stage/pixel/PixelCharacter";
 import PixelMap from "@/components/stage/pixel/PixelMap";
 import { CHAR, STAGE, type SkyMode } from "@/components/stage/pixel/types";
 import type { MapTheme } from "@/components/stage/pixel/mapData";
+import type {
+  HairStyle,
+  Headwear,
+  EarType,
+  FacialHair,
+} from "@/components/stage/pixel/characterSprite";
 
 const ROLES = ["director", "coder", "reviewer", "tester", "writer", "designer", "generic"];
 const SPECIES = ["human", "cat", "rabbit", "fox", "owl", "bear", "penguin", "hamster", "dog", "panda", "duck"];
@@ -13,6 +19,28 @@ const MOODS = ["happy", "excited", "proud", "inspired", "focused", "determined",
 const THEMES: MapTheme[] = ["meadow", "forest", "town"];
 const SKIES: SkyMode[] = ["dawn", "day", "dusk", "night"];
 const SEEDS = ["alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi", "ivan", "judy", "ken", "luna"];
+const HAIR_STYLES: HairStyle[] = [
+  "short",
+  "spiky",
+  "bob",
+  "long",
+  "ponytail",
+  "buzz",
+  "messy",
+  "bald",
+];
+const HEADWEARS: Headwear[] = ["none", "cap", "beanie", "wizardHat", "hood"];
+const EAR_TYPES: EarType[] = [
+  "none",
+  "cat",
+  "fox",
+  "rabbit",
+  "bear",
+  "owl",
+  "dog",
+  "hamster",
+];
+const FACIAL_HAIRS: FacialHair[] = ["none", "mustache", "beard"];
 
 const PIXEL_SCALE = 5;
 const CHAR_PX_W = CHAR.width * PIXEL_SCALE;
@@ -157,6 +185,126 @@ export default function GalleryPage() {
               />
             </Cell>
           ))}
+        </Grid>
+
+        <SectionHeader title="Hair styles" />
+        <Grid>
+          {HAIR_STYLES.map((hair) => (
+            <Cell key={hair} label={hair}>
+              <PixelCharacter
+                role="coder"
+                species="human"
+                mood="happy"
+                seed={`hair-${hair}`}
+                featureOverride={{
+                  hairStyle: hair,
+                  headwear: "none",
+                  ears: "none",
+                  glasses: false,
+                  facialHair: "none",
+                }}
+                pixelScale={PIXEL_SCALE}
+              />
+            </Cell>
+          ))}
+        </Grid>
+
+        <SectionHeader title="Headwear" />
+        <Grid>
+          {HEADWEARS.map((hw) => (
+            <Cell key={hw} label={hw}>
+              <PixelCharacter
+                role="coder"
+                species="human"
+                mood="happy"
+                seed={`hw-${hw}`}
+                featureOverride={{
+                  hairStyle: "short",
+                  headwear: hw,
+                  ears: "none",
+                  glasses: false,
+                  facialHair: "none",
+                }}
+                pixelScale={PIXEL_SCALE}
+              />
+            </Cell>
+          ))}
+        </Grid>
+
+        <SectionHeader title="Species ears" />
+        <Grid>
+          {EAR_TYPES.map((ear) => (
+            <Cell key={ear} label={ear}>
+              <PixelCharacter
+                role="coder"
+                species={ear === "none" ? "human" : ear}
+                mood="happy"
+                seed={`ear-${ear}`}
+                featureOverride={{
+                  hairStyle: "short",
+                  headwear: "none",
+                  ears: ear,
+                  glasses: false,
+                  facialHair: "none",
+                }}
+                pixelScale={PIXEL_SCALE}
+              />
+            </Cell>
+          ))}
+        </Grid>
+
+        <SectionHeader title="Facial hair + glasses" />
+        <Grid>
+          {FACIAL_HAIRS.map((fh) => (
+            <Cell key={`fh-${fh}`} label={`${fh}`}>
+              <PixelCharacter
+                role="coder"
+                species="human"
+                mood="happy"
+                seed={`fh-${fh}`}
+                featureOverride={{
+                  hairStyle: "short",
+                  headwear: "none",
+                  ears: "none",
+                  glasses: false,
+                  facialHair: fh,
+                }}
+                pixelScale={PIXEL_SCALE}
+              />
+            </Cell>
+          ))}
+          <Cell label="glasses">
+            <PixelCharacter
+              role="coder"
+              species="human"
+              mood="happy"
+              seed="glasses"
+              featureOverride={{
+                hairStyle: "short",
+                headwear: "none",
+                ears: "none",
+                glasses: true,
+                facialHair: "none",
+              }}
+              pixelScale={PIXEL_SCALE}
+            />
+          </Cell>
+          <Cell label="glasses + beard">
+            <PixelCharacter
+              role="coder"
+              species="human"
+              mood="happy"
+              seed="combo"
+              featureOverride={{
+                hairStyle: "messy",
+                headwear: "none",
+                ears: "none",
+                glasses: true,
+                facialHair: "beard",
+              }}
+              pixelScale={PIXEL_SCALE}
+            />
+          </Cell>
         </Grid>
 
         <SectionHeader title="Walk cycle" />
