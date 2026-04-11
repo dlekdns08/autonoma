@@ -15,6 +15,15 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      # The previous deploy mounted ./output as a bind volume, so agent-written
+      # files are owned by root on the host and block actions/checkout cleanup.
+      # Use docker to remove them (it has the privileges we lack) before checkout.
+      - name: Purge stale root-owned output/ from workspace
+        run: |
+          if [ -e output ]; then
+            docker run --rm -v "$PWD:/ws" alpine sh -c 'rm -rf /ws/output'
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Create .env file
