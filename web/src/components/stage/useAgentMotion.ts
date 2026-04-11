@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { AgentData } from "@/lib/types";
+import type { AgentData, BossData, CookieData } from "@/lib/types";
 import type { MapLayout } from "./pixel/mapData";
 import { isWalkable } from "./pixel/mapData";
 import { STAGE } from "./pixel/types";
@@ -30,6 +30,10 @@ interface Options {
   agents: AgentData[];
   /** Pre-built map layout with collision grid. */
   map: MapLayout;
+  /** Current boss, if one is on the stage. Agents gather around it. */
+  boss?: BossData | null;
+  /** Fortune cookies sitting on the map. Recipients walk over to open them. */
+  cookies?: CookieData[];
 }
 
 const SPEED_IDLE = 0.38;
@@ -45,6 +49,10 @@ const DIALOGUE_COOLDOWN_MS = 3500;
 const CROSS_ROOM_CHANCE = 0.35;
 /** Chance per action reroll that an agent seeks out a nearby partner to chat. */
 const SEEK_PARTNER_CHANCE = 0.25;
+/** Radius (percent space) at which a boss pulls agents in to attack it. */
+const BOSS_ORBIT_RADIUS = 10;
+/** Distance within which an agent counts as "open enough" to pick up a cookie. */
+const COOKIE_PICKUP_RADIUS = 4;
 
 // Generic percent-space bounds; a room override narrows these per agent.
 const MIN_X = 2;
@@ -85,6 +93,8 @@ interface MotionInternal extends MotionState {
   dialogueWith: string | null;
   /** earliest time we are willing to start another dialogue */
   dialogueCooldownUntil: number;
+  /** extra offset pumped each frame while attacking the boss (for lunge VFX) */
+  attackPulse: number;
 }
 
 function rand(min: number, max: number) {
@@ -294,6 +304,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
         room,
         dialogueWith: null,
         dialogueCooldownUntil: 0,
+        attackPulse: 0,
       });
     });
     internalRef.current = next;
