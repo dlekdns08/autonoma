@@ -134,6 +134,24 @@ function pickWalkableTarget(
   return [room.centerX, room.centerY];
 }
 
+/** Pick a walkable target somewhere inside another room (for cross-room visits). */
+function pickCrossRoomTarget(
+  map: MapLayout,
+  currentRoom: Room,
+): [number, number] | null {
+  const candidates = HQ_ROOMS.filter((r) => r.id !== currentRoom.id);
+  if (candidates.length === 0) return null;
+  for (let pick = 0; pick < 4; pick++) {
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    for (let tries = 0; tries < 8; tries++) {
+      const tx = rand(target.minX + 3, target.maxX - 3);
+      const ty = rand(target.minY + 4, target.maxY - 4);
+      if (canStand(map, tx, ty)) return [tx, ty];
+    }
+  }
+  return null;
+}
+
 /** Pick a home position inside the agent's assigned room. */
 function pickHome(
   map: MapLayout,
@@ -389,54 +407,55 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
         // Pick a new action when the current one expires.
         if (now >= m.nextActionAt) {
           const room = m.room;
-          if (state === "talking" || state === "thinking") {
-            // approach the nearest available partner
-            const partner = findInteractionPartner(agent, agents, motions);
-            if (partner) {
-              const pm = motions.get(partner.name);
-              if (pm) {
-                const offset = pm.x > m.x ? -INTERACT_DISTANCE : INTERACT_DISTANCE;
-                const tx = clamp(pm.x + offset, room.minX, room.maxX);
-                const ty = clamp(pm.y, room.minY, room.maxY);
-                if (canStand(map, tx, ty)) {
-                  m.targetX = tx;
-                  m.targetY = ty;
-                } else {
-                  [m.targetX, m.targetY] = pickWalkableTarget(
-                    map,
-                    m.homeX,
-                    m.homeY,
-                    room,
-                  );
-                }
+
+          // Partner-seek: regardless of state, occasionally walk toward a
+          // nearby agent to trigger a dialogue. This is what actually makes
+          // the swarm look alive instead of everyone hovering at their desk.
+          const shouldSeekPartner =
+            !m.dialogueWith && Math.random() < SEEK_PARTNER_CHANCE;
+          const partner = shouldSeekPartner
+            ? findInteractionPartner(agent, agents, motions)
+            : null;
+
+          if (partner) {
+            const pm = motions.get(partner.name);
+            if (pm) {
+              const offset = pm.x > m.x ? -INTERACT_DISTANCE + 2 : INTERACT_DISTANCE - 2;
+              const tx = pm.x + offset;
+              const ty = pm.y;
+              if (canStand(map, tx, ty)) {
+                m.targetX = tx;
+                m.targetY = ty;
+              } else if (canStand(map, pm.x, pm.y)) {
+                m.targetX = pm.x;
+                m.targetY = pm.y;
+              } else {
+                [m.targetX, m.targetY] = pickWalkableTarget(map, m.homeX, m.homeY, room);
               }
-            } else {
-              [m.targetX, m.targetY] = pickWalkableTarget(
-                map,
-                m.homeX,
-                m.homeY,
-                room,
-              );
+              m.nextActionAt = now + rand(800, 1800);
             }
-            m.nextActionAt = now + rand(1500, 3500);
+          } else if (
+            map.interior &&
+            HQ_ROOMS.length > 1 &&
+            Math.random() < CROSS_ROOM_CHANCE
+          ) {
+            // Take a stroll into a different room.
+            const cross = pickCrossRoomTarget(map, room);
+            if (cross) {
+              [m.targetX, m.targetY] = cross;
+              m.nextActionAt = now + rand(2000, 4000);
+            } else {
+              [m.targetX, m.targetY] = pickWalkableTarget(map, m.homeX, m.homeY, room);
+              m.nextActionAt = now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX);
+            }
           } else if (state === "celebrating") {
             [m.targetX, m.targetY] = pickWalkableTarget(map, m.x, m.y, room);
-            m.nextActionAt = now + rand(400, 900);
+            m.nextActionAt = now + rand(300, 700);
           } else if (state === "working") {
-            [m.targetX, m.targetY] = pickWalkableTarget(
-              map,
-              m.homeX,
-              m.homeY,
-              room,
-            );
-            m.nextActionAt = now + rand(2500, 5000);
+            [m.targetX, m.targetY] = pickWalkableTarget(map, m.homeX, m.homeY, room);
+            m.nextActionAt = now + rand(1800, 3600);
           } else {
-            [m.targetX, m.targetY] = pickWalkableTarget(
-              map,
-              m.homeX,
-              m.homeY,
-              room,
-            );
+            [m.targetX, m.targetY] = pickWalkableTarget(map, m.homeX, m.homeY, room);
             m.nextActionAt = now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX);
           }
         }
