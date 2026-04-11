@@ -37,6 +37,9 @@ COPY --from=builder /app/pyproject.toml /app/
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
+# Create output dir writable by anyone (avoids root-owned files on host)
+RUN mkdir -p /app/output && chmod 777 /app/output
+
 # Expose the API port
 EXPOSE 8000
 
