@@ -28,6 +28,7 @@ class AgentCapability(str, Enum):
     WORK_ON_TASK = "work_on_task"
     REQUEST_HELP = "request_help"
     REVIEW_WORK = "review_work"
+    RUN_CODE = "run_code"
 
 
 @dataclass
@@ -188,6 +189,7 @@ CODER_HARNESS = AgentHarness(
         AgentCapability.COMPLETE_TASK,
         AgentCapability.SEND_MESSAGE,
         AgentCapability.REQUEST_HELP,
+        AgentCapability.RUN_CODE,
     ],
     disallowed_capabilities=[AgentCapability.SPAWN_AGENT],
     default_skills=["coding", "implementation", "debugging"],
@@ -196,7 +198,10 @@ When assigned a task:
 1. Understand the requirements fully before writing
 2. Create well-structured, clean code files
 3. Include appropriate error handling
-4. Mark the task complete with a summary of what you built
+4. Before marking a task complete, use run_code to smoke-test your implementation
+   in the sandbox (stdlib only, no network, short scripts — the sandbox kills
+   anything over a few seconds or a few hundred MB of memory).
+5. Mark the task complete with a summary of what you built and what you verified
 
 Keep speech SHORT and technical. Show, don't tell.""",
     failure_modes=[
@@ -258,6 +263,7 @@ TESTER_HARNESS = AgentHarness(
         AgentCapability.WORK_ON_TASK,
         AgentCapability.COMPLETE_TASK,
         AgentCapability.SEND_MESSAGE,
+        AgentCapability.RUN_CODE,
     ],
     disallowed_capabilities=[AgentCapability.SPAWN_AGENT],
     default_skills=["testing", "verification", "edge cases", "adversarial testing"],
@@ -270,6 +276,10 @@ When testing:
 3. Verify concurrent behavior if applicable
 4. Check that outputs match specifications exactly
 5. Create test files that exercise the implementation
+6. ACTUALLY RUN the tests using the run_code action. Reading code and saying
+   "this should work" is verification avoidance. The sandbox lets you execute
+   python/bash/node programs (stdlib only, no network, tight time/memory caps)
+   and see real output. Always include the exit code and stderr in your verdict.
 
 Your default assumption is that the code is BROKEN until proven otherwise.""",
     failure_modes=[
