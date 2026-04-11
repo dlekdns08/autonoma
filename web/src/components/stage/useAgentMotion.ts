@@ -37,19 +37,37 @@ const SPEED_WALK = 0.42;
 const SPEED_RUN = 0.72;
 const IDLE_PAUSE_MIN = 1200;
 const IDLE_PAUSE_MAX = 3200;
-const WANDER_RANGE = 28;
+const WANDER_RANGE = 18;
 const INTERACT_DISTANCE = 7;
 const DIALOGUE_LINE_MS = 2400;
 const DIALOGUE_COOLDOWN_MS = 6000;
 
-// Percent-space bounds. The ground area in the canvas runs from roughly
-// row 6 (horizon) to row 12, i.e. 50%..100% of the stage height. We keep
-// characters inside a slightly tighter band so their heads can poke a
-// little above the horizon without feet leaving the map.
-const MIN_X = 4;
-const MAX_X = 96;
-const MIN_Y = 56;
-const MAX_Y = 96;
+// Generic percent-space bounds; a room override narrows these per agent.
+const MIN_X = 2;
+const MAX_X = 98;
+const MIN_Y = 30;
+const MAX_Y = 84;
+
+// ── HQ interior rooms (percent space) ────────────────────────────────────
+// The HQ map has three rooms separated by inner walls at cols 7 and 13
+// (px 112-127, 208-223). Each agent gets assigned to a "home room" and
+// mostly wanders within it — but the door gaps at row 6-7 (px 96-127)
+// let them cross between rooms when they pick a target on the other side.
+interface Room {
+  id: string;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  centerX: number;
+  centerY: number;
+}
+
+const HQ_ROOMS: Room[] = [
+  { id: "coder-lab", minX: 3, maxX: 33, minY: 34, maxY: 82, centerX: 16, centerY: 68 },
+  { id: "war-room", minX: 42, maxX: 62, minY: 34, maxY: 82, centerX: 52, centerY: 68 },
+  { id: "design", minX: 72, maxX: 97, minY: 34, maxY: 82, centerX: 84, centerY: 68 },
+];
 
 interface MotionInternal extends MotionState {
   targetX: number;
@@ -57,6 +75,8 @@ interface MotionInternal extends MotionState {
   nextActionAt: number;
   homeX: number;
   homeY: number;
+  /** room this agent calls home (defines wander bounds) */
+  room: Room;
   /** name of the agent we are currently locked into a dialogue with */
   dialogueWith: string | null;
   /** earliest time we are willing to start another dialogue */
@@ -83,46 +103,73 @@ function canStand(map: MapLayout, xPct: number, yPct: number): boolean {
   return isWalkable(map, px, py);
 }
 
-/** Find a walkable point near (homeX, homeY) using a random walk fallback. */
+/** Find a walkable point near (homeX, homeY), clamped to the agent's room. */
 function pickWalkableTarget(
   map: MapLayout,
   homeX: number,
   homeY: number,
+  room: Room,
 ): [number, number] {
-  for (let tries = 0; tries < 8; tries++) {
+  for (let tries = 0; tries < 12; tries++) {
     const angle = rand(0, Math.PI * 2);
-    const dist = rand(6, WANDER_RANGE);
-    const tx = clamp(homeX + Math.cos(angle) * dist, MIN_X, MAX_X);
-    const ty = clamp(homeY + Math.sin(angle) * dist * 0.55, MIN_Y, MAX_Y);
+    const dist = rand(4, WANDER_RANGE);
+    const tx = clamp(homeX + Math.cos(angle) * dist, room.minX, room.maxX);
+    const ty = clamp(homeY + Math.sin(angle) * dist * 0.55, room.minY, room.maxY);
     if (canStand(map, tx, ty)) return [tx, ty];
   }
-  // fall back to home itself if even that fails we just stay put
   if (canStand(map, homeX, homeY)) return [homeX, homeY];
-  // scan outward for any walkable pixel as a last resort
+  // last-resort outward scan bounded by the room
   for (let r = 0; r < 40; r++) {
     for (let a = 0; a < 8; a++) {
       const ang = (a * Math.PI) / 4;
-      const tx = clamp(homeX + Math.cos(ang) * r, MIN_X, MAX_X);
-      const ty = clamp(homeY + Math.sin(ang) * r * 0.55, MIN_Y, MAX_Y);
+      const tx = clamp(homeX + Math.cos(ang) * r, room.minX, room.maxX);
+      const ty = clamp(homeY + Math.sin(ang) * r * 0.55, room.minY, room.maxY);
       if (canStand(map, tx, ty)) return [tx, ty];
     }
   }
-  return [homeX, homeY];
+  return [room.centerX, room.centerY];
 }
 
-/** Deterministic home position spread across the walkable ground. */
+/** Pick a home position inside the agent's assigned room. */
 function pickHome(
   map: MapLayout,
   idx: number,
   total: number,
-): [number, number] {
-  const spread = total > 1 ? 80 / total : 0;
-  const baseX = 10 + idx * spread;
-  const baseY = 72 + ((idx % 3) - 1) * 6;
-  const hx = clamp(baseX, MIN_X + 2, MAX_X - 2);
-  const hy = clamp(baseY, MIN_Y + 2, MAX_Y - 2);
-  if (canStand(map, hx, hy)) return [hx, hy];
-  return pickWalkableTarget(map, hx, hy);
+): { xy: [number, number]; room: Room } {
+  if (map.interior) {
+    const room = HQ_ROOMS[idx % HQ_ROOMS.length];
+    // spread multiple agents within a single room across its width
+    const perRoom = Math.max(1, Math.ceil(total / HQ_ROOMS.length));
+    const slot = Math.floor(idx / HQ_ROOMS.length);
+    const span = (room.maxX - room.minX - 6) / Math.max(1, perRoom);
+    const hx = clamp(
+      room.minX + 3 + slot * span + span / 2,
+      room.minX + 2,
+      room.maxX - 2,
+    );
+    const hy = clamp(
+      room.centerY + ((idx * 7) % 10) - 5,
+      room.minY + 2,
+      room.maxY - 2,
+    );
+    if (canStand(map, hx, hy)) return { xy: [hx, hy], room };
+    return { xy: pickWalkableTarget(map, hx, hy, room), room };
+  }
+  // outdoor fallback — everyone shares one "room" covering the full bounds
+  const room: Room = {
+    id: "outdoor",
+    minX: MIN_X,
+    maxX: MAX_X,
+    minY: MIN_Y,
+    maxY: MAX_Y,
+    centerX: (MIN_X + MAX_X) / 2,
+    centerY: (MIN_Y + MAX_Y) / 2,
+  };
+  const spread = total > 1 ? (MAX_X - MIN_X - 8) / total : 0;
+  const hx = clamp(MIN_X + 4 + idx * spread, MIN_X + 2, MAX_X - 2);
+  const hy = clamp(70 + ((idx % 3) - 1) * 6, MIN_Y + 2, MAX_Y - 2);
+  if (canStand(map, hx, hy)) return { xy: [hx, hy], room };
+  return { xy: pickWalkableTarget(map, hx, hy, room), room };
 }
 
 // ── dialogue content ─────────────────────────────────────────────────────
@@ -199,7 +246,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
         next.set(agent.name, prior);
         return;
       }
-      const [homeX, homeY] = pickHome(map, idx, agents.length);
+      const { xy: [homeX, homeY], room } = pickHome(map, idx, agents.length);
       next.set(agent.name, {
         name: agent.name,
         x: homeX,
@@ -213,6 +260,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
         nextActionAt: now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX),
         homeX,
         homeY,
+        room,
         dialogueWith: null,
         dialogueCooldownUntil: 0,
       });
@@ -336,6 +384,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
 
         // Pick a new action when the current one expires.
         if (now >= m.nextActionAt) {
+          const room = m.room;
           if (state === "talking" || state === "thinking") {
             // approach the nearest available partner
             const partner = findInteractionPartner(agent, agents, motions);
@@ -343,8 +392,8 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
               const pm = motions.get(partner.name);
               if (pm) {
                 const offset = pm.x > m.x ? -INTERACT_DISTANCE : INTERACT_DISTANCE;
-                const tx = clamp(pm.x + offset, MIN_X, MAX_X);
-                const ty = clamp(pm.y, MIN_Y, MAX_Y);
+                const tx = clamp(pm.x + offset, room.minX, room.maxX);
+                const ty = clamp(pm.y, room.minY, room.maxY);
                 if (canStand(map, tx, ty)) {
                   m.targetX = tx;
                   m.targetY = ty;
@@ -353,6 +402,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
                     map,
                     m.homeX,
                     m.homeY,
+                    room,
                   );
                 }
               }
@@ -361,17 +411,19 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
                 map,
                 m.homeX,
                 m.homeY,
+                room,
               );
             }
             m.nextActionAt = now + rand(1500, 3500);
           } else if (state === "celebrating") {
-            [m.targetX, m.targetY] = pickWalkableTarget(map, m.x, m.y);
+            [m.targetX, m.targetY] = pickWalkableTarget(map, m.x, m.y, room);
             m.nextActionAt = now + rand(400, 900);
           } else if (state === "working") {
             [m.targetX, m.targetY] = pickWalkableTarget(
               map,
               m.homeX,
               m.homeY,
+              room,
             );
             m.nextActionAt = now + rand(2500, 5000);
           } else {
@@ -379,6 +431,7 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
               map,
               m.homeX,
               m.homeY,
+              room,
             );
             m.nextActionAt = now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX);
           }
@@ -400,8 +453,9 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
           const dirX = dx * invDist;
           const dirY = dy * invDist;
           const advance = Math.min(stepSize, dist);
-          const nx = clamp(m.x + dirX * advance, MIN_X, MAX_X);
-          const ny = clamp(m.y + dirY * advance, MIN_Y, MAX_Y);
+          const room = m.room;
+          const nx = clamp(m.x + dirX * advance, room.minX, room.maxX);
+          const ny = clamp(m.y + dirY * advance, room.minY, room.maxY);
 
           // Collision: try full step, then x-only, then y-only.
           if (canStand(map, nx, ny)) {
