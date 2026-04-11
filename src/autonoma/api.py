@@ -11,8 +11,12 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import io
+import zipfile
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from autonoma.event_bus import bus
 
@@ -178,12 +182,16 @@ async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
     except asyncio.CancelledError:
         swarm.stop()
         logger.info("[Swarm] Cancelled")
+        _swarm = None
+        _project = None
     except Exception as e:
         logger.error(f"[Swarm] Error: {e}")
         await manager.broadcast("swarm.error", {"error": str(e)})
-    finally:
         _swarm = None
         _project = None
+    # On normal completion we intentionally keep _swarm and _project alive so
+    # the frontend can still download files and view the final answer. They
+    # will be replaced when the user starts a new run.
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
