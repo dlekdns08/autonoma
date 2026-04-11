@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useId } from "react";
 import type { HairStyle } from "../types";
 
 export interface HairProps {
@@ -43,7 +43,8 @@ function HairGradient({
  * ============================================================ */
 
 export function HairBack({ style, color, light, outline }: HairProps): React.JSX.Element | null {
-  const gradId = `hair-${style}-back-grad`;
+  const uid = useId();
+  const gradId = `${uid}-hair-${style}-back-grad`;
   const stroke = { stroke: outline, strokeWidth: 1.8, strokeLinejoin: "round" as const, strokeLinecap: "round" as const };
 
   switch (style) {
@@ -154,7 +155,8 @@ export function HairBack({ style, color, light, outline }: HairProps): React.JSX
  * ============================================================ */
 
 export function HairFront({ style, color, light, outline }: HairProps): React.JSX.Element {
-  const gradId = `hair-${style}-front-grad`;
+  const uid = useId();
+  const gradId = `${uid}-hair-${style}-front-grad`;
   const stroke = { stroke: outline, strokeWidth: 1.8, strokeLinejoin: "round" as const, strokeLinecap: "round" as const };
 
   switch (style) {
