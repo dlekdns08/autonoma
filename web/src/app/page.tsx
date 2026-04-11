@@ -87,7 +87,11 @@ export default function Home() {
         {/* Left: Stage + Events */}
         <div className="flex flex-1 flex-col gap-2 p-2">
           <div className="relative flex-[3] min-h-0">
-            <Stage agents={state.agents} sky={state.sky} />
+            <Stage
+              agents={state.agents}
+              sky={state.sky}
+              onSelectAgent={handleSelectAgent}
+            />
             {state.boss && <BossOverlay boss={state.boss} />}
 
             {/* Minimap overlay */}
