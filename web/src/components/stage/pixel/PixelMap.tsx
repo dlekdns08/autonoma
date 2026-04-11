@@ -15,6 +15,17 @@ import {
   drawFlowerPatch,
   drawFence,
   drawFountain,
+  drawDesk,
+  drawChair,
+  drawBookshelf,
+  drawMeetingTable,
+  drawWhiteboard,
+  drawCouch,
+  drawPlant,
+  drawCrate,
+  drawComputer,
+  drawDoor,
+  drawBed,
   TREE_H,
   BUSH_H,
   ROCK_H,
@@ -24,6 +35,17 @@ import {
   FLOWER_H,
   FENCE_H,
   FOUNTAIN_H,
+  DESK_H,
+  CHAIR_H,
+  BOOKSHELF_H,
+  TABLE_H,
+  WHITEBOARD_H,
+  COUCH_H,
+  PLANT_H,
+  CRATE_H,
+  COMPUTER_H,
+  DOOR_H,
+  BED_H,
 } from "./objectSprites";
 
 interface Props {
@@ -49,6 +71,10 @@ const NIGHT_TINT = "rgba(30, 22, 80, 0.28)";
 const DUSK_TINT = "rgba(180, 60, 90, 0.16)";
 const DAWN_TINT = "rgba(255, 160, 100, 0.12)";
 
+// Warm ambient tint painted over interior scenes so they feel lit by lamps
+// rather than flat pixel blocks.
+const INTERIOR_TINT = "rgba(255, 214, 160, 0.06)";
+
 function objectHeight(kind: SceneObject["kind"]): number {
   switch (kind) {
     case "tree": return TREE_H;
@@ -62,53 +88,17 @@ function objectHeight(kind: SceneObject["kind"]): number {
     case "flowerPatch": return FLOWER_H;
     case "fence": return FENCE_H;
     case "fountain": return FOUNTAIN_H;
-  }
-}
-
-function drawObject(
-  ctx: CanvasRenderingContext2D,
-  obj: SceneObject,
-  sky: SkyMode,
-): void {
-  const h = objectHeight(obj.kind);
-  const topY = obj.y - h;
-  const topX = Math.round(
-    obj.x - objectWidth(obj.kind) / 2,
-  );
-  switch (obj.kind) {
-    case "tree":
-      drawTree(ctx, topX, topY, Math.floor(obj.x * 13));
-      return;
-    case "bush":
-      drawBush(ctx, topX, topY);
-      return;
-    case "rock":
-      drawRock(ctx, topX, topY);
-      return;
-    case "houseRed":
-      drawHouse(ctx, topX, topY, "red");
-      return;
-    case "houseBlue":
-      drawHouse(ctx, topX, topY, "blue");
-      return;
-    case "houseGreen":
-      drawHouse(ctx, topX, topY, "green");
-      return;
-    case "sign":
-      drawSign(ctx, topX, topY);
-      return;
-    case "lamp":
-      drawLamp(ctx, topX, topY, sky === "night" || sky === "dusk");
-      return;
-    case "flowerPatch":
-      drawFlowerPatch(ctx, topX, topY, obj.color ?? "#ff7a9e");
-      return;
-    case "fence":
-      drawFence(ctx, topX, topY);
-      return;
-    case "fountain":
-      drawFountain(ctx, topX, topY);
-      return;
+    case "desk": return DESK_H;
+    case "chair": return CHAIR_H;
+    case "bookshelf": return BOOKSHELF_H;
+    case "meetingTable": return TABLE_H;
+    case "whiteboard": return WHITEBOARD_H;
+    case "couch": return COUCH_H;
+    case "plant": return PLANT_H;
+    case "crate": return CRATE_H;
+    case "computer": return COMPUTER_H;
+    case "door": return DOOR_H;
+    case "bed": return BED_H;
   }
 }
 
@@ -125,10 +115,54 @@ function objectWidth(kind: SceneObject["kind"]): number {
     case "flowerPatch": return 10;
     case "fence": return 16;
     case "fountain": return 32;
+    case "desk": return 20;
+    case "chair": return 10;
+    case "bookshelf": return 18;
+    case "meetingTable": return 28;
+    case "whiteboard": return 28;
+    case "couch": return 24;
+    case "plant": return 12;
+    case "crate": return 12;
+    case "computer": return 12;
+    case "door": return 12;
+    case "bed": return 24;
   }
 }
 
-/** Paint sky gradient on rows 0..horizonRow. */
+function drawObject(
+  ctx: CanvasRenderingContext2D,
+  obj: SceneObject,
+  sky: SkyMode,
+): void {
+  const h = objectHeight(obj.kind);
+  const topY = obj.y - h;
+  const topX = Math.round(obj.x - objectWidth(obj.kind) / 2);
+  switch (obj.kind) {
+    case "tree": drawTree(ctx, topX, topY, Math.floor(obj.x * 13)); return;
+    case "bush": drawBush(ctx, topX, topY); return;
+    case "rock": drawRock(ctx, topX, topY); return;
+    case "houseRed": drawHouse(ctx, topX, topY, "red"); return;
+    case "houseBlue": drawHouse(ctx, topX, topY, "blue"); return;
+    case "houseGreen": drawHouse(ctx, topX, topY, "green"); return;
+    case "sign": drawSign(ctx, topX, topY); return;
+    case "lamp": drawLamp(ctx, topX, topY, sky === "night" || sky === "dusk"); return;
+    case "flowerPatch": drawFlowerPatch(ctx, topX, topY, obj.color ?? "#ff7a9e"); return;
+    case "fence": drawFence(ctx, topX, topY); return;
+    case "fountain": drawFountain(ctx, topX, topY); return;
+    case "desk": drawDesk(ctx, topX, topY); return;
+    case "chair": drawChair(ctx, topX, topY); return;
+    case "bookshelf": drawBookshelf(ctx, topX, topY, Math.floor(obj.x * 17)); return;
+    case "meetingTable": drawMeetingTable(ctx, topX, topY); return;
+    case "whiteboard": drawWhiteboard(ctx, topX, topY); return;
+    case "couch": drawCouch(ctx, topX, topY); return;
+    case "plant": drawPlant(ctx, topX, topY); return;
+    case "crate": drawCrate(ctx, topX, topY); return;
+    case "computer": drawComputer(ctx, topX, topY); return;
+    case "door": drawDoor(ctx, topX, topY); return;
+    case "bed": drawBed(ctx, topX, topY); return;
+  }
+}
+
 function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
   const stops = SKY[sky];
   const horizonPx = STAGE.horizonRow * STAGE.tile;
@@ -140,7 +174,6 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
   ctx.fillRect(0, 0, STAGE.width, horizonPx);
 
   if (sky === "night") {
-    // stars
     ctx.fillStyle = "#ffffff";
     const stars = [
       [10, 6], [28, 12], [44, 4], [66, 10], [82, 18], [104, 6],
@@ -148,7 +181,6 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
       [268, 4], [290, 16], [306, 8],
     ];
     for (const [x, y] of stars) ctx.fillRect(x, y, 1, 1);
-    // moon
     ctx.fillStyle = "#f5e9c0";
     ctx.fillRect(268, 20, 6, 6);
     ctx.fillRect(267, 22, 1, 2);
@@ -156,7 +188,6 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
     ctx.fillStyle = "#c8b886";
     ctx.fillRect(272, 22, 2, 2);
   } else if (sky === "dawn" || sky === "dusk") {
-    // big sun
     ctx.fillStyle = sky === "dawn" ? "#ffe8a6" : "#ffb36a";
     const sx = sky === "dawn" ? 54 : 260;
     const sy = 40;
@@ -166,7 +197,6 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(sx + 2, sy + 2, 2, 1);
   } else {
-    // puffy clouds for day
     ctx.fillStyle = "#ffffff";
     const clouds = [
       [30, 14], [32, 14], [33, 15], [28, 15], [34, 16], [29, 16],
@@ -177,8 +207,21 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
   }
 }
 
-/** Apply a global sky tint to everything below the horizon. */
-function tintGround(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
+function tintGround(
+  ctx: CanvasRenderingContext2D,
+  sky: SkyMode,
+  interior: boolean,
+): void {
+  if (interior) {
+    ctx.fillStyle = INTERIOR_TINT;
+    ctx.fillRect(0, 0, STAGE.width, STAGE.height);
+    // slight night darkening inside
+    if (sky === "night") {
+      ctx.fillStyle = "rgba(20, 20, 60, 0.18)";
+      ctx.fillRect(0, 0, STAGE.width, STAGE.height);
+    }
+    return;
+  }
   if (sky === "day") return;
   const groundTop = STAGE.horizonRow * STAGE.tile;
   ctx.fillStyle =
@@ -188,7 +231,7 @@ function tintGround(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
 
 export default function PixelMap({
   sky = "day",
-  theme = "meadow",
+  theme = "hq",
   children,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -197,7 +240,6 @@ export default function PixelMap({
     null,
   );
 
-  // Measure the outer container and fit a 320:192 inner box inside it.
   useEffect(() => {
     const el = outerRef.current;
     if (!el) return;
@@ -230,13 +272,19 @@ export default function PixelMap({
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
-    // Clear
     ctx.clearRect(0, 0, STAGE.width, STAGE.height);
-    // Sky
-    paintSky(ctx, sky);
 
-    // Tiles below horizon
-    const { tiles, objects } = buildMap(theme);
+    const map = buildMap(theme);
+    const { tiles, objects, interior } = map;
+
+    if (!interior) {
+      paintSky(ctx, sky);
+    } else {
+      // fill everything with solid dark — tiles on top will cover it
+      ctx.fillStyle = "#0b0810";
+      ctx.fillRect(0, 0, STAGE.width, STAGE.height);
+    }
+
     for (let r = 0; r < STAGE.rows; r++) {
       for (let c = 0; c < STAGE.cols; c++) {
         const kind = tiles[r][c];
@@ -245,18 +293,12 @@ export default function PixelMap({
       }
     }
 
-    // Objects, painter-sorted by bottom-y so distant things go first
     const sorted = [...objects].sort((a, b) => a.y - b.y);
     for (const obj of sorted) drawObject(ctx, obj, sky);
 
-    // Global sky tint on the ground
-    tintGround(ctx, sky);
+    tintGround(ctx, sky, interior);
   }, [sky, theme]);
 
-  // Outer container fills its parent. The inner stage box has its exact
-  // pixel dimensions set from the ResizeObserver, so the 320:192 aspect
-  // is preserved and characters positioned via percentages stay aligned
-  // with the canvas art.
   return (
     <div
       ref={outerRef}
@@ -277,7 +319,7 @@ export default function PixelMap({
               display: "block",
             }}
           />
-          <div className="absolute inset-0 pointer-events-none">{children}</div>
+          <div className="absolute inset-0">{children}</div>
         </div>
       )}
     </div>
