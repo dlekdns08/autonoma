@@ -218,6 +218,74 @@ Rules:
 
         return tasks
 
+    async def synthesize_final_answer(self, project: ProjectState) -> str:
+        """Produce the project's final answer in Korean.
+
+        Called once at the end of a swarm run. Summarizes what the swarm
+        built and answers the original goal directly. Best-effort: on any
+        failure, returns a simple templated Korean summary so the UI never
+        shows an empty final-answer panel.
+        """
+        tasks_done = [t for t in project.tasks if t.status == TaskStatus.DONE]
+        tasks_open = [t for t in project.tasks if t.status != TaskStatus.DONE]
+        files = project.files
+
+        task_lines = "\n".join(
+            f"- [{t.status.value}] {t.title}" for t in project.tasks
+        ) or "(없음)"
+        file_lines = "\n".join(
+            f"- {f.path} ({len(f.content)} bytes) — {f.description or ''}".rstrip(" —")
+            for f in files[:30]
+        ) or "(없음)"
+
+        system = (
+            "당신은 프로젝트 디렉터입니다. 방금 끝난 에이전트 스웜 프로젝트에 대한 "
+            "최종 답변을 **반드시 한국어로** 작성하세요. 사용자가 원래 제시한 목표에 "
+            "직접 답변하고, 무엇을 만들었는지, 핵심 결과물이 무엇인지, 남아있는 이슈가 "
+            "있다면 무엇인지 간결하게 설명하세요. 마크다운을 사용해도 좋습니다. "
+            "영어로 답변하지 마세요."
+        )
+        prompt = (
+            f"# 프로젝트 목표\n{project.description}\n\n"
+            f"# 태스크 현황 ({len(tasks_done)}/{len(project.tasks)} 완료)\n{task_lines}\n\n"
+            f"# 생성된 파일 ({len(files)}개)\n{file_lines}\n\n"
+            f"# 미완료 태스크: {len(tasks_open)}개\n\n"
+            "위 정보를 바탕으로 사용자에게 전달할 최종 답변을 한국어로 작성하세요. "
+            "다음 섹션을 포함하세요:\n"
+            "1. **요약** — 한두 문장으로 무엇을 했는지\n"
+            "2. **최종 답변** — 원래 목표에 대한 직접적인 답변 또는 결과물 설명\n"
+            "3. **생성된 결과물** — 주요 파일 목록과 각 파일의 역할\n"
+            "4. **남은 이슈** — 미완료 태스크나 주의사항이 있다면 (없으면 생략)\n"
+        )
+
+        try:
+            response = await traced_messages_create(
+                self.client,
+                agent="Director",
+                phase="final_answer",
+                model=settings.model,
+                max_tokens=settings.max_tokens,
+                temperature=0.3,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
+            text = response.content[0].text.strip() if response.content else ""
+            if text:
+                return text
+        except Exception as e:
+            logger.error(f"[Director] Final answer synthesis failed: {e}")
+
+        # Fallback Korean template
+        return (
+            f"## 요약\n"
+            f"'{project.name}' 프로젝트에서 {len(tasks_done)}개의 태스크를 완료하고 "
+            f"{len(files)}개의 파일을 생성했습니다.\n\n"
+            f"## 생성된 결과물\n{file_lines}\n\n"
+            f"## 남은 이슈\n미완료 태스크 {len(tasks_open)}개"
+            if tasks_open else ""
+        )
+
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
         """Director's special loop: monitor, assign, and manage."""
         await self._set_state(AgentState.THINKING)
