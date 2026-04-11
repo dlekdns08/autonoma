@@ -18,6 +18,7 @@ interface Props {
   agents: AgentData[];
   sky?: string;
   theme?: MapTheme;
+  onSelectAgent?: (name: string) => void;
 }
 
 const RARITY_TEXT: Record<string, string> = {
