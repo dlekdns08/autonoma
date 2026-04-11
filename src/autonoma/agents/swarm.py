@@ -16,7 +16,9 @@ from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.models import (
+    AgentMessage,
     AgentPersona,
+    MessageType,
     Position,
     ProjectState,
     TaskStatus,
@@ -69,6 +71,7 @@ class AgentSwarm:
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
+        self.target_agents: int | None = None
 
         # ── World Systems ──
         self.relationships = RelationshipGraph()
@@ -94,12 +97,19 @@ class AgentSwarm:
 
         bus.on("agent.spawn_requested", self._on_spawn_request)
 
-    async def initialize(self, project: ProjectState) -> None:
+    async def initialize(
+        self,
+        project: ProjectState,
+        target_agents: int | None = None,
+    ) -> None:
         """Set up the swarm: director decomposes goal, agents get created."""
+        self.target_agents = target_agents
         project.agents.append(self.director.persona)
         await bus.emit("swarm.initializing", agent_count=1)
 
-        tasks = await self.director.decompose_goal(project)
+        tasks = await self.director.decompose_goal(
+            project, target_agents=target_agents,
+        )
 
         # Wait for spawn events to process
         await asyncio.sleep(0.2)
@@ -295,6 +305,29 @@ class AgentSwarm:
 
     def stop(self) -> None:
         self._running = False
+
+    async def inject_human_message(self, text: str) -> bool:
+        """Deliver a human feedback message into the Director's inbox mid-run.
+
+        Returns True if the message was delivered, False if no director exists.
+        """
+        director = self.agents.get("Director")
+        if director is None:
+            return False
+
+        msg = AgentMessage(
+            sender="human",
+            recipient="Director",
+            msg_type=MessageType.CHAT,
+            content=f"[HUMAN FEEDBACK] {text}",
+            data={"kind": "feedback", "source": "human"},
+        )
+        director.receive_message(msg)
+        # Mark as already routed so the swarm router does not re-deliver it.
+        self._routed_message_ids.add(msg.id)
+
+        await bus.emit("human.feedback", text=text, recipient="Director")
+        return True
 
     def spawn_agent(
         self,
