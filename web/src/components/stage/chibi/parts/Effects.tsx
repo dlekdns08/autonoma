@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import type * as React from "react";
 import type { ChibiRarity, ChibiState, PaletteSlot } from "../types";
 
@@ -15,7 +16,8 @@ export interface EffectsProps {
  * ────────────────────────────────────────────────────────────────────────── */
 export function EffectsBack(props: EffectsProps): React.JSX.Element {
   const { rarity, palette } = props;
-  const auraId = `fx-aura-${rarity}`;
+  const uid = useId();
+  const auraId = `${uid}-fx-aura-${rarity}`;
 
   return (
     <g data-effects="back">
