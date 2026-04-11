@@ -37,10 +37,7 @@ export default function Home() {
         <Starfield intensity={0.3} />
         <Header projectName="" round={0} maxRounds={0} sky="" connected={connected} />
         <main className="flex-1 relative z-10">
-          <IdleScreen
-            connected={connected}
-            onStart={(goal, agentCount) => startSwarm(goal, agentCount)}
-          />
+          <IdleScreen connected={connected} onStart={startSwarm} />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
