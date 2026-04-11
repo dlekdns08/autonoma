@@ -41,8 +41,8 @@ export function Outfit(props: OutfitProps): React.JSX.Element {
     outline,
     leftArmAngle: celebrating ? -150 : +armSwing,
     rightArmAngle: celebrating ? 150 : -armSwing,
-    leftLegAngle: +legSwing,
-    rightLegAngle: -legSwing,
+    leftLegAngle: celebrating ? 0 : +legSwing,
+    rightLegAngle: celebrating ? 0 : -legSwing,
   };
   const gid = `of-${role}-${stableId(palette.outfitPrimary)}`;
   return (
