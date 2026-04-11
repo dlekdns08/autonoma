@@ -326,6 +326,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
             elif cmd == "message":
                 text = msg.get("text", "")
+                target = msg.get("target")  # optional agent name for direct instruction
                 # Handle chat commands from the frontend
                 if text.startswith("/cheer"):
                     await bus.emit("world.event", title="The audience cheers wildly! Agents feel inspired!")
@@ -339,9 +340,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     if _swarm_task and not _swarm_task.done():
                         _swarm_task.cancel()
                 else:
-                    # Always echo for the UI log
-                    await manager.broadcast("chat.message", {"text": text, "source": "user"})
-                    # If a swarm is running, inject the message into the director's inbox
+                    # Always echo for the UI log (with target if any)
+                    await manager.broadcast(
+                        "chat.message",
+                        {"text": text, "source": "user", "target": target or ""},
+                    )
+                    # If a swarm is running, inject the message into the target agent's inbox
                     if (
                         text
                         and _swarm is not None
@@ -349,7 +353,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         and not _swarm_task.done()
                     ):
                         try:
-                            await _swarm.inject_human_message(text)
+                            await _swarm.inject_human_message(text, target=target)
                         except Exception as e:
                             logger.error(f"[WS] Failed to inject human message: {e}")
 
