@@ -104,6 +104,7 @@ FORWARDED_EVENTS = [
     "guild.formed",
     "campfire.complete",
     "fortune.given",
+    "fortune.fulfilled",
     "boss.appeared",
     "boss.defeated",
     "boss.damage",
@@ -256,6 +257,31 @@ def _get_snapshot() -> dict[str, Any]:
 
         status = "finished" if (not swarm._running and project.final_answer) else "running"
 
+        # ── Current boss (if any) ──
+        boss_data: dict[str, Any] | None = None
+        if hasattr(swarm, "boss_arena") and swarm.boss_arena.current_boss:
+            b = swarm.boss_arena.current_boss
+            if b.phase.value in ("appearing", "fighting"):
+                boss_data = {
+                    "name": b.name,
+                    "species": b.species,
+                    "level": b.level,
+                    "hp": b.hp,
+                    "max_hp": b.max_hp,
+                    "x": 52.0,
+                    "y": 54.0,
+                }
+
+        # ── Active fortune cookies ──
+        cookies: list[dict[str, Any]] = []
+        if hasattr(swarm, "fortune_jar"):
+            for name, cookie in swarm.fortune_jar.active_fortunes.items():
+                cookies.append({
+                    "recipient": name,
+                    "fortune": cookie.fortune,
+                    "bonus_xp": cookie.bonus_xp,
+                })
+
         return {
             "status": status,
             "project_name": project.name,
@@ -275,6 +301,8 @@ def _get_snapshot() -> dict[str, Any]:
             "sky": swarm.world_clock.sky_line if hasattr(swarm, "world_clock") else "",
             "relationships": relationships,
             "final_answer": project.final_answer,
+            "boss": boss_data,
+            "cookies": cookies,
         }
     except Exception as e:
         logger.warning(f"[WS] snapshot failed: {e}")
