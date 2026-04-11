@@ -40,7 +40,12 @@ function resolveSky(sky: string | undefined): SkyMode {
 const CHAR_W_PCT = (CHAR.width / STAGE.width) * 100;
 const CHAR_H_PCT = (CHAR.height / STAGE.height) * 100;
 
-export default function Stage({ agents, sky, theme = "meadow" }: Props) {
+export default function Stage({
+  agents,
+  sky,
+  theme = "hq",
+  onSelectAgent,
+}: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
   const { motions, bubbles } = useAgentMotion({ agents, map });
@@ -49,9 +54,9 @@ export default function Stage({ agents, sky, theme = "meadow" }: Props) {
     return (
       <div className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20">
         <PixelMap sky={skyMode} theme={theme}>
-          <div className="flex h-full items-center justify-center">
+          <div className="pointer-events-none flex h-full items-center justify-center">
             <p className="font-mono text-white/60 text-lg drop-shadow-lg">
-              The town awaits a hero...
+              The HQ awaits a mission...
             </p>
           </div>
         </PixelMap>
@@ -72,6 +77,7 @@ export default function Stage({ agents, sky, theme = "meadow" }: Props) {
               agent={agent}
               motion={motion}
               dialogue={bubble ?? null}
+              onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
             />
           );
         })}
