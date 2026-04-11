@@ -287,14 +287,9 @@ export function useSwarm() {
     }
   }, []);
 
-  const startSwarm = useCallback((goal: string, agentCount?: number) => {
+  const startSwarm = useCallback((goal: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const payload: { command: string; goal: string; agent_count?: number } = {
-        command: "start",
-        goal,
-      };
-      if (typeof agentCount === "number") payload.agent_count = agentCount;
-      wsRef.current.send(JSON.stringify(payload));
+      wsRef.current.send(JSON.stringify({ command: "start", goal }));
     }
   }, []);
 
