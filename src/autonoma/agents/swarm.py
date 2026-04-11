@@ -15,6 +15,7 @@ from autonoma.agents.director import DirectorAgent
 from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.tracing import finish_run, start_run
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -121,6 +122,8 @@ class AgentSwarm:
         """Run the swarm's think-act loop until project is complete."""
         self._running = True
         self._round = 0
+
+        recorder = start_run(goal=project.description or project.name, model=settings.model)
 
         await bus.emit("swarm.started", max_rounds=max_rounds)
 
