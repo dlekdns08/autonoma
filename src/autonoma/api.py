@@ -111,6 +111,7 @@ FORWARDED_EVENTS = [
     "trade.completed",
     "quest.completed",
     "quest.assigned",
+    "human.feedback",
 ]
 
 
@@ -141,7 +142,11 @@ def _unregister_event_bridge() -> None:
 
 # ── Swarm Runner ─────────────────────────────────────────────────────────
 
-async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
+async def _run_swarm(
+    goal: str,
+    max_rounds: int = 30,
+    agent_count: int | None = None,
+) -> None:
     """Run the swarm in the background."""
     global _swarm, _project
 
@@ -158,8 +163,16 @@ async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
     _swarm = swarm
     _project = project
 
+    # Temporarily override max_agents for this run if agent_count was provided.
+    # The director gets target_agents as a hint, but max_agents is the hard cap
+    # that swarm.spawn_agent enforces — so we need to lift it to at least target.
+    original_max_agents = settings.max_agents
+    if agent_count is not None:
+        # +1 for the Director, which counts toward max_agents in spawn_agent.
+        settings.max_agents = max(original_max_agents, agent_count + 1)
+
     try:
-        await swarm.initialize(project)
+        await swarm.initialize(project, target_agents=agent_count)
 
         for agent_name, agent in swarm.agents.items():
             if not any(a.name == agent_name for a in project.agents):
@@ -181,6 +194,7 @@ async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
         logger.error(f"[Swarm] Error: {e}")
         await manager.broadcast("swarm.error", {"error": str(e)})
     finally:
+        settings.max_agents = original_max_agents
         _swarm = None
         _project = None
 
@@ -312,8 +326,20 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     await ws.send_text(json.dumps({"event": "error", "data": {"message": "Swarm is already running"}}))
                 else:
                     max_rounds = msg.get("max_rounds", 30)
-                    _swarm_task = asyncio.create_task(_run_swarm(goal, max_rounds))
-                    await ws.send_text(json.dumps({"event": "swarm.starting", "data": {"goal": goal}}))
+                    raw_count = msg.get("agent_count")
+                    agent_count: int | None = None
+                    if raw_count is not None:
+                        try:
+                            agent_count = max(1, min(20, int(raw_count)))
+                        except (TypeError, ValueError):
+                            agent_count = None
+                    _swarm_task = asyncio.create_task(
+                        _run_swarm(goal, max_rounds, agent_count=agent_count)
+                    )
+                    await ws.send_text(json.dumps({
+                        "event": "swarm.starting",
+                        "data": {"goal": goal, "agent_count": agent_count},
+                    }))
 
             elif cmd == "stop":
                 if _swarm_task and not _swarm_task.done():
@@ -335,8 +361,19 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     if _swarm_task and not _swarm_task.done():
                         _swarm_task.cancel()
                 else:
-                    # Echo back as a chat message event
+                    # Always echo for the UI log
                     await manager.broadcast("chat.message", {"text": text, "source": "user"})
+                    # If a swarm is running, inject the message into the director's inbox
+                    if (
+                        text
+                        and _swarm is not None
+                        and _swarm_task is not None
+                        and not _swarm_task.done()
+                    ):
+                        try:
+                            await _swarm.inject_human_message(text)
+                        except Exception as e:
+                            logger.error(f"[WS] Failed to inject human message: {e}")
 
     except WebSocketDisconnect:
         manager.disconnect(ws)
