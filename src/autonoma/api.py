@@ -384,6 +384,72 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         manager.disconnect(ws)
 
 
+@app.get("/api/files")
+async def list_files() -> dict[str, Any]:
+    """Return a listing of files produced by the current/last swarm run."""
+    if _project is None:
+        return {"project": None, "files": []}
+    return {
+        "project": _project.name,
+        "files": [
+            {
+                "path": f.path,
+                "size": len(f.content),
+                "description": f.description,
+                "created_by": f.created_by,
+            }
+            for f in _project.files
+        ],
+    }
+
+
+@app.get("/api/files/download")
+async def download_file(path: str) -> Response:
+    """Download a single generated file by its project-relative path."""
+    if _project is None:
+        raise HTTPException(status_code=404, detail="No active project")
+
+    # Path traversal defense — match the artifact by exact recorded path.
+    artifact = next((f for f in _project.files if f.path == path), None)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    filename = path.rsplit("/", 1)[-1] or "file"
+    return Response(
+        content=artifact.content.encode("utf-8"),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/files/zip")
+async def download_zip() -> Response:
+    """Download all generated files as a single zip archive."""
+    if _project is None or not _project.files:
+        raise HTTPException(status_code=404, detail="No files to download")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for artifact in _project.files:
+            # Defense-in-depth: strip leading slashes and any ".." segments
+            safe_path = "/".join(
+                seg for seg in artifact.path.split("/")
+                if seg and seg != ".."
+            )
+            if not safe_path:
+                continue
+            zf.writestr(safe_path, artifact.content)
+
+    project_name = _project.name or "autonoma-project"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{project_name}.zip"'
+        },
+    )
+
+
 @app.get("/api/health")
 async def health():
     return {
