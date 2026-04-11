@@ -11,7 +11,10 @@ services:
       - AUTONOMA_MODEL=${AUTONOMA_MODEL:-claude-sonnet-4-20250514}
       - AUTONOMA_MAX_ROUNDS=${AUTONOMA_MAX_ROUNDS:-30}
     volumes:
-      - ./output:/app/output
+      # Named volume (not a bind mount) so agent-generated files never land
+      # in the GitHub Actions runner workspace. A bind mount here causes
+      # root-owned files on the host and breaks actions/checkout cleanup.
+      - autonoma_output:/app/output
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -37,3 +40,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  autonoma_output:
