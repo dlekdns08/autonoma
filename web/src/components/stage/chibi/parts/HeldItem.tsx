@@ -180,8 +180,9 @@ function TesterFlask({ palette, outline }: SubProps): React.JSX.Element {
 
 /* writer — open book ---------------------------------------------- */
 function WriterBook({ palette, outline }: SubProps): React.JSX.Element {
-  const gPage = "item-writer-page";
-  const gGlow = "item-writer-glow";
+  const uid = useId();
+  const gPage = `${uid}-item-writer-page`;
+  const gGlow = `${uid}-item-writer-glow`;
   const x = 95;
   const y = 145;
   const scribble = (sx: number, sy: number, len: number) => (
@@ -215,8 +216,9 @@ function WriterBook({ palette, outline }: SubProps): React.JSX.Element {
 
 /* designer — paint brush ------------------------------------------ */
 function DesignerBrush({ palette, outline }: SubProps): React.JSX.Element {
-  const gHandle = "item-designer-handle";
-  const gBristle = "item-designer-bristle";
+  const uid = useId();
+  const gHandle = `${uid}-item-designer-handle`;
+  const gBristle = `${uid}-item-designer-bristle`;
   return (
     <g>
       <defs>
@@ -244,8 +246,9 @@ function DesignerBrush({ palette, outline }: SubProps): React.JSX.Element {
 
 /* generic — diamond gem ------------------------------------------- */
 function GenericGem({ palette, outline }: SubProps): React.JSX.Element {
-  const gGem = "item-generic-gem";
-  const gGlow = "item-generic-glow";
+  const uid = useId();
+  const gGem = `${uid}-item-generic-gem`;
+  const gGlow = `${uid}-item-generic-glow`;
   return (
     <g>
       <defs>
