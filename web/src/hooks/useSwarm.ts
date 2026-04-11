@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentData, RelationshipData, SwarmState, TaskData } from "@/lib/types";
+import type { AgentData, FileEntry, RelationshipData, SwarmState, TaskData } from "@/lib/types";
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 
@@ -10,6 +10,12 @@ const WS_URL =
   (typeof window !== "undefined" && window.location.hostname === "autonoma.koala.ai.kr"
     ? `wss://autonoma.koala.ai.kr/api/ws`
     : "ws://localhost:3479/ws");
+
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" && window.location.hostname === "autonoma.koala.ai.kr"
+    ? "https://autonoma.koala.ai.kr/api"
+    : "http://localhost:3479");
 
 const INITIAL_STATE: SwarmState = {
   status: "idle",
@@ -28,6 +34,7 @@ const INITIAL_STATE: SwarmState = {
   multiverse: "",
   graveyard: "",
   relationships: [],
+  final_answer: "",
 };
 
 let eventIdCounter = 0;
@@ -120,9 +127,10 @@ export function useSwarm() {
                 round: (data.round as number) || 0,
                 agents: (data.agents as AgentData[]) || [],
                 tasks: (data.tasks as TaskData[]) || [],
-                files: (data.files as string[]) || [],
+                files: (data.files as FileEntry[]) || [],
                 sky: (data.sky as string) || "",
                 relationships: (data.relationships as RelationshipData[]) || [],
+                final_answer: (data.final_answer as string) || prev.final_answer,
               };
 
             case "swarm.started":
@@ -139,6 +147,7 @@ export function useSwarm() {
 
             case "swarm.finished":
               next.status = "finished";
+              if (data.final_answer) next.final_answer = data.final_answer as string;
               if (data.epilogue) next.epilogue = data.epilogue as string;
               if (data.leaderboard) next.leaderboard = data.leaderboard as string;
               if (data.multiverse) next.multiverse = data.multiverse as string;
@@ -217,8 +226,16 @@ export function useSwarm() {
 
             case "file.created": {
               const path = data.path as string;
-              if (path && !prev.files.includes(path)) {
-                next.files = [...prev.files, path];
+              if (path && !prev.files.some((f) => f.path === path)) {
+                next.files = [
+                  ...prev.files,
+                  {
+                    path,
+                    size: (data.size as number) || 0,
+                    description: (data.description as string) || "",
+                    created_by: (data.agent as string) || "",
+                  },
+                ];
               }
               break;
             }
