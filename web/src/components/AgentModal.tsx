@@ -6,6 +6,7 @@ import type { AgentData } from "@/lib/types";
 interface Props {
   agent: AgentData;
   onClose: () => void;
+  onSend?: (agentName: string, message: string) => void;
 }
 
 // SVG radar chart for agent stats
@@ -138,9 +139,20 @@ function MoodSparkline({ mood }: { mood: string }) {
   );
 }
 
-export default function AgentModal({ agent, onClose }: Props) {
+export default function AgentModal({ agent, onClose, onSend }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<"stats" | "info">("stats");
+  const [instruction, setInstruction] = useState("");
+  const [sentFlash, setSentFlash] = useState(false);
+
+  const handleSend = () => {
+    const text = instruction.trim();
+    if (!text || !onSend) return;
+    onSend(agent.name, text);
+    setInstruction("");
+    setSentFlash(true);
+    setTimeout(() => setSentFlash(false), 900);
+  };
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -314,6 +326,43 @@ export default function AgentModal({ agent, onClose }: Props) {
             </div>
           )}
         </div>
+
+        {/* Direct Instruction Composer */}
+        {onSend && (
+          <div className="border-t border-purple-500/20 bg-slate-950/60 px-5 py-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-[10px] font-mono uppercase tracking-wider text-purple-300/70">
+                ✉ Direct Instruction to {agent.name}
+              </label>
+              {sentFlash && (
+                <span className="text-[9px] font-mono text-emerald-400">sent ✓</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={`Tell ${agent.name} what to do...`}
+                className="flex-1 rounded-md border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-white/90 font-mono placeholder-white/25 outline-none focus:border-purple-400/60"
+              />
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!instruction.trim()}
+                className="rounded-md border border-purple-500/40 bg-purple-500/20 px-3 py-1.5 text-xs font-mono text-purple-200 transition-colors hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
