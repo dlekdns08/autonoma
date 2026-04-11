@@ -90,17 +90,29 @@ function AgentOnMap({
   agent,
   motion,
   dialogue,
+  onClick,
 }: {
   agent: AgentData;
   motion: MotionState;
   dialogue: DialogueBubble | null;
+  onClick?: () => void;
 }) {
   const rarityClass = RARITY_TEXT[agent.rarity || "common"] ?? RARITY_TEXT.common;
   const speech = dialogue?.text ?? agent.speech;
 
   return (
     <div
-      className="absolute"
+      className={`absolute ${onClick ? "cursor-pointer" : ""}`}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (!onClick) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       style={{
         left: `${motion.x}%`,
         top: `${motion.y}%`,
