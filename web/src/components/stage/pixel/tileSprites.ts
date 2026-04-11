@@ -456,7 +456,12 @@ function drawDoormat(
   ctx.fillRect(ox + 0, oy + TILE - 1, TILE, 1);
 }
 
-function drawRoofTile(ctx: Ctx, ox: number, oy: number, seed: number): void {
+function drawRoofTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
   paintBase(ctx, ox, oy, ROOF_TILE);
   // shingles: scalloped rows
   ctx.fillStyle = ROOF_TILE.shade;
@@ -478,9 +483,6 @@ function drawRoofTile(ctx: Ctx, ox: number, oy: number, seed: number): void {
     ctx.fillRect(ox + x, oy + y, 1, 1);
   }
 }
-
-// ── helper renamed to keep the Ctx alias local to interior funcs ────────
-type Ctx = CanvasRenderingContext2D;
 
 function drawFlowerGrass(
   ctx: CanvasRenderingContext2D,
