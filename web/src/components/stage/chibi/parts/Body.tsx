@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import * as React from "react";
 import { CHIBI_VIEWBOX } from "../types";
 
@@ -208,8 +209,10 @@ function Leg({ side, angle, skinBase, outline }: LegProps): React.JSX.Element {
  */
 function Torso({
   outline,
+  gradId,
 }: {
   outline: string;
+  gradId: string;
 }): React.JSX.Element {
   // Outline points (clockwise from top-left shoulder).
   // Top is across the shoulder line at y=112.
@@ -228,7 +231,7 @@ function Torso({
   return (
     <path
       d={d}
-      fill="url(#body-torso-grad)"
+      fill={`url(#${gradId})`}
       stroke={outline}
       strokeWidth="1.6"
       strokeLinejoin="round"
@@ -239,6 +242,8 @@ function Torso({
 export function Body(props: BodyProps): React.JSX.Element {
   const { walkPhase, celebrating, skinBase, skinShade, outline, children } =
     props;
+  const uid = useId();
+  const torsoGradId = `${uid}-body-torso-grad`;
 
   // ---- Walk cycle math ----------------------------------------------------
   // walkPhase undefined => standing still, all swings = 0.
@@ -276,7 +281,7 @@ export function Body(props: BodyProps): React.JSX.Element {
     <g>
       <defs>
         <linearGradient
-          id="body-torso-grad"
+          id={torsoGradId}
           x1="0"
           y1="0"
           x2="0"
@@ -304,7 +309,7 @@ export function Body(props: BodyProps): React.JSX.Element {
       />
 
       {/* 3. Torso (skin only — clothing is layered on top by Outfit) */}
-      <Torso outline={outline} />
+      <Torso outline={outline} gradId={torsoGradId} />
 
       {/* 4. Front arm (left side) */}
       <Arm
