@@ -323,6 +323,416 @@ export function drawFence(ctx: Ctx, ox: number, oy: number): void {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// INTERIOR FURNITURE & PROPS
+// ─────────────────────────────────────────────────────────────────────
+
+// ── Desk with monitor: 20w × 16h ─────────────────────────────────────
+export const DESK_W = 20;
+export const DESK_H = 16;
+
+export function drawDesk(ctx: Ctx, ox: number, oy: number): void {
+  const legDark = "#2a1a0a";
+  const woodDark = "#4a2e14";
+  const woodMid = "#8a5a28";
+  const woodHi = "#c88a48";
+  const screenFrame = "#18182a";
+  const screen = "#3a6aa8";
+  const screenGlow = "#a8d4ff";
+  const keyboard = "#1a1a22";
+
+  // monitor
+  px(ctx, ox + 6, oy + 0, 8, 1, screenFrame);
+  px(ctx, ox + 5, oy + 1, 10, 5, screenFrame);
+  px(ctx, ox + 6, oy + 2, 8, 3, screen);
+  px(ctx, ox + 6, oy + 2, 3, 1, screenGlow);
+  px(ctx, ox + 7, oy + 3, 1, 1, screenGlow);
+  // stand
+  px(ctx, ox + 9, oy + 6, 2, 2, screenFrame);
+  px(ctx, ox + 7, oy + 8, 6, 1, screenFrame);
+
+  // desk top
+  px(ctx, ox + 0, oy + 9, 20, 1, woodHi);
+  px(ctx, ox + 0, oy + 10, 20, 2, woodMid);
+  px(ctx, ox + 0, oy + 12, 20, 1, woodDark);
+  // keyboard
+  px(ctx, ox + 4, oy + 9, 10, 1, keyboard);
+  for (let k = 5; k < 14; k += 2) px(ctx, ox + k, oy + 9, 1, 1, "#3a3a44");
+  // legs
+  px(ctx, ox + 1, oy + 13, 2, 3, legDark);
+  px(ctx, ox + 17, oy + 13, 2, 3, legDark);
+  // shadow
+  px(ctx, ox + 1, oy + 15, 18, 1, "#00000044");
+}
+
+// ── Office chair: 10w × 14h ──────────────────────────────────────────
+export const CHAIR_W = 10;
+export const CHAIR_H = 14;
+
+export function drawChair(ctx: Ctx, ox: number, oy: number): void {
+  const dark = "#181822";
+  const mid = "#3a3a48";
+  const hi = "#5a5a6a";
+  const metal = "#6a6e7a";
+  // backrest
+  px(ctx, ox + 2, oy + 0, 6, 1, dark);
+  px(ctx, ox + 1, oy + 1, 8, 5, dark);
+  px(ctx, ox + 2, oy + 2, 6, 3, mid);
+  px(ctx, ox + 2, oy + 2, 6, 1, hi);
+  // seat
+  px(ctx, ox + 1, oy + 6, 8, 1, dark);
+  px(ctx, ox + 1, oy + 7, 8, 2, mid);
+  px(ctx, ox + 1, oy + 7, 8, 1, hi);
+  // post
+  px(ctx, ox + 4, oy + 9, 2, 3, metal);
+  // wheel base
+  px(ctx, ox + 1, oy + 12, 8, 1, metal);
+  px(ctx, ox + 0, oy + 13, 3, 1, dark);
+  px(ctx, ox + 7, oy + 13, 3, 1, dark);
+  px(ctx, ox + 4, oy + 13, 2, 1, dark);
+  // shadow
+  px(ctx, ox + 1, oy + 13, 8, 1, "#00000033");
+}
+
+// ── Tall bookshelf: 18w × 30h ────────────────────────────────────────
+export const BOOKSHELF_W = 18;
+export const BOOKSHELF_H = 30;
+
+export function drawBookshelf(ctx: Ctx, ox: number, oy: number, seed = 0): void {
+  const frameDark = "#2a1608";
+  const frameMid = "#6a3e18";
+  const frameHi = "#9c5a24";
+  const bookCols = ["#c83a2c", "#2c6cc8", "#2e9a3c", "#c89024", "#8a2cc8", "#1a4a7a"];
+
+  // frame
+  px(ctx, ox + 0, oy + 0, BOOKSHELF_W, 1, frameDark);
+  px(ctx, ox + 0, oy + 0, 1, BOOKSHELF_H, frameDark);
+  px(ctx, ox + BOOKSHELF_W - 1, oy + 0, 1, BOOKSHELF_H, frameDark);
+  px(ctx, ox + 0, oy + BOOKSHELF_H - 1, BOOKSHELF_W, 1, frameDark);
+  // inner back
+  px(ctx, ox + 1, oy + 1, BOOKSHELF_W - 2, BOOKSHELF_H - 2, frameMid);
+  px(ctx, ox + 1, oy + 1, BOOKSHELF_W - 2, 1, frameHi);
+
+  // shelves (4 rows)
+  const shelfYs = [7, 14, 21, 27];
+  for (const sy of shelfYs) {
+    px(ctx, ox + 1, oy + sy, BOOKSHELF_W - 2, 1, frameDark);
+    px(ctx, ox + 1, oy + sy - 1, BOOKSHELF_W - 2, 1, frameHi);
+  }
+
+  // books per shelf — staggered widths & heights, deterministic by seed
+  const shelfTops = [1, 8, 15, 22];
+  for (let s = 0; s < shelfTops.length; s++) {
+    let x = 2;
+    let idx = 0;
+    while (x < BOOKSHELF_W - 3) {
+      const wBook = 1 + (((seed + s * 7 + idx * 3) >> 1) & 1) + 1;
+      const h = 4 + ((seed + s * 5 + idx * 11) & 1);
+      const topY = shelfTops[s] + (6 - h);
+      const color = bookCols[(seed + s * 3 + idx) % bookCols.length];
+      px(ctx, ox + x, oy + topY, wBook, h, color);
+      // spine highlight
+      px(ctx, ox + x, oy + topY, 1, h, "#ffffff22");
+      x += wBook + 1;
+      idx++;
+    }
+  }
+
+  // base shadow
+  px(ctx, ox + 0, oy + BOOKSHELF_H, BOOKSHELF_W, 1, "#00000044");
+}
+
+// ── Meeting / round table: 28w × 16h ─────────────────────────────────
+export const TABLE_W = 28;
+export const TABLE_H = 16;
+
+export function drawMeetingTable(ctx: Ctx, ox: number, oy: number): void {
+  const top = "#7a4a20";
+  const topHi = "#b87a3a";
+  const topShade = "#4a2a0e";
+  const legDark = "#2a1608";
+  const paper = "#f0e4c0";
+  const paperEdge = "#a08a54";
+
+  // ellipse top
+  px(ctx, ox + 6, oy + 0, 16, 1, topShade);
+  px(ctx, ox + 3, oy + 1, 22, 1, topShade);
+  px(ctx, ox + 1, oy + 2, 26, 2, top);
+  px(ctx, ox + 0, oy + 4, 28, 4, top);
+  px(ctx, ox + 1, oy + 8, 26, 1, topShade);
+  px(ctx, ox + 3, oy + 9, 22, 1, topShade);
+  px(ctx, ox + 6, oy + 10, 16, 1, topShade);
+  // top highlight
+  px(ctx, ox + 4, oy + 2, 20, 1, topHi);
+  px(ctx, ox + 2, oy + 3, 24, 1, topHi);
+
+  // paper/coffee scattered on top
+  px(ctx, ox + 6, oy + 4, 3, 2, paper);
+  px(ctx, ox + 6, oy + 4, 3, 1, paperEdge);
+  px(ctx, ox + 16, oy + 5, 4, 2, paper);
+  px(ctx, ox + 16, oy + 5, 4, 1, paperEdge);
+  // coffee cup
+  px(ctx, ox + 21, oy + 4, 2, 2, "#ffffff");
+  px(ctx, ox + 21, oy + 4, 2, 1, "#3a1a08");
+
+  // legs
+  px(ctx, ox + 4, oy + 11, 2, 4, legDark);
+  px(ctx, ox + 22, oy + 11, 2, 4, legDark);
+  px(ctx, ox + 13, oy + 11, 2, 4, legDark);
+  // shadow
+  px(ctx, ox + 2, oy + 15, 24, 1, "#00000055");
+}
+
+// ── Whiteboard: 28w × 16h ─────────────────────────────────────────────
+export const WHITEBOARD_W = 28;
+export const WHITEBOARD_H = 16;
+
+export function drawWhiteboard(ctx: Ctx, ox: number, oy: number): void {
+  const frame = "#2a2a32";
+  const frameHi = "#5a5a68";
+  const board = "#f4f4ee";
+  const boardShade = "#c8c8c0";
+  const marker1 = "#c83a2c";
+  const marker2 = "#2c6cc8";
+  const marker3 = "#1a9a3c";
+
+  px(ctx, ox + 0, oy + 0, WHITEBOARD_W, 1, frame);
+  px(ctx, ox + 0, oy + 0, 1, WHITEBOARD_H - 3, frame);
+  px(ctx, ox + WHITEBOARD_W - 1, oy + 0, 1, WHITEBOARD_H - 3, frame);
+  px(ctx, ox + 0, oy + WHITEBOARD_H - 4, WHITEBOARD_W, 1, frame);
+  // inner board
+  px(ctx, ox + 1, oy + 1, WHITEBOARD_W - 2, WHITEBOARD_H - 5, board);
+  px(ctx, ox + 1, oy + 1, WHITEBOARD_W - 2, 1, frameHi);
+  px(ctx, ox + 1, oy + WHITEBOARD_H - 5, WHITEBOARD_W - 2, 1, boardShade);
+
+  // scribbles — arrows, boxes, diagrams
+  // box 1
+  px(ctx, ox + 3, oy + 3, 5, 3, marker1);
+  px(ctx, ox + 4, oy + 4, 3, 1, board);
+  // arrow
+  px(ctx, ox + 8, oy + 4, 3, 1, marker2);
+  px(ctx, ox + 10, oy + 3, 1, 3, marker2);
+  // box 2
+  px(ctx, ox + 12, oy + 3, 5, 4, marker3);
+  px(ctx, ox + 13, oy + 4, 3, 2, board);
+  // arrow2
+  px(ctx, ox + 17, oy + 5, 3, 1, marker1);
+  // box 3
+  px(ctx, ox + 20, oy + 3, 5, 3, marker2);
+  px(ctx, ox + 21, oy + 4, 3, 1, board);
+  // bottom notes
+  px(ctx, ox + 3, oy + 8, 8, 1, marker1);
+  px(ctx, ox + 3, oy + 10, 6, 1, marker3);
+  px(ctx, ox + 14, oy + 8, 10, 1, marker2);
+
+  // tray
+  px(ctx, ox + 2, oy + WHITEBOARD_H - 3, WHITEBOARD_W - 4, 1, frameHi);
+  px(ctx, ox + 2, oy + WHITEBOARD_H - 2, WHITEBOARD_W - 4, 1, frame);
+  // markers in tray
+  px(ctx, ox + 5, oy + WHITEBOARD_H - 3, 3, 1, marker1);
+  px(ctx, ox + 10, oy + WHITEBOARD_H - 3, 3, 1, marker2);
+  px(ctx, ox + 15, oy + WHITEBOARD_H - 3, 3, 1, marker3);
+  // shadow
+  px(ctx, ox + 1, oy + WHITEBOARD_H - 1, WHITEBOARD_W - 2, 1, "#00000044");
+}
+
+// ── Couch: 24w × 14h ─────────────────────────────────────────────────
+export const COUCH_W = 24;
+export const COUCH_H = 14;
+
+export function drawCouch(ctx: Ctx, ox: number, oy: number): void {
+  const dark = "#1f2a48";
+  const mid = "#3a4a78";
+  const hi = "#5a6aa0";
+  const cushionMid = "#4a5a88";
+  const feet = "#181820";
+
+  // back
+  px(ctx, ox + 0, oy + 0, COUCH_W, 1, dark);
+  px(ctx, ox + 0, oy + 1, COUCH_W, 5, mid);
+  px(ctx, ox + 0, oy + 1, COUCH_W, 1, hi);
+  // arm rests
+  px(ctx, ox + 0, oy + 5, 3, 5, dark);
+  px(ctx, ox + 0, oy + 6, 3, 3, mid);
+  px(ctx, ox + COUCH_W - 3, oy + 5, 3, 5, dark);
+  px(ctx, ox + COUCH_W - 3, oy + 6, 3, 3, mid);
+  // seat cushions (2)
+  px(ctx, ox + 3, oy + 6, 9, 4, cushionMid);
+  px(ctx, ox + 3, oy + 6, 9, 1, hi);
+  px(ctx, ox + 12, oy + 6, 9, 4, cushionMid);
+  px(ctx, ox + 12, oy + 6, 9, 1, hi);
+  // seam
+  px(ctx, ox + 12, oy + 6, 1, 4, dark);
+  // skirt
+  px(ctx, ox + 0, oy + 10, COUCH_W, 2, dark);
+  // feet
+  px(ctx, ox + 1, oy + 12, 2, 2, feet);
+  px(ctx, ox + COUCH_W - 3, oy + 12, 2, 2, feet);
+  // shadow
+  px(ctx, ox + 1, oy + 13, COUCH_W - 2, 1, "#00000044");
+}
+
+// ── Potted plant: 12w × 20h ──────────────────────────────────────────
+export const PLANT_W = 12;
+export const PLANT_H = 20;
+
+export function drawPlant(ctx: Ctx, ox: number, oy: number): void {
+  const leafDark = "#1a4a1a";
+  const leafMid = "#2e7a2e";
+  const leafHi = "#5ab04a";
+  const potDark = "#4a2a10";
+  const potMid = "#8a4a20";
+  const potHi = "#c87a3a";
+
+  // leafy top
+  px(ctx, ox + 4, oy + 0, 4, 1, leafDark);
+  px(ctx, ox + 2, oy + 1, 8, 1, leafDark);
+  px(ctx, ox + 1, oy + 2, 10, 1, leafDark);
+  px(ctx, ox + 0, oy + 3, 12, 4, leafDark);
+  px(ctx, ox + 1, oy + 7, 10, 1, leafDark);
+  px(ctx, ox + 2, oy + 8, 8, 1, leafDark);
+  // mid green
+  px(ctx, ox + 3, oy + 2, 6, 1, leafMid);
+  px(ctx, ox + 2, oy + 3, 8, 3, leafMid);
+  px(ctx, ox + 3, oy + 6, 6, 1, leafMid);
+  // highlight
+  px(ctx, ox + 3, oy + 3, 3, 1, leafHi);
+  px(ctx, ox + 7, oy + 4, 2, 1, leafHi);
+  px(ctx, ox + 4, oy + 5, 2, 1, leafHi);
+
+  // stem peeking
+  px(ctx, ox + 5, oy + 9, 2, 3, "#3a5a1a");
+
+  // pot (trapezoid)
+  px(ctx, ox + 2, oy + 12, 8, 1, potDark);
+  px(ctx, ox + 3, oy + 13, 6, 5, potMid);
+  px(ctx, ox + 3, oy + 13, 6, 1, potHi);
+  px(ctx, ox + 3, oy + 18, 6, 1, potDark);
+  // shadow
+  px(ctx, ox + 3, oy + 19, 6, 1, "#00000055");
+}
+
+// ── Crate: 12w × 12h ─────────────────────────────────────────────────
+export const CRATE_W = 12;
+export const CRATE_H = 12;
+
+export function drawCrate(ctx: Ctx, ox: number, oy: number): void {
+  const dark = "#2a1608";
+  const mid = "#6a3e18";
+  const hi = "#9c5a24";
+  const strap = "#4a2a10";
+  // outline
+  px(ctx, ox + 0, oy + 0, 12, 1, dark);
+  px(ctx, ox + 0, oy + 0, 1, 12, dark);
+  px(ctx, ox + 11, oy + 0, 1, 12, dark);
+  px(ctx, ox + 0, oy + 11, 12, 1, dark);
+  // fill
+  px(ctx, ox + 1, oy + 1, 10, 10, mid);
+  // planks
+  px(ctx, ox + 1, oy + 1, 10, 1, hi);
+  px(ctx, ox + 1, oy + 4, 10, 1, strap);
+  px(ctx, ox + 1, oy + 7, 10, 1, strap);
+  // X-brace
+  for (let i = 0; i < 9; i++) {
+    px(ctx, ox + 1 + i, oy + 2 + i, 1, 1, hi);
+    px(ctx, ox + 10 - i, oy + 2 + i, 1, 1, hi);
+  }
+  // shadow
+  px(ctx, ox + 1, oy + 12, 10, 1, "#00000044");
+}
+
+// ── Computer tower & monitor combo: 12w × 16h ────────────────────────
+export const COMPUTER_W = 12;
+export const COMPUTER_H = 16;
+
+export function drawComputer(ctx: Ctx, ox: number, oy: number): void {
+  const frame = "#18181f";
+  const frameHi = "#3a3a48";
+  const screen = "#0a3a7a";
+  const screenGlow = "#6ac4ff";
+  const text = "#8aff8a";
+
+  // monitor
+  px(ctx, ox + 1, oy + 0, 10, 8, frame);
+  px(ctx, ox + 2, oy + 1, 8, 6, screen);
+  px(ctx, ox + 2, oy + 1, 8, 1, screenGlow);
+  // fake text lines (terminal)
+  px(ctx, ox + 3, oy + 3, 4, 1, text);
+  px(ctx, ox + 3, oy + 4, 3, 1, text);
+  px(ctx, ox + 3, oy + 5, 5, 1, text);
+  // stand
+  px(ctx, ox + 5, oy + 8, 2, 2, frame);
+  px(ctx, ox + 3, oy + 10, 6, 1, frame);
+  // tower (CPU)
+  px(ctx, ox + 7, oy + 11, 4, 5, frameHi);
+  px(ctx, ox + 7, oy + 11, 4, 1, frame);
+  px(ctx, ox + 8, oy + 12, 2, 1, "#ffcc00"); // power LED
+  // shadow
+  px(ctx, ox + 0, oy + 15, 12, 1, "#00000033");
+}
+
+// ── Door (wall-mounted, for room transitions): 12w × 20h ─────────────
+export const DOOR_W = 12;
+export const DOOR_H = 20;
+
+export function drawDoor(ctx: Ctx, ox: number, oy: number): void {
+  const frameDark = "#2a1608";
+  const doorMid = "#6a3e18";
+  const doorHi = "#9c5a24";
+  const handle = "#e4c848";
+
+  px(ctx, ox + 0, oy + 0, DOOR_W, 1, frameDark);
+  px(ctx, ox + 0, oy + 0, 1, DOOR_H, frameDark);
+  px(ctx, ox + DOOR_W - 1, oy + 0, 1, DOOR_H, frameDark);
+  px(ctx, ox + 1, oy + 1, DOOR_W - 2, DOOR_H - 1, doorMid);
+  px(ctx, ox + 1, oy + 1, 1, DOOR_H - 1, doorHi);
+  // panels
+  px(ctx, ox + 3, oy + 3, 6, 5, frameDark);
+  px(ctx, ox + 4, oy + 4, 4, 3, doorHi);
+  px(ctx, ox + 3, oy + 10, 6, 6, frameDark);
+  px(ctx, ox + 4, oy + 11, 4, 4, doorHi);
+  // handle
+  px(ctx, ox + 9, oy + 11, 1, 2, handle);
+}
+
+// ── Bed: 24w × 14h ───────────────────────────────────────────────────
+export const BED_W = 24;
+export const BED_H = 14;
+
+export function drawBed(ctx: Ctx, ox: number, oy: number): void {
+  const frame = "#2a1608";
+  const frameHi = "#6a3e18";
+  const mattress = "#f0e4c0";
+  const mattressShade = "#c8b880";
+  const sheet = "#4a6aa8";
+  const sheetHi = "#7a9ad8";
+  const pillow = "#ffffff";
+  const pillowShade = "#c8c8d8";
+
+  // frame
+  px(ctx, ox + 0, oy + 2, BED_W, 1, frame);
+  px(ctx, ox + 0, oy + 2, 1, 10, frame);
+  px(ctx, ox + BED_W - 1, oy + 2, 1, 10, frame);
+  px(ctx, ox + 0, oy + 11, BED_W, 1, frame);
+  // headboard
+  px(ctx, ox + 0, oy + 0, 5, 2, frame);
+  px(ctx, ox + 1, oy + 0, 3, 2, frameHi);
+  // mattress
+  px(ctx, ox + 1, oy + 3, BED_W - 2, 8, mattress);
+  px(ctx, ox + 1, oy + 10, BED_W - 2, 1, mattressShade);
+  // blanket (lower 2/3)
+  px(ctx, ox + 6, oy + 5, BED_W - 7, 6, sheet);
+  px(ctx, ox + 6, oy + 5, BED_W - 7, 1, sheetHi);
+  // pillow (top)
+  px(ctx, ox + 2, oy + 3, 4, 3, pillow);
+  px(ctx, ox + 2, oy + 5, 4, 1, pillowShade);
+  // legs
+  px(ctx, ox + 0, oy + 12, 1, 2, frame);
+  px(ctx, ox + BED_W - 1, oy + 12, 1, 2, frame);
+  // shadow
+  px(ctx, ox + 1, oy + 13, BED_W - 2, 1, "#00000044");
+}
+
 // ── Fountain: 32w × 24h ───────────────────────────────────────────────
 export const FOUNTAIN_W = 32;
 export const FOUNTAIN_H = 24;
