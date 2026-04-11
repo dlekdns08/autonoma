@@ -125,6 +125,17 @@ class AgentSwarm:
 
         recorder = start_run(goal=project.description or project.name, model=settings.model)
 
+        try:
+            return await self._run_loop(project, max_rounds, recorder)
+        finally:
+            finish_run(recorder)
+
+    async def _run_loop(
+        self,
+        project: ProjectState,
+        max_rounds: int,
+        recorder: Any,
+    ) -> ProjectState:
         await bus.emit("swarm.started", max_rounds=max_rounds)
 
         while self._running and self._round < max_rounds:
@@ -264,11 +275,14 @@ class AgentSwarm:
             # Tick animations
             self._tick_animations()
 
+            if recorder is not None:
+                recorder.checkpoint(self._round, project)
+
             if project.completed:
                 # Narrate project completion
                 agent_names = list(self.agents.keys())
                 self.narrative.narrate_project_complete(
-                    project.goal or "the project", agent_names, self._round,
+                    project.description or "the project", agent_names, self._round,
                 )
                 break
 
