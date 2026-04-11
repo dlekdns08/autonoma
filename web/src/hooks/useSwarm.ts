@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentData, FileEntry, RelationshipData, SwarmState, TaskData } from "@/lib/types";
+import type {
+  AgentData,
+  BossData,
+  CookieData,
+  FileEntry,
+  RelationshipData,
+  SwarmState,
+  TaskData,
+} from "@/lib/types";
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 
@@ -29,6 +37,7 @@ const INITIAL_STATE: SwarmState = {
   sky: "",
   events: [],
   boss: null,
+  cookies: [],
   epilogue: "",
   leaderboard: "",
   multiverse: "",
@@ -36,6 +45,28 @@ const INITIAL_STATE: SwarmState = {
   relationships: [],
   final_answer: "",
 };
+
+/** Pick a placement for a fortune cookie inside one of the three HQ rooms.
+ *  We pick a spot away from the exact centre so the cookie doesn't vanish
+ *  under an agent standing still. */
+function pickCookieSpot(recipient: string): { x: number; y: number } {
+  // Hash the recipient name so multiple cookies don't pile on the same tile.
+  let h = 0;
+  for (let i = 0; i < recipient.length; i++) {
+    h = (h * 31 + recipient.charCodeAt(i)) | 0;
+  }
+  const rooms: Array<[number, number, number, number]> = [
+    [8, 30, 58, 78], // coder-lab (minX, maxX, minY, maxY)
+    [45, 60, 58, 78], // war-room
+    [75, 95, 58, 78], // design lounge
+  ];
+  const room = rooms[Math.abs(h) % rooms.length];
+  const xSpan = room[1] - room[0];
+  const ySpan = room[3] - room[2];
+  const x = room[0] + ((Math.abs(h >> 3) % 1000) / 1000) * xSpan;
+  const y = room[2] + ((Math.abs(h >> 9) % 1000) / 1000) * ySpan;
+  return { x, y };
+}
 
 let eventIdCounter = 0;
 
@@ -118,7 +149,40 @@ export function useSwarm() {
           const next = { ...prev };
 
           switch (event) {
-            case "snapshot":
+            case "snapshot": {
+              const snapshotBoss = data.boss as
+                | (Partial<BossData> & { hp: number; max_hp: number })
+                | null
+                | undefined;
+              const nextBoss: BossData | null = snapshotBoss
+                ? {
+                    name: snapshotBoss.name || "???",
+                    species: snapshotBoss.species || "unknown",
+                    level: snapshotBoss.level || 1,
+                    hp: snapshotBoss.hp,
+                    max_hp: snapshotBoss.max_hp,
+                    x: snapshotBoss.x ?? 52,
+                    y: snapshotBoss.y ?? 54,
+                    hitSeq: prev.boss?.hitSeq ?? 0,
+                    lastDamage: 0,
+                    lastAttacker: "",
+                  }
+                : null;
+
+              const snapshotCookies =
+                (data.cookies as Array<{
+                  recipient: string;
+                  fortune: string;
+                }>) || [];
+              const nextCookies: CookieData[] = snapshotCookies.map((c) => {
+                const existing = prev.cookies.find(
+                  (ex) => ex.recipient === c.recipient,
+                );
+                if (existing) return existing;
+                const pos = pickCookieSpot(c.recipient);
+                return { recipient: c.recipient, fortune: c.fortune, ...pos };
+              });
+
               return {
                 ...prev,
                 status: (data.status as SwarmState["status"]) || "idle",
@@ -131,7 +195,10 @@ export function useSwarm() {
                 sky: (data.sky as string) || "",
                 relationships: (data.relationships as RelationshipData[]) || [],
                 final_answer: (data.final_answer as string) || prev.final_answer,
+                boss: nextBoss,
+                cookies: nextCookies,
               };
+            }
 
             case "swarm.started":
               next.status = "running";
@@ -248,30 +315,70 @@ export function useSwarm() {
               next.relationships = (data.relationships as RelationshipData[]) || prev.relationships;
               break;
 
-            case "boss.appeared":
+            case "boss.appeared": {
+              const maxHp = (data.max_hp as number) || (data.hp as number) || 100;
               next.boss = {
                 name: (data.name as string) || "???",
                 species: (data.species as string) || "unknown",
                 level: (data.level as number) || 1,
-                hp: (data.hp as number) || 100,
-                max_hp: (data.hp as number) || 100,
+                hp: (data.hp as number) || maxHp,
+                max_hp: maxHp,
+                x: (data.x as number) ?? 52,
+                y: (data.y as number) ?? 54,
+                hitSeq: 0,
+                lastDamage: 0,
+                lastAttacker: "",
               };
               break;
+            }
 
-            case "boss.damage":
+            case "boss.damage": {
               if (next.boss) {
-                const bossMsg = (data.message as string) || "";
-                const match = bossMsg.match(/\((\d+)\/(\d+) HP\)/);
-                if (match) {
-                  next.boss = { ...next.boss, hp: parseInt(match[1]), max_hp: parseInt(match[2]) };
+                let hp = next.boss.hp;
+                let maxHp = next.boss.max_hp;
+                let damage = (data.damage as number) || 0;
+                if (typeof data.hp === "number") hp = data.hp as number;
+                if (typeof data.max_hp === "number") maxHp = data.max_hp as number;
+                if (!damage && typeof data.message === "string") {
+                  const m = (data.message as string).match(/(\d+)\/\d+ HP/);
+                  if (m) hp = parseInt(m[1], 10);
                 }
+                next.boss = {
+                  ...next.boss,
+                  hp,
+                  max_hp: maxHp,
+                  hitSeq: next.boss.hitSeq + 1,
+                  lastDamage: damage,
+                  lastAttacker: (data.agent as string) || "",
+                };
               }
               break;
+            }
 
             case "boss.defeated":
             case "boss.escaped":
               next.boss = null;
               break;
+
+            case "fortune.given": {
+              const recipient = data.agent as string;
+              const fortune = (data.fortune as string) || "";
+              if (recipient && !prev.cookies.find((c) => c.recipient === recipient)) {
+                const pos = pickCookieSpot(recipient);
+                next.cookies = [...prev.cookies, { recipient, fortune, ...pos }];
+              }
+              break;
+            }
+
+            case "fortune.fulfilled": {
+              const recipient = data.agent as string;
+              // Mark as opened so Stage can play the poof, then drop after a
+              // short delay via an expiry check inside Stage itself.
+              next.cookies = prev.cookies.map((c) =>
+                c.recipient === recipient ? { ...c, openedAt: Date.now() } : c,
+              );
+              break;
+            }
           }
 
           return next;
@@ -329,6 +436,22 @@ export function useSwarm() {
       wsRef.current?.close();
     };
   }, [connect]);
+
+  // Drop cookies ~1.2s after they open, so Stage has time to play the poof.
+  useEffect(() => {
+    const opened = state.cookies.filter((c) => c.openedAt !== undefined);
+    if (opened.length === 0) return;
+    const timers = opened.map((c) => {
+      const remaining = Math.max(0, 1200 - (Date.now() - (c.openedAt ?? 0)));
+      return setTimeout(() => {
+        setState((prev) => ({
+          ...prev,
+          cookies: prev.cookies.filter((x) => x.recipient !== c.recipient),
+        }));
+      }, remaining);
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [state.cookies]);
 
   return { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm };
 }
