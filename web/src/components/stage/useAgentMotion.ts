@@ -32,15 +32,19 @@ interface Options {
   map: MapLayout;
 }
 
-const SPEED_IDLE = 0.24;
-const SPEED_WALK = 0.42;
-const SPEED_RUN = 0.72;
-const IDLE_PAUSE_MIN = 1200;
-const IDLE_PAUSE_MAX = 3200;
-const WANDER_RANGE = 18;
-const INTERACT_DISTANCE = 7;
-const DIALOGUE_LINE_MS = 2400;
-const DIALOGUE_COOLDOWN_MS = 6000;
+const SPEED_IDLE = 0.38;
+const SPEED_WALK = 0.56;
+const SPEED_RUN = 0.88;
+const IDLE_PAUSE_MIN = 500;
+const IDLE_PAUSE_MAX = 1800;
+const WANDER_RANGE = 34;
+const INTERACT_DISTANCE = 9;
+const DIALOGUE_LINE_MS = 2200;
+const DIALOGUE_COOLDOWN_MS = 3500;
+/** Chance per action reroll that an agent picks a target in a DIFFERENT room. */
+const CROSS_ROOM_CHANCE = 0.35;
+/** Chance per action reroll that an agent seeks out a nearby partner to chat. */
+const SEEK_PARTNER_CHANCE = 0.25;
 
 // Generic percent-space bounds; a room override narrows these per agent.
 const MIN_X = 2;
