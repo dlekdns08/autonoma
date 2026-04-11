@@ -18,6 +18,7 @@ export interface MotionState {
 
 interface Options {
   agents: AgentData[];
+  /** Mid-ground y percent used as the home row for new agents. */
   groundYPercent: number;
   stageWidth?: number;
   stageHeight?: number;
@@ -30,14 +31,22 @@ const IDLE_PAUSE_MIN = 1200;
 const IDLE_PAUSE_MAX = 3200;
 const WANDER_RANGE_MIN = 8;
 const WANDER_RANGE_MAX = 35;
+const VERTICAL_WANDER_RANGE_MIN = 4;
+const VERTICAL_WANDER_RANGE_MAX = 14;
 const INTERACT_DISTANCE = 6;
 const MIN_X = 6;
 const MAX_X = 94;
+// Ground band (percent of stage height) in which characters can wander.
+// The horizon sits at ~50%, we keep feet inside the grass area.
+const MIN_Y = 62;
+const MAX_Y = 96;
 
 interface MotionInternal extends MotionState {
   targetX: number;
+  targetY: number;
   nextActionAt: number;
   homeX: number;
+  homeY: number;
 }
 
 function rand(min: number, max: number) {
@@ -54,21 +63,20 @@ export function useAgentMotion({ agents, groundYPercent }: Options): Record<stri
     lastFrameRef.current = now;
     const next = new Map<string, MotionInternal>();
     const existing = internalRef.current;
-    const usedX: number[] = [];
 
     agents.forEach((agent, idx) => {
       const prior = existing.get(agent.name);
       if (prior) {
         next.set(agent.name, prior);
-        usedX.push(prior.homeX);
         return;
       }
       const spread = agents.length > 1 ? 80 / agents.length : 0;
       const homeX = Math.max(MIN_X + 4, Math.min(MAX_X - 4, 12 + idx * spread + rand(-4, 4)));
+      const homeY = clamp(groundYPercent + rand(-8, 4), MIN_Y + 2, MAX_Y - 2);
       next.set(agent.name, {
         name: agent.name,
         x: homeX,
-        y: groundYPercent,
+        y: homeY,
         vx: 0,
         vy: 0,
         facingLeft: Math.random() < 0.5,
@@ -77,10 +85,11 @@ export function useAgentMotion({ agents, groundYPercent }: Options): Record<stri
         jumpOffset: 0,
         lastX: homeX,
         targetX: homeX,
+        targetY: homeY,
         nextActionAt: now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX),
         homeX,
+        homeY,
       });
-      usedX.push(homeX);
     });
     internalRef.current = next;
   }, [agents, groundYPercent]);
@@ -112,33 +121,46 @@ export function useAgentMotion({ agents, groundYPercent }: Options): Record<stri
               if (target) {
                 const offset = target.x > m.x ? -INTERACT_DISTANCE : INTERACT_DISTANCE;
                 m.targetX = clamp(target.x + offset, MIN_X, MAX_X);
+                m.targetY = clamp(target.y, MIN_Y, MAX_Y);
               }
             } else {
-              m.targetX = pickWanderTarget(m.homeX);
+              [m.targetX, m.targetY] = pickWanderTarget(m.homeX, m.homeY);
             }
             m.nextActionAt = now + rand(1500, 3500);
           } else if (state === "celebrating") {
             m.targetX = clamp(m.x + rand(-12, 12), MIN_X, MAX_X);
+            m.targetY = clamp(m.y + rand(-6, 6), MIN_Y, MAX_Y);
             m.nextActionAt = now + rand(400, 900);
           } else if (state === "working") {
             m.targetX = clamp(m.homeX + rand(-3, 3), MIN_X, MAX_X);
+            m.targetY = clamp(m.homeY + rand(-2, 2), MIN_Y, MAX_Y);
             m.nextActionAt = now + rand(2500, 5000);
           } else {
-            m.targetX = pickWanderTarget(m.homeX);
+            [m.targetX, m.targetY] = pickWanderTarget(m.homeX, m.homeY);
             m.nextActionAt = now + rand(IDLE_PAUSE_MIN, IDLE_PAUSE_MAX);
           }
         }
 
         const dx = m.targetX - m.x;
-        const dist = Math.abs(dx);
+        const dy = m.targetY - m.y;
+        const dist = Math.hypot(dx, dy);
         const speed =
           state === "celebrating" ? SPEED_RUN : state === "talking" ? SPEED_WALK : SPEED_IDLE * 2;
         const stepSize = (speed * dt) / 16;
 
         if (dist > 0.4) {
-          const dir = Math.sign(dx);
-          m.x = clamp(m.x + dir * Math.min(stepSize, dist), MIN_X, MAX_X);
-          m.facingLeft = dir < 0;
+          const invDist = 1 / dist;
+          const dirX = dx * invDist;
+          const dirY = dy * invDist;
+          const advance = Math.min(stepSize, dist);
+          m.x = clamp(m.x + dirX * advance, MIN_X, MAX_X);
+          m.y = clamp(m.y + dirY * advance, MIN_Y, MAX_Y);
+          // Only flip facing when horizontal motion dominates; otherwise
+          // keep the last facing so the character doesn't whip around
+          // during vertical-only strides.
+          if (Math.abs(dx) > 0.5) {
+            m.facingLeft = dirX < 0;
+          }
           m.isMoving = true;
           m.walkPhase = (m.walkPhase + stepSize * 0.08) % 1;
         } else {
@@ -156,7 +178,6 @@ export function useAgentMotion({ agents, groundYPercent }: Options): Record<stri
         }
 
         m.lastX = m.x;
-        m.y = groundYPercent;
       });
     };
 
@@ -187,16 +208,19 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function pickWanderTarget(homeX: number) {
-  const range = rand(WANDER_RANGE_MIN, WANDER_RANGE_MAX);
-  const dir = Math.random() < 0.5 ? -1 : 1;
-  return clamp(homeX + dir * range, MIN_X, MAX_X);
+function pickWanderTarget(homeX: number, homeY: number): [number, number] {
+  const rangeX = rand(WANDER_RANGE_MIN, WANDER_RANGE_MAX);
+  const rangeY = rand(VERTICAL_WANDER_RANGE_MIN, VERTICAL_WANDER_RANGE_MAX);
+  const angle = rand(0, Math.PI * 2);
+  const tx = clamp(homeX + Math.cos(angle) * rangeX, MIN_X, MAX_X);
+  const ty = clamp(homeY + Math.sin(angle) * rangeY, MIN_Y, MAX_Y);
+  return [tx, ty];
 }
 
 function findInteractionPartner(
   self: AgentData,
   all: AgentData[],
-  motions: Map<string, MotionState | { x: number }>,
+  motions: Map<string, MotionState | { x: number; y: number }>,
 ): AgentData | null {
   const selfMotion = motions.get(self.name);
   if (!selfMotion) return null;
@@ -207,7 +231,7 @@ function findInteractionPartner(
     if (other.state !== "talking" && other.state !== "thinking" && other.state !== "idle") continue;
     const om = motions.get(other.name);
     if (!om) continue;
-    const d = Math.abs(om.x - selfMotion.x);
+    const d = Math.hypot(om.x - selfMotion.x, om.y - selfMotion.y);
     if (d < bestDist) {
       bestDist = d;
       closest = other;
