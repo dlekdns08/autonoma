@@ -444,6 +444,49 @@ export function useAgentMotion({
         // Pick a new action when the current one expires.
         if (now >= m.nextActionAt) {
           const room = m.room;
+          const activeBoss = bossRef.current;
+          const myCookie = cookiesRef.current.find(
+            (c) => c.recipient === m.name && c.openedAt === undefined,
+          );
+
+          // PRIORITY 1: if a boss is on the map, drop everything and fight.
+          // Each agent picks a slightly different orbit slot so they don't
+          // stack on top of each other.
+          if (activeBoss) {
+            const seed = hashString(m.name);
+            const angle = ((seed % 360) * Math.PI) / 180;
+            const radius = 6 + (seed % 5);
+            const tx = clamp(
+              activeBoss.x + Math.cos(angle) * radius,
+              MIN_X,
+              MAX_X,
+            );
+            const ty = clamp(
+              activeBoss.y + Math.sin(angle) * radius * 0.55,
+              MIN_Y,
+              MAX_Y,
+            );
+            if (canStand(map, tx, ty)) {
+              m.targetX = tx;
+              m.targetY = ty;
+            } else {
+              // Best-effort fallback: walk towards the boss centre.
+              m.targetX = activeBoss.x;
+              m.targetY = activeBoss.y + 4;
+            }
+            // Short reroll so agents keep shuffling around the boss.
+            m.nextActionAt = now + rand(600, 1400);
+          }
+          // PRIORITY 2: an agent with a cookie waddles over to open it.
+          else if (myCookie) {
+            if (canStand(map, myCookie.x, myCookie.y)) {
+              m.targetX = myCookie.x;
+              m.targetY = myCookie.y;
+            } else {
+              [m.targetX, m.targetY] = pickWalkableTarget(map, myCookie.x, myCookie.y, room);
+            }
+            m.nextActionAt = now + rand(1500, 2500);
+          } else {
 
           // Partner-seek: regardless of state, occasionally walk toward a
           // nearby agent to trigger a dialogue. This is what actually makes
