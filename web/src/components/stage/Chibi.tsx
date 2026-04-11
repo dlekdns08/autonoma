@@ -74,7 +74,9 @@ export default function Chibi({
   // Deterministic per-agent visual identity: same seed → same outfit/hair.
   const paletteSeed = seed ?? `${role ?? ""}:${species ?? ""}:${mood ?? ""}`;
   const palette = pickPalette(paletteSeed);
-  const hairStyle = pickHairStyle(paletteSeed);
+  const headwearKind = pickHeadwear(roleKind, speciesKind);
+  // When a full hood covers the head, collapse hair so strands don't clip through.
+  const hairStyle = headwearKind === "hood" ? "hoodHidden" : pickHairStyle(paletteSeed);
 
   const celebrating = stateKind === "celebrating";
   const isWalking = walkPhase !== undefined;
@@ -88,7 +90,6 @@ export default function Chibi({
   const renderHeight = size;
   const renderWidth = renderHeight * aspect;
 
-  const headwearKind = pickHeadwear(roleKind, speciesKind);
   const faceAccessoryKind = pickFaceAccessory(roleKind);
 
   // Species primary colour (used for tails/wings). Humans get palette aura.
