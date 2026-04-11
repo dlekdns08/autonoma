@@ -265,7 +265,12 @@ interface MotionResult {
   pairs: DialoguePair[];
 }
 
-export function useAgentMotion({ agents, map }: Options): MotionResult {
+export function useAgentMotion({
+  agents,
+  map,
+  boss = null,
+  cookies = [],
+}: Options): MotionResult {
   const [tick, setTick] = useState(0);
   const internalRef = useRef<Map<string, MotionInternal>>(new Map());
   const bubblesRef = useRef<DialogueBubble[]>([]);
@@ -273,6 +278,18 @@ export function useAgentMotion({ agents, map }: Options): MotionResult {
     Map<string, { lines: string[]; partner: string; nextAt: number }>
   >(new Map());
   const lastFrameRef = useRef<number>(0);
+  // Keep the latest boss/cookies in refs so the animation loop always reads
+  // fresh values without needing to be re-created on every update.
+  const bossRef = useRef<BossData | null>(boss);
+  const cookiesRef = useRef<CookieData[]>(cookies);
+
+  useEffect(() => {
+    bossRef.current = boss;
+  }, [boss]);
+
+  useEffect(() => {
+    cookiesRef.current = cookies;
+  }, [cookies]);
 
   // Seed / re-seed character motion state when the agent list or map changes.
   useEffect(() => {
