@@ -287,6 +287,18 @@ export function useSwarm() {
     }
   }, []);
 
+  const sendToAgent = useCallback((agentName: string, message: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          command: "message",
+          text: message,
+          target: agentName,
+        }),
+      );
+    }
+  }, []);
+
   const startSwarm = useCallback((goal: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command: "start", goal }));
