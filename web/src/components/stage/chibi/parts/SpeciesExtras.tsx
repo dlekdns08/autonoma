@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { useId } from "react";
 import type { ChibiSpecies } from "../types";
 
 export interface SpeciesExtrasProps {
@@ -34,9 +35,10 @@ export function SpeciesExtrasBack(
   props: SpeciesExtrasProps,
 ): React.JSX.Element | null {
   const { species, walkPhase = 0, outline, primaryColor, accentColor } = props;
+  const uid = useId();
   const phase = walkPhase;
-  const gradId = `se-${species}-grad`;
-  const gradIdB = `se-${species}-grad-b`;
+  const gradId = `${uid}-se-${species}-grad`;
+  const gradIdB = `${uid}-se-${species}-grad-b`;
   const dark = darken(primaryColor, 0.4);
   const midDark = darken(primaryColor, 0.2);
   const sw = "1.6";
