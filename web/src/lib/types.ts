@@ -32,6 +32,13 @@ export interface EventLogEntry {
   timestamp: number;
 }
 
+export interface FileEntry {
+  path: string;
+  size: number;
+  description?: string;
+  created_by?: string;
+}
+
 export interface SwarmState {
   status: "idle" | "running" | "finished";
   project_name: string;
@@ -40,7 +47,7 @@ export interface SwarmState {
   max_rounds: number;
   agents: AgentData[];
   tasks: TaskData[];
-  files: string[];
+  files: FileEntry[];
   sky: string;
   events: EventLogEntry[];
   boss: BossData | null;
@@ -49,6 +56,7 @@ export interface SwarmState {
   multiverse: string;
   graveyard: string;
   relationships: RelationshipData[];
+  final_answer: string;
 }
 
 export interface BossData {
