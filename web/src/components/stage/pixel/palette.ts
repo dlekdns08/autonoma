@@ -17,6 +17,7 @@ export const SKIN_SHADE = "#d89868";
 export const EYE_DARK = "#1f1633";
 export const MOUTH = "#8a2b3c";
 export const SHADOW = "#00000044";
+export const EAR_INNER_HIGHLIGHT = "#ffb8cc";
 
 // ── role outfit colours ───────────────────────────────────────────────────
 export interface RoleColors {
@@ -245,6 +246,6 @@ export function buildCharacterPalette(input: CharacterPaletteInput): PixelPalett
     K: headwear.dark,
     k: headwear.light,
     A: skin.accent,
-    a: "#ffb8cc",
+    a: EAR_INNER_HIGHLIGHT,
   };
 }
