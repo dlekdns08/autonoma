@@ -298,27 +298,41 @@ class AgentSwarm:
     def stop(self) -> None:
         self._running = False
 
-    async def inject_human_message(self, text: str) -> bool:
-        """Deliver a human feedback message into the Director's inbox mid-run.
+    async def inject_human_message(
+        self,
+        text: str,
+        target: str | None = None,
+    ) -> bool:
+        """Deliver a human feedback message into an agent's inbox mid-run.
 
-        Returns True if the message was delivered, False if no director exists.
+        When ``target`` is None the message is routed to the Director (general
+        feedback). When ``target`` names an existing agent the message is
+        delivered directly to that agent so the user can give specific
+        instructions to individual characters.
+
+        Returns True if the message was delivered.
         """
-        director = self.agents.get("Director")
-        if director is None:
-            return False
+        recipient_name = target or "Director"
+        recipient = self.agents.get(recipient_name)
+        if recipient is None:
+            # Fall back to the Director if the requested target is unknown.
+            recipient = self.agents.get("Director")
+            if recipient is None:
+                return False
+            recipient_name = "Director"
 
         msg = AgentMessage(
             sender="human",
-            recipient="Director",
+            recipient=recipient_name,
             msg_type=MessageType.CHAT,
             content=f"[HUMAN FEEDBACK] {text}",
             data={"kind": "feedback", "source": "human"},
         )
-        director.receive_message(msg)
+        recipient.receive_message(msg)
         # Mark as already routed so the swarm router does not re-deliver it.
         self._routed_message_ids.add(msg.id)
 
-        await bus.emit("human.feedback", text=text, recipient="Director")
+        await bus.emit("human.feedback", text=text, recipient=recipient_name)
         return True
 
     def spawn_agent(
