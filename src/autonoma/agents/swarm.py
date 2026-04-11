@@ -71,7 +71,6 @@ class AgentSwarm:
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
-        self.target_agents: int | None = None
 
         # ── World Systems ──
         self.relationships = RelationshipGraph()
@@ -97,19 +96,12 @@ class AgentSwarm:
 
         bus.on("agent.spawn_requested", self._on_spawn_request)
 
-    async def initialize(
-        self,
-        project: ProjectState,
-        target_agents: int | None = None,
-    ) -> None:
+    async def initialize(self, project: ProjectState) -> None:
         """Set up the swarm: director decomposes goal, agents get created."""
-        self.target_agents = target_agents
         project.agents.append(self.director.persona)
         await bus.emit("swarm.initializing", agent_count=1)
 
-        tasks = await self.director.decompose_goal(
-            project, target_agents=target_agents,
-        )
+        tasks = await self.director.decompose_goal(project)
 
         # Wait for spawn events to process
         await asyncio.sleep(0.2)
