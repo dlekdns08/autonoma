@@ -246,18 +246,30 @@ def _get_snapshot() -> dict[str, Any]:
                         "trust": rel.trust,
                     })
 
+        status = "finished" if (not swarm._running and project.final_answer) else "running"
+
         return {
-            "status": "running",
+            "status": status,
             "project_name": project.name,
-            "goal": project.goal,
+            "goal": project.description,
             "round": swarm._round,
             "agents": agents,
             "tasks": tasks,
-            "files": [f.path for f in project.files],
+            "files": [
+                {
+                    "path": f.path,
+                    "size": len(f.content),
+                    "description": f.description,
+                    "created_by": f.created_by,
+                }
+                for f in project.files
+            ],
             "sky": swarm.world_clock.sky_line if hasattr(swarm, "world_clock") else "",
             "relationships": relationships,
+            "final_answer": project.final_answer,
         }
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[WS] snapshot failed: {e}")
         return {"status": "idle"}
 
 
