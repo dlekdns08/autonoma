@@ -5,19 +5,14 @@ import { useCallback, useEffect, useState } from "react";
 const FACES = ["(^_^)", "(o.o)", "(-_-)", "(>.<)", "(*^*)"];
 const SPARKLES = ["✦", "✧", "★", "☆", "♥", "♡", "♪"];
 
-const MIN_AGENTS = 1;
-const MAX_AGENTS = 20;
-const DEFAULT_AGENTS = 5;
-
 interface Props {
   connected: boolean;
-  onStart: (goal: string, agentCount: number) => void;
+  onStart: (goal: string) => void;
 }
 
 export default function IdleScreen({ connected, onStart }: Props) {
   const [frame, setFrame] = useState(0);
   const [goal, setGoal] = useState("");
-  const [agentCount, setAgentCount] = useState(DEFAULT_AGENTS);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
@@ -29,8 +24,8 @@ export default function IdleScreen({ connected, onStart }: Props) {
     const trimmed = goal.trim();
     if (!trimmed || !connected) return;
     setStarting(true);
-    onStart(trimmed, agentCount);
-  }, [goal, agentCount, connected, onStart]);
+    onStart(trimmed);
+  }, [goal, connected, onStart]);
 
   const face = FACES[frame % FACES.length];
   const sparkle = SPARKLES[frame % SPARKLES.length];
@@ -48,8 +43,7 @@ export default function IdleScreen({ connected, onStart }: Props) {
 
       <div className="text-6xl font-mono text-fuchsia-300 animate-bounce">{face}</div>
 
-      {/* Goal + agent count */}
-      <div className="w-full max-w-lg px-4 flex flex-col gap-3">
+      <div className="w-full max-w-lg px-4">
         <div className="flex gap-2">
           <input
             type="text"
@@ -68,39 +62,11 @@ export default function IdleScreen({ connected, onStart }: Props) {
             {starting ? "Starting..." : "Build!"}
           </button>
         </div>
-
-        <div className="flex items-center gap-3 px-1">
-          <label className="text-xs font-mono text-fuchsia-300/80 whitespace-nowrap">
-            agents
-          </label>
-          <input
-            type="range"
-            min={MIN_AGENTS}
-            max={MAX_AGENTS}
-            value={agentCount}
-            disabled={!connected || starting}
-            onChange={(e) => setAgentCount(parseInt(e.target.value, 10))}
-            className="flex-1 accent-fuchsia-500"
-          />
-          <input
-            type="number"
-            min={MIN_AGENTS}
-            max={MAX_AGENTS}
-            value={agentCount}
-            disabled={!connected || starting}
-            onChange={(e) => {
-              const n = parseInt(e.target.value, 10);
-              if (Number.isNaN(n)) return;
-              setAgentCount(Math.max(MIN_AGENTS, Math.min(MAX_AGENTS, n)));
-            }}
-            className="w-14 rounded border border-fuchsia-500/30 bg-slate-900/80 px-2 py-1 text-center text-xs text-white font-mono outline-none focus:border-fuchsia-500/60"
-          />
-        </div>
       </div>
 
       <div className="flex flex-col items-center gap-3 text-sm text-white/50 font-mono">
         <p>
-          {sparkle} Enter a goal and let the agents work {sparkle}
+          {sparkle} The orchestrator will assemble its own team {sparkle}
         </p>
         <div className="flex items-center gap-2 mt-2">
           <span className={`h-2 w-2 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-red-500"}`} />
