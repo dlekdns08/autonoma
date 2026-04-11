@@ -390,7 +390,11 @@ function drawCarpet(
   }
 }
 
-function drawWallTop(ctx: Ctx, ox: number, oy: number): void {
+function drawWallTop(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+): void {
   // top face of a wall (darker), used for the top edge of each room
   paintBase(ctx, ox, oy, WALL_TOP);
   ctx.fillStyle = WALL_TOP.highlight;
@@ -402,7 +406,12 @@ function drawWallTop(ctx: Ctx, ox: number, oy: number): void {
   for (let x = 3; x < TILE; x += 6) ctx.fillRect(ox + x, oy + 6, 1, 4);
 }
 
-function drawWallFront(ctx: Ctx, ox: number, oy: number, seed: number): void {
+function drawWallFront(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
   // front face of the wall — brick pattern
   paintBase(ctx, ox, oy, WALL_FRONT);
   ctx.fillStyle = WALL_FRONT.shade;
@@ -428,7 +437,12 @@ function drawWallFront(ctx: Ctx, ox: number, oy: number, seed: number): void {
   }
 }
 
-function drawDoormat(ctx: Ctx, ox: number, oy: number, seed: number): void {
+function drawDoormat(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  seed: number,
+): void {
   paintBase(ctx, ox, oy, DOORMAT);
   ctx.fillStyle = DOORMAT.highlight;
   // bristle lines
