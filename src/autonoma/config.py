@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     sandbox_memory_mb: int = 384
     sandbox_max_output_bytes: int = 64 * 1024
 
+    # ── Observability ──
+    # Per-run checkpoint + LLM call tracing. Disabled by setting
+    # AUTONOMA_TRACE_ENABLED=false. See src/autonoma/tracing.py.
+    trace_enabled: bool = True
+    trace_dir: Path = Path("./traces")
+
 
 settings = Settings()
 
