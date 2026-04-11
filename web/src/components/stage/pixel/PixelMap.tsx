@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import { STAGE, type SkyMode } from "./types";
 import { drawTile } from "./tileSprites";
@@ -192,6 +192,37 @@ export default function PixelMap({
   children,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  const [box, setBox] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+
+  // Measure the outer container and fit a 320:192 inner box inside it.
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w <= 0 || h <= 0) return;
+      const targetAspect = STAGE.width / STAGE.height;
+      const parentAspect = w / h;
+      let iw: number;
+      let ih: number;
+      if (parentAspect > targetAspect) {
+        ih = h;
+        iw = h * targetAspect;
+      } else {
+        iw = w;
+        ih = w / targetAspect;
+      }
+      setBox({ width: iw, height: ih });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -222,22 +253,33 @@ export default function PixelMap({
     tintGround(ctx, sky);
   }, [sky, theme]);
 
+  // Outer container fills its parent. The inner stage box has its exact
+  // pixel dimensions set from the ResizeObserver, so the 320:192 aspect
+  // is preserved and characters positioned via percentages stay aligned
+  // with the canvas art.
   return (
     <div
-      className="relative w-full h-full overflow-hidden"
-      style={{ imageRendering: "pixelated" }}
+      ref={outerRef}
+      className="relative w-full h-full overflow-hidden flex items-center justify-center bg-black"
     >
-      <canvas
-        ref={canvasRef}
-        width={STAGE.width}
-        height={STAGE.height}
-        className="absolute inset-0 w-full h-full"
-        style={{
-          imageRendering: "pixelated",
-          display: "block",
-        }}
-      />
-      <div className="absolute inset-0 pointer-events-none">{children}</div>
+      {box && (
+        <div
+          className="relative"
+          style={{ width: box.width, height: box.height }}
+        >
+          <canvas
+            ref={canvasRef}
+            width={STAGE.width}
+            height={STAGE.height}
+            className="absolute inset-0 w-full h-full"
+            style={{
+              imageRendering: "pixelated",
+              display: "block",
+            }}
+          />
+          <div className="absolute inset-0 pointer-events-none">{children}</div>
+        </div>
+      )}
     </div>
   );
 }
