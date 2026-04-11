@@ -23,6 +23,7 @@ from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.sandbox import CodeSandbox, Language, SandboxLimits
+from autonoma.tracing import traced_messages_create
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -301,7 +302,10 @@ Rules:
 - Keep speech SHORT and in-character (1 sentence max)"""
 
         try:
-            response = await self.client.messages.create(
+            response = await traced_messages_create(
+                self.client,
+                agent=self.name,
+                phase="decide",
                 model=settings.model,
                 max_tokens=4096,
                 temperature=settings.temperature,
