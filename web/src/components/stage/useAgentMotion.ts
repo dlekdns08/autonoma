@@ -51,8 +51,6 @@ const CROSS_ROOM_CHANCE = 0.35;
 const SEEK_PARTNER_CHANCE = 0.25;
 /** Radius (percent space) at which a boss pulls agents in to attack it. */
 const BOSS_ORBIT_RADIUS = 10;
-/** Distance within which an agent counts as "open enough" to pick up a cookie. */
-const COOKIE_PICKUP_RADIUS = 4;
 
 // Generic percent-space bounds; a room override narrows these per agent.
 const MIN_X = 2;
@@ -93,8 +91,6 @@ interface MotionInternal extends MotionState {
   dialogueWith: string | null;
   /** earliest time we are willing to start another dialogue */
   dialogueCooldownUntil: number;
-  /** extra offset pumped each frame while attacking the boss (for lunge VFX) */
-  attackPulse: number;
 }
 
 function rand(min: number, max: number) {
@@ -321,7 +317,6 @@ export function useAgentMotion({
         room,
         dialogueWith: null,
         dialogueCooldownUntil: 0,
-        attackPulse: 0,
       });
     });
     internalRef.current = next;
@@ -585,7 +580,19 @@ export function useAgentMotion({
           m.isMoving = false;
         }
 
-        if (state === "celebrating") {
+        // When a boss is on the map and the agent is standing in striking
+        // range, hop them aggressively to simulate an attack. This takes
+        // precedence over normal idle/celebrate jump logic.
+        const activeBoss = bossRef.current;
+        const nearBoss =
+          activeBoss &&
+          Math.hypot(m.x - activeBoss.x, m.y - activeBoss.y) < BOSS_ORBIT_RADIUS;
+
+        if (activeBoss && nearBoss && !m.isMoving) {
+          // Face the boss and bob in place.
+          m.facingLeft = activeBoss.x < m.x;
+          m.jumpOffset = Math.abs(Math.sin(now / 90 + hashString(m.name))) * 5;
+        } else if (state === "celebrating") {
           m.jumpOffset = Math.abs(Math.sin(now / 160)) * 6;
         } else if (state === "working") {
           m.jumpOffset = Math.sin(now / 400) * 0.6;
@@ -655,6 +662,14 @@ export function useAgentMotion({
 
   void tick;
   return { motions: snapshot, bubbles: bubblesRef.current.slice(), pairs };
+}
+
+/** Stable small-int hash of a string — used to give each agent a unique
+ *  orbit slot / attack phase so they don't all overlap. */
+function hashString(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
 function findInteractionPartner(
