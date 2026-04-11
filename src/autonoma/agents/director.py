@@ -276,15 +276,16 @@ Rules:
         except Exception as e:
             logger.error(f"[Director] Final answer synthesis failed: {e}")
 
-        # Fallback Korean template
-        return (
+        # Fallback Korean template (used when LLM synthesis fails)
+        fallback = (
             f"## 요약\n"
             f"'{project.name}' 프로젝트에서 {len(tasks_done)}개의 태스크를 완료하고 "
             f"{len(files)}개의 파일을 생성했습니다.\n\n"
-            f"## 생성된 결과물\n{file_lines}\n\n"
-            f"## 남은 이슈\n미완료 태스크 {len(tasks_open)}개"
-            if tasks_open else ""
+            f"## 생성된 결과물\n{file_lines}\n"
         )
+        if tasks_open:
+            fallback += f"\n## 남은 이슈\n미완료 태스크 {len(tasks_open)}개\n"
+        return fallback
 
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
         """Director's special loop: monitor, assign, and manage."""
