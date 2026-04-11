@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentData, BossData, EventLogEntry, RelationshipData, SwarmState, TaskData } from "@/lib/types";
+import type { AgentData, RelationshipData, SwarmState, TaskData } from "@/lib/types";
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 
@@ -313,5 +313,5 @@ export function useSwarm() {
     };
   }, [connect]);
 
-  return { state, connected, toasts, dismissToast, sendMessage, startSwarm };
+  return { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm };
 }
