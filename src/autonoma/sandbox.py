@@ -178,7 +178,10 @@ def _make_preexec(limits: SandboxLimits):
 # ── seatbelt profile (macOS) ────────────────────────────────────────────────
 
 def _macos_profile(workdir: Path) -> str:
-    home = os.path.expanduser("~")
+    # Seatbelt subpath rules compare against the resolved path, so we must
+    # use realpath — /var -> /private/var aliasing otherwise denies our writes.
+    real_workdir = os.path.realpath(str(workdir))
+    home = os.path.realpath(os.path.expanduser("~"))
     return f"""(version 1)
 (deny default)
 (allow process-fork)
@@ -188,7 +191,7 @@ def _macos_profile(workdir: Path) -> str:
 (allow mach-lookup)
 (allow ipc-posix-shm)
 (allow file-read*)
-(allow file-write* (subpath "{workdir}"))
+(allow file-write* (subpath "{real_workdir}"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (literal "/dev/null"))
