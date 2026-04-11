@@ -293,6 +293,14 @@ class AgentSwarm:
         # Collect total token usage
         total_tokens = sum(a.total_tokens for a in self.agents.values())
 
+        # Director synthesizes a Korean final answer for the user.
+        try:
+            final_answer = await self.director.synthesize_final_answer(project)
+        except Exception as e:
+            logger.warning(f"[Swarm] Final answer synthesis failed: {e}")
+            final_answer = ""
+        project.final_answer = final_answer
+
         # Final leaderboard + epilogue + multiverse report
         epilogue = self.narrative.render_epilogue()
         leaderboard_text = self.leaderboard.render()
@@ -305,6 +313,7 @@ class AgentSwarm:
             completed=project.completed,
             files=len(project.files),
             total_tokens=total_tokens,
+            final_answer=final_answer,
             epilogue=epilogue,
             leaderboard=leaderboard_text,
             multiverse=multiverse_report,
