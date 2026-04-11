@@ -546,5 +546,26 @@ export function drawTile(
     case "flowerGrass":
       drawFlowerGrass(ctx, ox, oy, seed);
       return;
+    case "floorWood":
+      drawFloorWood(ctx, ox, oy, seed);
+      return;
+    case "floorTile":
+      drawFloorTile(ctx, ox, oy, seed);
+      return;
+    case "carpet":
+      drawCarpet(ctx, ox, oy, seed);
+      return;
+    case "wallTop":
+      drawWallTop(ctx, ox, oy);
+      return;
+    case "wallFront":
+      drawWallFront(ctx, ox, oy, seed);
+      return;
+    case "doormat":
+      drawDoormat(ctx, ox, oy, seed);
+      return;
+    case "roofTile":
+      drawRoofTile(ctx, ox, oy, seed);
+      return;
   }
 }
