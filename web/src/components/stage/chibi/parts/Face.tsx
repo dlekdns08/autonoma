@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import type * as React from "react";
 import type { ChibiMood, ChibiState } from "../types";
 
@@ -22,12 +23,13 @@ export interface FaceProps {
 
 export function FaceBase(props: FaceProps): React.JSX.Element {
   const { outline, skinBase, skinShade, skinHighlight } = props;
+  const uid = useId();
 
   // Unique-ish gradient id (kept stable; multiple chibis on screen will
   // each get the same id, but svg defs scoping inside <g> still works
   // because we resolve fill via url(#face-skin) per render). For full
   // multi-instance safety the parent can wrap each chibi in its own <svg>.
-  const gradId = "face-skin-grad";
+  const gradId = `${uid}-face-skin-grad`;
 
   return (
     <g>
