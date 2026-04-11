@@ -1,6 +1,7 @@
 "use client";
 
 import type * as React from "react";
+import { useId } from "react";
 import type { ChibiRole, ChibiSpecies, PaletteSlot } from "../types";
 
 export type HeadwearKind =
@@ -80,12 +81,13 @@ function shade(hex: string, amount: number): string {
 /* --------------------------- piece renderers --------------------------- */
 
 function WizardHat({ palette, outline }: HeadwearProps) {
+  const uid = useId();
   const dark = shade(palette.outfitPrimary, -0.35);
   const light = shade(palette.outfitPrimary, 0.15);
   return (
     <g>
       <defs>
-        <linearGradient id="hw-wizardHat-grad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={`${uid}-hw-wizardHat-grad`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={dark} />
           <stop offset="55%" stopColor={palette.outfitPrimary} />
           <stop offset="100%" stopColor={light} />
@@ -100,7 +102,7 @@ function WizardHat({ palette, outline }: HeadwearProps) {
       />
       <path
         d="M40 22 Q56 12 64 6 Q72 -2 80 -10 Q86 4 78 14 Q70 22 64 22 Q52 22 40 22 Z"
-        fill="url(#hw-wizardHat-grad)"
+        fill={`url(#${uid}-hw-wizardHat-grad)`}
         stroke={outline}
         strokeWidth={SW}
         strokeLinejoin="round"
@@ -124,10 +126,11 @@ function WizardHat({ palette, outline }: HeadwearProps) {
 }
 
 function Crown({ palette, outline }: HeadwearProps) {
+  const uid = useId();
   return (
     <g>
       <defs>
-        <linearGradient id="hw-crown-grad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={`${uid}-hw-crown-grad`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#fff1a8" />
           <stop offset="60%" stopColor="#f4c842" />
           <stop offset="100%" stopColor="#a0760a" />
@@ -139,13 +142,13 @@ function Crown({ palette, outline }: HeadwearProps) {
         width="56"
         height="6"
         rx="1.5"
-        fill="url(#hw-crown-grad)"
+        fill={`url(#${uid}-hw-crown-grad)`}
         stroke={outline}
         strokeWidth={SW}
       />
       <path
         d="M36 20 L42 12 L48 20 L54 16 L60 20 L64 10 L68 20 L74 16 L80 20 L86 12 L92 20 Z"
-        fill="url(#hw-crown-grad)"
+        fill={`url(#${uid}-hw-crown-grad)`}
         stroke={outline}
         strokeWidth={SW}
         strokeLinejoin="round"
@@ -184,18 +187,19 @@ function Crown({ palette, outline }: HeadwearProps) {
 }
 
 function HoodBack({ palette, outline }: HeadwearProps) {
+  const uid = useId();
   const dark = shade(palette.outfitPrimary, -0.3);
   return (
     <g>
       <defs>
-        <radialGradient id="hw-hood-back-grad" cx="0.5" cy="0.4" r="0.7">
+        <radialGradient id={`${uid}-hw-hood-back-grad`} cx="0.5" cy="0.4" r="0.7">
           <stop offset="0%" stopColor={palette.outfitPrimary} />
           <stop offset="100%" stopColor={dark} />
         </radialGradient>
       </defs>
       <path
         d="M18 30 Q14 12 40 8 Q64 4 88 8 Q114 12 110 30 Q116 50 108 64 Q96 70 88 64 Q88 40 64 38 Q40 40 40 64 Q32 70 20 64 Q12 50 18 30 Z"
-        fill="url(#hw-hood-back-grad)"
+        fill={`url(#${uid}-hw-hood-back-grad)`}
         stroke={outline}
         strokeWidth={SW}
         strokeLinejoin="round"
@@ -235,19 +239,20 @@ function Headband({ palette, outline }: HeadwearProps) {
 }
 
 function Beret({ palette, outline }: HeadwearProps) {
+  const uid = useId();
   const dark = shade(palette.outfitPrimary, -0.3);
   const light = shade(palette.outfitPrimary, 0.18);
   return (
     <g>
       <defs>
-        <radialGradient id="hw-beret-grad" cx="0.4" cy="0.35" r="0.7">
+        <radialGradient id={`${uid}-hw-beret-grad`} cx="0.4" cy="0.35" r="0.7">
           <stop offset="0%" stopColor={light} />
           <stop offset="100%" stopColor={palette.outfitPrimary} />
         </radialGradient>
       </defs>
       <path
         d="M30 22 Q26 12 50 8 Q72 4 92 10 Q104 14 100 22 Q92 26 64 26 Q36 26 30 22 Z"
-        fill="url(#hw-beret-grad)"
+        fill={`url(#${uid}-hw-beret-grad)`}
         stroke={outline}
         strokeWidth={SW}
         strokeLinejoin="round"
