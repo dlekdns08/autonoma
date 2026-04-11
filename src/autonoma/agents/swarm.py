@@ -225,7 +225,7 @@ class AgentSwarm:
                         self._track_relationships(agent, result)
                         # Check fortune cookie fulfillment
                         action = result.get("action", "")
-                        self._check_fortune(agent.name, action)
+                        await self._check_fortune(agent.name, action)
                         # Check quest completion
                         self._check_quests(agent, result)
 
@@ -753,7 +753,7 @@ class AgentSwarm:
                     f"🥠 Fortune: {cookie.fortune}", "observation", self._round,
                 )
 
-    def _check_fortune(self, agent_name: str, action: str) -> None:
+    async def _check_fortune(self, agent_name: str, action: str) -> None:
         """Check if an action fulfills a fortune cookie."""
         cookie = self.fortune_jar.check_fulfillment(agent_name, action)
         if cookie:
@@ -766,6 +766,14 @@ class AgentSwarm:
                 )
                 self.quest_board.check_completion(agent_name, "fortune_fulfilled", self._round)
                 logger.info(f"[Fortune] {agent_name} fulfilled: {cookie.fortune}")
+                # Surface the fulfilment so the frontend can "pop" the cookie
+                # sprite on the stage and award a sparkle VFX.
+                await bus.emit(
+                    "fortune.fulfilled",
+                    agent=agent_name,
+                    fortune=cookie.fortune,
+                    bonus_xp=cookie.bonus_xp,
+                )
 
     # ── Dreams ────────────────────────────────────────────────────────
 
@@ -838,9 +846,13 @@ class AgentSwarm:
 
             boss = self.boss_arena.maybe_spawn_boss(self._round, avg_level)
             if boss:
+                # Boss always appears at the centre of the War Room (the
+                # middle HQ room). Percent-space coords the frontend Stage
+                # uses directly.
                 await bus.emit(
                     "boss.appeared", name=boss.name, species=boss.species,
-                    level=boss.level, hp=boss.max_hp,
+                    level=boss.level, hp=boss.max_hp, max_hp=boss.max_hp,
+                    x=52.0, y=54.0,
                 )
                 self.narrative._add(
                     __import__("autonoma.world", fromlist=["NarrativeEvent"]).NarrativeEvent.WORLD_EVENT,
@@ -850,14 +862,24 @@ class AgentSwarm:
 
         # Agents attack current boss
         if self.boss_arena.current_boss and self.boss_arena.current_boss.phase.value == "fighting":
+            boss = self.boss_arena.current_boss
             for name in agent_names:
                 agent = self.agents.get(name)
                 if agent and agent.bones:
+                    hp_before = boss.hp
                     result = self.boss_arena.agent_attack(
                         name, agent.bones.stats, agent.stats.level,
                     )
                     if result:
-                        await bus.emit("boss.damage", agent=name, message=result)
+                        damage = max(0, hp_before - boss.hp)
+                        await bus.emit(
+                            "boss.damage",
+                            agent=name,
+                            message=result,
+                            damage=damage,
+                            hp=boss.hp,
+                            max_hp=boss.max_hp,
+                        )
 
             # Check if boss was defeated
             if self.boss_arena.current_boss.phase.value == "defeated":
