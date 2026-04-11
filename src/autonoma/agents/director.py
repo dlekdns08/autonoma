@@ -47,11 +47,7 @@ class DirectorAgent(AutonomousAgent):
         super().__init__(DIRECTOR_PERSONA, harness=DIRECTOR_HARNESS)
         self._stall_counter = 0
 
-    async def decompose_goal(
-        self,
-        project: ProjectState,
-        target_agents: int | None = None,
-    ) -> list[Task]:
+    async def decompose_goal(self, project: ProjectState) -> list[Task]:
         """Break down the project description into actionable tasks."""
         await self._set_state(AgentState.THINKING)
         await self._say("Let me break this down...", style="bold yellow")
@@ -84,6 +80,8 @@ Respond with JSON:
 }
 
 Rules:
+- Decide team size based on the project's actual complexity — a trivial
+  one-file script needs 1-2 agents, a multi-subsystem build may need 5+.
 - Create 4-12 specific, actionable tasks
 - Suggest 2-5 specialized agents with creative names and emojis
 - ALWAYS include at least one Tester agent for verification
@@ -92,20 +90,10 @@ Rules:
 - Tasks should produce concrete file artifacts
 - Match agent roles to the available harness types above"""
 
-        target_hint = ""
-        if target_agents is not None:
-            target_hint = (
-                f"\n\nIMPORTANT: The user has requested roughly {target_agents} "
-                f"specialized agents (in addition to yourself, the Director). "
-                f"Aim to spawn approximately {target_agents} agents — adjust task "
-                f"granularity to match this team size."
-            )
-
         prompt = (
             f"Project: {project.name}\n"
             f"Description: {project.description}\n\n"
             "Decompose this into tasks and decide what agents we need."
-            f"{target_hint}"
         )
 
         try:
