@@ -12,6 +12,7 @@ import {
   useAgentMotion,
   type MotionState,
   type DialogueBubble,
+  type DialoguePair,
 } from "./stage/useAgentMotion";
 
 interface Props {
@@ -48,7 +49,7 @@ export default function Stage({
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
-  const { motions, bubbles } = useAgentMotion({ agents, map });
+  const { motions, bubbles, pairs } = useAgentMotion({ agents, map });
 
   if (agents.length === 0) {
     return (
@@ -67,6 +68,21 @@ export default function Stage({
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20">
       <PixelMap sky={skyMode} theme={theme}>
+        <DialogueLinks pairs={pairs} motions={motions} />
+        {pairs.map((p) => (
+          <div
+            key={`heart-${p.a}-${p.b}`}
+            className="pointer-events-none absolute animate-pulse text-pink-300 drop-shadow-[0_0_4px_rgba(244,114,182,0.9)]"
+            style={{
+              left: `${p.midX}%`,
+              top: `${p.midY - 14}%`,
+              transform: "translate(-50%, -50%)",
+              fontSize: "14px",
+            }}
+          >
+            ♥
+          </div>
+        ))}
         {agents.map((agent) => {
           const motion = motions[agent.name];
           if (!motion) return null;
@@ -83,6 +99,48 @@ export default function Stage({
         })}
       </PixelMap>
     </div>
+  );
+}
+
+function DialogueLinks({
+  pairs,
+  motions,
+}: {
+  pairs: DialoguePair[];
+  motions: Record<string, MotionState>;
+}) {
+  if (pairs.length === 0) return null;
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 h-full w-full"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+    >
+      {pairs.map((p) => {
+        const a = motions[p.a];
+        const b = motions[p.b];
+        if (!a || !b) return null;
+        // Connect the characters' "heads" (~8% above feet).
+        const ax = a.x;
+        const ay = a.y - 8;
+        const bx = b.x;
+        const by = b.y - 8;
+        return (
+          <g key={`${p.a}-${p.b}`}>
+            <line
+              x1={ax}
+              y1={ay}
+              x2={bx}
+              y2={by}
+              stroke="rgba(244, 114, 182, 0.55)"
+              strokeWidth={0.35}
+              strokeDasharray="1.2 0.8"
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
