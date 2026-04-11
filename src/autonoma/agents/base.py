@@ -22,6 +22,7 @@ import anthropic
 from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.sandbox import CodeSandbox, Language, SandboxLimits
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -172,6 +173,8 @@ class AutonomousAgent:
                 result = await self._action_spawn(decision, project)
             elif action_type == "complete_task":
                 result = await self._action_complete_task(decision, project)
+            elif action_type == "run_code":
+                result = await self._action_run_code(decision, project)
             elif action_type == "celebrate":
                 await self._set_state(AgentState.CELEBRATING)
                 await self._say("All done!", style="bold green")
@@ -272,7 +275,7 @@ RECENT MESSAGES:
 Based on the situation, decide your SINGLE next action. Respond with JSON:
 {
   "thinking": "Brief internal thought about what to do next",
-  "action": "one of: work_on_task, create_file, send_message, request_help, review_work, spawn_agent, complete_task, celebrate, idle",
+  "action": "one of: work_on_task, create_file, send_message, request_help, review_work, spawn_agent, complete_task, run_code, celebrate, idle",
   "speech": "What you say out loud (keep it short, personality-driven)",
   "target_task_id": "task id if working on specific task",
   "file_path": "if creating a file",
@@ -284,7 +287,9 @@ Based on the situation, decide your SINGLE next action. Respond with JSON:
   "spawn_role": "role for new agent",
   "spawn_skills": ["skills for new agent"],
   "task_output": "result summary if completing a task",
-  "verdict": "PASS|FAIL|PARTIAL if reviewing (required for reviewers/testers)"
+  "verdict": "PASS|FAIL|PARTIAL if reviewing (required for reviewers/testers)",
+  "code_language": "python|bash|node (if run_code)",
+  "code_body": "the actual program source to execute in the sandbox (if run_code). Stdlib only, no network. Keep it short — a few seconds of CPU max. Use print() to report results."
 }
 
 Rules:
@@ -474,6 +479,93 @@ Rules:
         self.current_task = None
         self._check_and_emit_achievements()
         return {"agent": self.name, "action": "complete_task", "task_id": task_id}
+
+    async def _action_run_code(self, decision: dict, project: ProjectState) -> dict[str, Any]:
+        """Execute LLM-authored code in a sandbox and feed the result back to the agent."""
+        code = (decision.get("code_body") or "").strip()
+        lang_raw = (decision.get("code_language") or "python").strip().lower()
+
+        if not code:
+            await self._set_state(AgentState.THINKING)
+            return {"agent": self.name, "action": "run_code", "error": "empty_code"}
+
+        try:
+            language = Language(lang_raw)
+        except ValueError:
+            return {
+                "agent": self.name,
+                "action": "run_code",
+                "error": f"unsupported_language:{lang_raw}",
+            }
+
+        limits = SandboxLimits(
+            wall_time_sec=settings.sandbox_wall_time_sec,
+            cpu_time_sec=settings.sandbox_cpu_time_sec,
+            memory_mb=settings.sandbox_memory_mb,
+            max_output_bytes=settings.sandbox_max_output_bytes,
+        )
+
+        await self._set_state(AgentState.WORKING)
+        await bus.emit(
+            "sandbox.run_started",
+            agent=self.name,
+            language=language.value,
+            bytes=len(code),
+        )
+
+        try:
+            result = await CodeSandbox(limits=limits).run(code, language)
+        except Exception as exc:
+            logger.error(f"[{self.name}] sandbox crashed: {exc}")
+            self.memory.remember(
+                f"Sandbox crashed: {str(exc)[:60]}", "failure", self._round_number
+            )
+            return {"agent": self.name, "action": "run_code", "error": str(exc)}
+
+        summary = result.summarize(max_chars=400)
+        self.memory.remember(summary, "success" if result.ok else "failure", self._round_number)
+
+        feedback = (
+            f"[sandbox run: {language.value} | {result.backend} | "
+            f"exit={result.exit_code} | {result.duration_sec}s"
+            f"{' | TIMEOUT' if result.timed_out else ''}"
+            f"{' | TRUNCATED' if result.truncated else ''}]\n"
+            f"--- stdout ---\n{result.stdout or '(empty)'}\n"
+            f"--- stderr ---\n{result.stderr or '(empty)'}\n"
+        )
+        self_msg = AgentMessage(
+            sender="sandbox",
+            recipient=self.name,
+            content=feedback[:4000],
+            msg_type=MessageType.CHAT,
+        )
+        self.receive_message(self_msg)
+
+        self.stats.sandbox_runs = getattr(self.stats, "sandbox_runs", 0) + 1
+        if result.ok:
+            self.stats.add_xp(5)
+
+        await bus.emit(
+            "sandbox.run_finished",
+            agent=self.name,
+            language=language.value,
+            backend=result.backend,
+            exit_code=result.exit_code,
+            duration=result.duration_sec,
+            ok=result.ok,
+            timed_out=result.timed_out,
+            truncated=result.truncated,
+        )
+
+        return {
+            "agent": self.name,
+            "action": "run_code",
+            "backend": result.backend,
+            "ok": result.ok,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "duration": result.duration_sec,
+        }
 
     _round_number: int = 0  # Updated by swarm each round
 
