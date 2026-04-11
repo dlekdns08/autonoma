@@ -128,3 +128,4 @@ class ProjectState(BaseModel):
     messages: list[AgentMessage] = Field(default_factory=list)
     started_at: datetime = Field(default_factory=datetime.now)
     completed: bool = False
+    final_answer: str = ""
