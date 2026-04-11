@@ -2,67 +2,25 @@
 
 import React, { useEffect, useRef, useState } from "react";
 
-import Chibi from "@/components/stage/Chibi";
+import PixelCharacter from "@/components/stage/pixel/PixelCharacter";
+import PixelMap from "@/components/stage/pixel/PixelMap";
+import { CHAR, STAGE, type SkyMode } from "@/components/stage/pixel/types";
+import type { MapTheme } from "@/components/stage/pixel/mapData";
 
-type Role =
-  | "director" | "coder" | "reviewer" | "tester"
-  | "writer" | "designer" | "generic";
+const ROLES = ["director", "coder", "reviewer", "tester", "writer", "designer", "generic"];
+const SPECIES = ["human", "cat", "rabbit", "fox", "owl", "bear", "penguin", "hamster", "dog", "panda", "duck"];
+const MOODS = ["happy", "excited", "proud", "inspired", "focused", "determined", "frustrated", "tired"];
+const THEMES: MapTheme[] = ["meadow", "forest", "town"];
+const SKIES: SkyMode[] = ["dawn", "day", "dusk", "night"];
+const SEEDS = ["alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi", "ivan", "judy", "ken", "luna"];
 
-type Species =
-  | "human" | "cat" | "rabbit" | "fox" | "owl" | "bear"
-  | "penguin" | "hamster" | "dog" | "panda" | "duck";
+const PIXEL_SCALE = 5;
+const CHAR_PX_W = CHAR.width * PIXEL_SCALE;
+const CHAR_PX_H = CHAR.height * PIXEL_SCALE;
 
-type Mood =
-  | "happy" | "excited" | "proud" | "inspired" | "focused" | "determined"
-  | "frustrated" | "tired" | "nostalgic" | "worried" | "curious"
-  | "mischievous" | "relaxed" | "neutral";
-
-type State =
-  | "idle" | "walking" | "talking" | "thinking" | "working" | "celebrating";
-
-type Rarity = "common" | "uncommon" | "rare" | "legendary";
-
-const ROLES: Role[] = [
-  "director", "coder", "reviewer", "tester", "writer", "designer", "generic",
-];
-
-const SPECIES: Species[] = [
-  "human", "cat", "rabbit", "fox", "owl", "bear",
-  "penguin", "hamster", "dog", "panda", "duck",
-];
-
-const MOODS: Mood[] = [
-  "happy", "excited", "proud", "inspired", "focused", "determined",
-  "frustrated", "tired", "nostalgic", "worried", "curious",
-  "mischievous", "relaxed", "neutral",
-];
-
-const STATES: State[] = [
-  "idle", "walking", "talking", "thinking", "working", "celebrating",
-];
-
-const RARITIES: Rarity[] = ["common", "uncommon", "rare", "legendary"];
-
-const SEEDS: string[] = [
-  "alice", "bob", "carol", "dave", "eve", "frank",
-  "grace", "heidi", "ivan", "judy", "ken", "luna",
-];
-
-const WALK_SEEDS: string[] = ["alice", "bob", "carol", "dave"];
-
-const CHIBI_SIZE = 140;
-
-// --- hooks ---------------------------------------------------------------
-
-/**
- * Shared walk phase ticker: cycles 0 → 1 over `durationMs` via rAF, then
- * loops. A single rAF loop drives every "walking" chibi on the page in
- * lockstep, so there is only one animation source feeding the grid.
- */
-function useWalkPhase(durationMs = 800): number {
+function useWalkPhase(durationMs = 640): number {
   const [phase, setPhase] = useState(0);
   const startRef = useRef<number | null>(null);
-
   useEffect(() => {
     let raf = 0;
     const tick = (now: number) => {
@@ -74,11 +32,8 @@ function useWalkPhase(durationMs = 800): number {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [durationMs]);
-
   return phase;
 }
-
-// --- presentational -------------------------------------------------------
 
 function SectionHeader({ title }: { title: string }) {
   return <h2 className="text-2xl font-bold text-white mb-4 mt-12">{title}</h2>;
@@ -97,43 +52,63 @@ function Cell({ label, children }: { label: string; children: React.ReactNode })
     <div className="flex flex-col items-center justify-end bg-slate-800/50 rounded-lg p-4 border border-slate-700">
       <div
         className="flex items-end justify-center"
-        style={{ height: CHIBI_SIZE + 16 }}
+        style={{ height: CHAR_PX_H + 8 }}
       >
         {children}
       </div>
-      <div className="mt-2 text-sm text-slate-200 font-mono text-center">
-        {label}
+      <div className="mt-2 text-xs text-slate-200 font-mono text-center">{label}</div>
+    </div>
+  );
+}
+
+function MapCard({ theme, sky }: { theme: MapTheme; sky: SkyMode }) {
+  return (
+    <div className="flex flex-col gap-2 bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+      <div
+        className="w-full overflow-hidden rounded"
+        style={{
+          aspectRatio: `${STAGE.width} / ${STAGE.height}`,
+        }}
+      >
+        <PixelMap theme={theme} sky={sky} />
+      </div>
+      <div className="text-xs font-mono text-slate-200 text-center">
+        {theme} · {sky}
       </div>
     </div>
   );
 }
 
-// --- page -----------------------------------------------------------------
-
-export default function ChibiGalleryPage() {
-  const walkPhase = useWalkPhase(800);
+export default function GalleryPage() {
+  const walkPhase = useWalkPhase(640);
 
   return (
     <div className="min-h-screen bg-slate-900 text-white px-6 py-10">
       <header className="max-w-7xl mx-auto">
-        <h1 className="text-5xl font-extrabold tracking-tight">Chibi Gallery</h1>
+        <h1 className="text-5xl font-extrabold tracking-tight">Pixel Gallery</h1>
         <p className="mt-2 text-slate-400">
-          Every meaningful chibi variant, rendered side-by-side.
+          Pokemon Gen 3/4 style pixel agents & tile maps.
         </p>
       </header>
 
       <main className="max-w-7xl mx-auto">
+        <SectionHeader title="Map themes × sky" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {THEMES.flatMap((t) =>
+            SKIES.map((s) => <MapCard key={`${t}-${s}`} theme={t} sky={s} />),
+          )}
+        </div>
+
         <SectionHeader title="Roles" />
         <Grid>
           {ROLES.map((role) => (
             <Cell key={role} label={role}>
-              <Chibi
+              <PixelCharacter
+                role={role}
                 species="human"
                 mood="happy"
-                state="idle"
-                role={role}
-                size={CHIBI_SIZE}
                 seed={`role-${role}`}
+                pixelScale={PIXEL_SCALE}
               />
             </Cell>
           ))}
@@ -143,13 +118,12 @@ export default function ChibiGalleryPage() {
         <Grid>
           {SPECIES.map((species) => (
             <Cell key={species} label={species}>
-              <Chibi
+              <PixelCharacter
+                role="coder"
                 species={species}
                 mood="happy"
-                state="idle"
-                role="coder"
-                size={CHIBI_SIZE}
                 seed={`species-${species}`}
+                pixelScale={PIXEL_SCALE}
               />
             </Cell>
           ))}
@@ -159,85 +133,50 @@ export default function ChibiGalleryPage() {
         <Grid>
           {MOODS.map((mood) => (
             <Cell key={mood} label={mood}>
-              <Chibi
+              <PixelCharacter
+                role="writer"
                 species="human"
                 mood={mood}
-                state="idle"
-                role="writer"
-                size={CHIBI_SIZE}
                 seed={`mood-${mood}`}
+                pixelScale={PIXEL_SCALE}
               />
             </Cell>
           ))}
         </Grid>
 
-        <SectionHeader title="States" />
-        <Grid>
-          {STATES.map((state) => (
-            <Cell key={state} label={state}>
-              <Chibi
-                species="human"
-                mood="happy"
-                state={state}
-                role="coder"
-                size={CHIBI_SIZE}
-                seed={`state-${state}`}
-                walkPhase={state === "walking" ? walkPhase : undefined}
-              />
-            </Cell>
-          ))}
-        </Grid>
-
-        <SectionHeader title="Rarities" />
-        <Grid>
-          {RARITIES.map((rarity) => (
-            <Cell key={rarity} label={rarity}>
-              <Chibi
-                species="human"
-                mood="proud"
-                state="idle"
-                role="director"
-                rarity={rarity}
-                size={CHIBI_SIZE}
-                seed={`rarity-${rarity}`}
-              />
-            </Cell>
-          ))}
-        </Grid>
-
-        <SectionHeader title="Seeds" />
+        <SectionHeader title="Seeds (palette variation)" />
         <Grid>
           {SEEDS.map((seed) => (
             <Cell key={seed} label={seed}>
-              <Chibi
+              <PixelCharacter
+                role="coder"
                 species="human"
                 mood="happy"
-                state="idle"
-                role="coder"
                 seed={seed}
-                size={CHIBI_SIZE}
+                pixelScale={PIXEL_SCALE}
               />
             </Cell>
           ))}
         </Grid>
 
-        <SectionHeader title="Walking" />
+        <SectionHeader title="Walk cycle" />
         <Grid>
-          {WALK_SEEDS.map((seed, i) => (
+          {SEEDS.slice(0, 6).map((seed, i) => (
             <Cell key={seed} label={`${seed} ${i % 2 === 0 ? "→" : "←"}`}>
-              <Chibi
+              <PixelCharacter
+                role="coder"
                 species="human"
                 mood="determined"
-                state="walking"
-                role="coder"
                 seed={seed}
-                facingLeft={i % 2 === 1}
                 walkPhase={walkPhase}
-                size={CHIBI_SIZE}
+                facingLeft={i % 2 === 1}
+                pixelScale={PIXEL_SCALE}
               />
             </Cell>
           ))}
         </Grid>
+
+        <div style={{ width: CHAR_PX_W }} />
       </main>
     </div>
   );
