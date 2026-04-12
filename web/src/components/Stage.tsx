@@ -59,6 +59,7 @@ export default function Stage({
   boss = null,
   cookies = [],
   onSelectAgent,
+  onCookieCollected,
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
@@ -67,6 +68,7 @@ export default function Stage({
     map,
     boss,
     cookies,
+    onCookieCollected,
   });
 
   if (agents.length === 0) {
