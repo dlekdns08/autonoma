@@ -15,6 +15,7 @@ from autonoma.agents.director import DirectorAgent
 from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.llm import LLMConfig
 from autonoma.tracing import finish_run, start_run
 from autonoma.models import (
     AgentMessage,
@@ -66,9 +67,10 @@ AGENT_TIMEOUT_SECONDS = 90
 class AgentSwarm:
     """Manages the self-organizing swarm of autonomous agents."""
 
-    def __init__(self) -> None:
+    def __init__(self, llm_config: LLMConfig | None = None) -> None:
+        self._llm_config = llm_config
         self.agents: dict[str, AutonomousAgent] = {}
-        self.director = DirectorAgent()
+        self.director = DirectorAgent(llm_config=llm_config)
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
