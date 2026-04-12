@@ -10,6 +10,7 @@ import EventLog from "@/components/EventLog";
 import BossOverlay from "@/components/BossOverlay";
 import EndScreen from "@/components/EndScreen";
 import IdleScreen from "@/components/IdleScreen";
+import AuthModal from "@/components/AuthModal";
 import ToastContainer from "@/components/Toast";
 import AgentModal from "@/components/AgentModal";
 import RelationshipWeb from "@/components/RelationshipWeb";
@@ -19,8 +20,14 @@ import Minimap from "@/components/Minimap";
 import type { AgentData } from "@/lib/types";
 
 export default function Home() {
-  const { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm, collectCookie } = useSwarm();
+  const {
+    state, connected, toasts, dismissToast,
+    sendMessage, sendToAgent, startSwarm, collectCookie,
+    authState, authenticate, logout,
+  } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
+
+  const needsAuth = authState.status !== "authenticated";
 
   const handleSelectAgent = useCallback(
     (name: string) => {
@@ -37,9 +44,12 @@ export default function Home() {
         <Starfield intensity={0.3} />
         <Header projectName="" round={0} maxRounds={0} sky="" connected={connected} />
         <main className="flex-1 relative z-10">
-          <IdleScreen connected={connected} onStart={startSwarm} />
+          <IdleScreen connected={connected && !needsAuth} onStart={startSwarm} />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+        {needsAuth && authState.status !== "unknown" && (
+          <AuthModal authState={authState} onAuthenticate={authenticate} />
+        )}
       </div>
     );
   }
