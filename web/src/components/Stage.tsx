@@ -61,7 +61,7 @@ export default function Stage({
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
-  const { motions, bubbles, pairs } = useAgentMotion({
+  const { motions, bubbles, pairs, attackingAgents } = useAgentMotion({
     agents,
     map,
     boss,
@@ -91,7 +91,7 @@ export default function Stage({
           <CookieSprite key={`cookie-${c.recipient}`} cookie={c} />
         ))}
 
-        {boss && <BossSprite boss={boss} />}
+        {boss && <BossSprite boss={boss} attackingAgents={attackingAgents} />}
 
         <DialogueLinks pairs={pairs} motions={motions} />
         {pairs.map((p) => (
