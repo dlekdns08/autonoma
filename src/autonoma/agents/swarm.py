@@ -390,7 +390,7 @@ class AgentSwarm:
             skills=skills or harness.default_skills,
             color=color,
         )
-        agent = AutonomousAgent(persona, harness=harness)
+        agent = AutonomousAgent(persona, harness=harness, llm_config=self._llm_config)
 
         # Assign spawn position
         idx = len(self.agents) - 1  # -1 for Director
