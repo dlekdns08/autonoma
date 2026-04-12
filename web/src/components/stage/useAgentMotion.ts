@@ -34,6 +34,8 @@ interface Options {
   boss?: BossData | null;
   /** Fortune cookies sitting on the map. Recipients walk over to open them. */
   cookies?: CookieData[];
+  /** Called once when an agent physically reaches their fortune cookie. */
+  onCookieCollected?: (recipient: string) => void;
 }
 
 const SPEED_IDLE = 0.38;
