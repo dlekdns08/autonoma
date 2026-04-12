@@ -253,12 +253,27 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
         key={shakeKey}
         className="flex flex-col items-center animate-[bossShake_0.35s_ease-out]"
       >
-        {/* Glow aura */}
+        {/* Glow aura — intensifies when agents are attacking */}
         <div className="relative">
-          <div className="absolute inset-0 rounded-full bg-red-500/30 blur-md animate-pulse" />
+          <div
+            className={`absolute inset-0 rounded-full blur-md transition-all duration-150 ${
+              localFlash
+                ? "bg-red-400/90 scale-125"
+                : isUnderAttack
+                  ? "bg-red-500/60 animate-pulse"
+                  : "bg-red-500/30 animate-pulse"
+            }`}
+          />
           <div
             className="relative text-4xl leading-none drop-shadow-[0_0_6px_rgba(255,0,0,0.8)]"
-            style={{ filter: "saturate(1.3)" }}
+            style={{
+              filter: localFlash
+                ? "saturate(2) brightness(1.6)"
+                : isUnderAttack
+                  ? "saturate(1.7)"
+                  : "saturate(1.3)",
+              transition: "filter 0.12s ease-out",
+            }}
           >
             {icon}
           </div>
@@ -277,6 +292,20 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
         <div className="font-mono text-[7px] text-red-300/80 leading-none">
           {boss.hp}/{boss.max_hp}
         </div>
+
+        {/* Attacker tags — shown while agents are in strike range */}
+        {isUnderAttack && (
+          <div className="mt-0.5 flex flex-wrap justify-center gap-0.5 max-w-[80px]">
+            {attackingAgents.slice(0, 4).map((name) => (
+              <span
+                key={name}
+                className="rounded bg-red-900/70 px-1 font-mono text-[6px] text-red-200 border border-red-700/50"
+              >
+                ⚔ {name.slice(0, 6)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <style jsx>{`
