@@ -74,10 +74,22 @@ function pickCookieSpot(recipient: string): { x: number; y: number } {
 
 let eventIdCounter = 0;
 
+const INITIAL_AUTH: AuthState = {
+  status: "unknown",
+  isAdmin: false,
+  provider: null,
+  model: null,
+  error: null,
+  hasAdmin: false,
+  serverProvider: null,
+  serverModel: null,
+};
+
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [authState, setAuthState] = useState<AuthState>(INITIAL_AUTH);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
