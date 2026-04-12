@@ -405,6 +405,23 @@ export function useSwarm() {
     ws.onmessage = (e) => handleMessage(e.data);
   }, [handleMessage]);
 
+  /** Locally mark a fortune cookie as collected when the agent reaches it. */
+  const collectCookie = useCallback((recipient: string) => {
+    setState((prev) => {
+      if (!prev.cookies.find((c) => c.recipient === recipient && c.openedAt === undefined)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        cookies: prev.cookies.map((c) =>
+          c.recipient === recipient && c.openedAt === undefined
+            ? { ...c, openedAt: Date.now() }
+            : c,
+        ),
+      };
+    });
+  }, []);
+
   const sendMessage = useCallback((message: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command: "message", text: message }));
