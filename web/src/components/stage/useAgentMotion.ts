@@ -593,6 +593,20 @@ export function useAgentMotion({
           m.isMoving = false;
         }
 
+        // Cookie proximity: when the recipient reaches their cookie, fire the
+        // collection callback once (debounced to avoid repeated calls).
+        const myCookieNow = cookiesRef.current.find(
+          (c: CookieData) => c.recipient === m.name && c.openedAt === undefined,
+        );
+        if (myCookieNow) {
+          const cookieDist = Math.hypot(m.x - myCookieNow.x, m.y - myCookieNow.y);
+          const lastCollect = cookieCollectTimeRef.current.get(m.name) ?? 0;
+          if (cookieDist < COOKIE_COLLECT_RADIUS && now - lastCollect > 5000) {
+            cookieCollectTimeRef.current.set(m.name, now);
+            onCookieCollectedRef.current?.(m.name);
+          }
+        }
+
         // When a boss is on the map and the agent is standing in striking
         // range, hop them aggressively to simulate an attack. This takes
         // precedence over normal idle/celebrate jump logic.
