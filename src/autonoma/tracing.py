@@ -29,7 +29,7 @@ from typing import Any, TYPE_CHECKING
 from autonoma.config import settings
 
 if TYPE_CHECKING:
-    import anthropic
+    from autonoma.llm import BaseLLMClient, LLMResponse
     from autonoma.models import ProjectState
 
 logger = logging.getLogger(__name__)
@@ -144,29 +144,49 @@ def finish_run(recorder: RunRecorder | None) -> None:
     logger.info(f"[tracing] run finished: {recorder.run_dir}")
 
 
-# ── Traced messages.create helper ────────────────────────────────────
+# ── Traced LLM call helper ────────────────────────────────────────────
 
 async def traced_messages_create(
-    client: "anthropic.AsyncAnthropic",
+    client: "BaseLLMClient",
     *,
     agent: str,
     phase: str,
-    **kwargs: Any,
-) -> Any:
-    """Call `client.messages.create(**kwargs)` and record the interaction.
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    system: str,
+    messages: list[dict[str, Any]],
+) -> "LLMResponse":
+    """Call ``client.create(...)`` and record the interaction.
 
-    `agent` is the name of the caller (e.g. "Director", "Alice"), `phase`
-    is a short label describing what the call is for (e.g. "decide",
-    "decompose_goal"). All other kwargs are passed through unchanged, and
-    the anthropic response is returned unchanged — the recorder is purely
-    additive and never raises.
+    ``agent`` is the caller's name (e.g. "Director", "Alice"), ``phase``
+    labels what the call is for (e.g. "decide", "decompose_goal").
+    The normalized ``LLMResponse`` is returned unchanged — the recorder is
+    purely additive and never raises.
     """
     recorder = get_active_recorder()
     started = time.perf_counter()
     started_iso = datetime.now().isoformat()
 
+    req_summary = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": system,
+        "messages": [
+            {"role": m.get("role", ""), "content": _flatten_content(m.get("content", ""))}
+            for m in messages
+        ],
+    }
+
     try:
-        response = await client.messages.create(**kwargs)
+        response = await client.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=messages,
+        )
     except Exception as exc:
         duration = round(time.perf_counter() - started, 3)
         if recorder is not None:
@@ -175,7 +195,7 @@ async def traced_messages_create(
                 "agent": agent,
                 "phase": phase,
                 "duration_sec": duration,
-                "request": _summarize_request(kwargs),
+                "request": req_summary,
                 "error": f"{type(exc).__name__}: {exc}",
             })
         raise
@@ -187,58 +207,29 @@ async def traced_messages_create(
             "agent": agent,
             "phase": phase,
             "duration_sec": duration,
-            "request": _summarize_request(kwargs),
-            "response": _summarize_response(response),
+            "request": req_summary,
+            "response": {
+                "stop_reason": response.stop_reason,
+                "usage": {
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                },
+                "text": response.text,
+            },
         })
     return response
 
 
-def _summarize_request(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Compact, JSON-safe view of a messages.create request."""
-    messages = kwargs.get("messages") or []
-    flat_messages = []
-    for m in messages:
-        content = m.get("content", "")
-        if isinstance(content, list):
-            # content blocks -> join text parts
-            parts = []
-            for block in content:
-                if isinstance(block, dict) and "text" in block:
-                    parts.append(block["text"])
-                else:
-                    parts.append(str(block))
-            content = "\n".join(parts)
-        flat_messages.append({"role": m.get("role", ""), "content": content})
-    return {
-        "model": kwargs.get("model"),
-        "max_tokens": kwargs.get("max_tokens"),
-        "temperature": kwargs.get("temperature"),
-        "system": kwargs.get("system"),
-        "messages": flat_messages,
-    }
-
-
-def _summarize_response(response: Any) -> dict[str, Any]:
-    """Compact, JSON-safe view of a messages.create response."""
-    text_parts: list[str] = []
-    try:
-        for block in getattr(response, "content", []) or []:
-            txt = getattr(block, "text", None)
-            if txt:
-                text_parts.append(txt)
-    except Exception:
-        pass
-
-    usage = getattr(response, "usage", None)
-    usage_dict: dict[str, Any] | None = None
-    if usage is not None:
-        usage_dict = {
-            "input_tokens": getattr(usage, "input_tokens", None),
-            "output_tokens": getattr(usage, "output_tokens", None),
-        }
-
-    return {
-        "stop_reason": getattr(response, "stop_reason", None),
-        "usage": usage_dict,
-        "text": "\n".join(text_parts),
-    }
+def _flatten_content(content: Any) -> str:
+    """Flatten Anthropic-style content blocks to a plain string."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and "text" in block:
+                parts.append(block["text"])
+            else:
+                parts.append(str(block))
+        return "\n".join(parts)
+    return str(content)
