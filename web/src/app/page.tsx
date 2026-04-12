@@ -19,7 +19,7 @@ import Minimap from "@/components/Minimap";
 import type { AgentData } from "@/lib/types";
 
 export default function Home() {
-  const { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm } = useSwarm();
+  const { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm, collectCookie } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
 
   const handleSelectAgent = useCallback(
@@ -96,6 +96,7 @@ export default function Home() {
               boss={state.boss}
               cookies={state.cookies}
               onSelectAgent={handleSelectAgent}
+              onCookieCollected={collectCookie}
             />
             {state.boss && <BossOverlay boss={state.boss} />}
 
