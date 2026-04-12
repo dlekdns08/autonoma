@@ -156,12 +156,27 @@ export default function Home() {
       <ChatInput onSend={sendMessage} connected={connected} />
 
       {/* Footer */}
-      <footer className="flex items-center justify-center gap-4 border-t border-fuchsia-500/10 bg-slate-950/50 px-4 py-2 text-[10px] font-mono text-white/30 relative z-10">
-        <span>♥ Autonoma v0.1.0</span>
-        <span>Agents: {state.agents.length}</span>
-        <span>Files: {state.files.length}</span>
-        <span>Events: {state.events.length}</span>
-        {state.boss && <span className="text-red-400">BOSS: {state.boss.name}</span>}
+      <footer className="flex items-center justify-between gap-4 border-t border-fuchsia-500/10 bg-slate-950/50 px-4 py-2 text-[10px] font-mono text-white/30 relative z-10">
+        <div className="flex items-center gap-4">
+          <span>♥ Autonoma v0.1.0</span>
+          <span>Agents: {state.agents.length}</span>
+          <span>Files: {state.files.length}</span>
+          <span>Events: {state.events.length}</span>
+          {state.boss && <span className="text-red-400">BOSS: {state.boss.name}</span>}
+        </div>
+        {authState.status === "authenticated" && (
+          <div className="flex items-center gap-3">
+            <span className="text-white/20">
+              {authState.isAdmin ? "👑 admin" : `${authState.provider} / ${authState.model}`}
+            </span>
+            <button
+              onClick={logout}
+              className="text-white/20 hover:text-white/50 transition-colors underline underline-offset-2"
+            >
+              로그아웃
+            </button>
+          </div>
+        )}
       </footer>
 
       {/* Toast Notifications */}
