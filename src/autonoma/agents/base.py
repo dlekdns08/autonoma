@@ -17,11 +17,17 @@ import re
 from datetime import datetime
 from typing import Any
 
-import anthropic
-
 from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.llm import (
+    BaseLLMClient,
+    LLMConfig,
+    LLMConnectionError,
+    LLMRateLimitError,
+    create_llm_client,
+    llm_config_from_settings,
+)
 from autonoma.sandbox import CodeSandbox, Language, SandboxLimits
 from autonoma.tracing import traced_messages_create
 from autonoma.models import (
@@ -86,7 +92,12 @@ class AutonomousAgent:
     - How results are structured (output format requirements)
     """
 
-    def __init__(self, persona: AgentPersona, harness: AgentHarness | None = None) -> None:
+    def __init__(
+        self,
+        persona: AgentPersona,
+        harness: AgentHarness | None = None,
+        llm_config: LLMConfig | None = None,
+    ) -> None:
         self.persona = persona
         self.harness = harness or get_harness(persona.role)
         self.state = AgentState.IDLE
@@ -95,7 +106,8 @@ class AutonomousAgent:
         self.speech: SpeechBubble | None = None
         self.current_task: Task | None = None
         self.inbox: list[AgentMessage] = []
-        self._client: anthropic.AsyncAnthropic | None = None
+        self._llm_config: LLMConfig | None = llm_config
+        self._client: BaseLLMClient | None = None
         self._history: list[dict[str, str]] = []
         self._total_tokens = 0
         self._consecutive_errors = 0
@@ -111,12 +123,23 @@ class AutonomousAgent:
         return self.persona.name
 
     @property
-    def client(self) -> anthropic.AsyncAnthropic:
+    def client(self) -> BaseLLMClient:
         if self._client is None:
-            self._client = anthropic.AsyncAnthropic(
-                api_key=settings.anthropic_api_key or None
-            )
+            cfg = self._llm_config or llm_config_from_settings()
+            self._client = create_llm_client(cfg)
         return self._client
+
+    @property
+    def _model(self) -> str:
+        return self._llm_config.model if self._llm_config else settings.model
+
+    @property
+    def _temperature(self) -> float:
+        return self._llm_config.temperature if self._llm_config else settings.temperature
+
+    @property
+    def _max_tokens(self) -> int:
+        return self._llm_config.max_tokens if self._llm_config else settings.max_tokens
 
     @property
     def total_tokens(self) -> int:
@@ -306,19 +329,19 @@ Rules:
                 self.client,
                 agent=self.name,
                 phase="decide",
-                model=settings.model,
+                model=self._model,
                 max_tokens=4096,
-                temperature=settings.temperature,
+                temperature=self._temperature,
                 system=system,
                 messages=[{"role": "user", "content": situation}],
             )
             self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
             return _extract_json(response.content[0].text)
 
-        except anthropic.APIConnectionError as e:
+        except LLMConnectionError as e:
             logger.warning(f"[{self.name}] API connection error: {e}")
             return {"action": "idle", "speech": "Can't reach the API...", "thinking": "connection_error"}
-        except anthropic.RateLimitError:
+        except LLMRateLimitError:
             logger.warning(f"[{self.name}] Rate limited, backing off")
             await asyncio.sleep(2)
             return {"action": "idle", "speech": "Rate limited, waiting...", "thinking": "rate_limited"}
