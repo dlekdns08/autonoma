@@ -470,5 +470,5 @@ export function useSwarm() {
     return () => timers.forEach(clearTimeout);
   }, [state.cookies]);
 
-  return { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm };
+  return { state, connected, toasts, dismissToast, sendMessage, sendToAgent, startSwarm, collectCookie };
 }
