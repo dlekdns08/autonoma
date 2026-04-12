@@ -97,3 +97,33 @@ export interface RelationshipData {
   trust: number;
   label?: string;
 }
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+
+export type LLMProvider = "anthropic" | "openai" | "vllm";
+
+/** Credentials sent to the backend to authenticate a WebSocket session. */
+export interface UserCredentials {
+  type: "admin" | "user";
+  // admin fields
+  password?: string;
+  // user fields
+  provider?: LLMProvider;
+  api_key?: string;
+  model?: string;
+  base_url?: string;
+}
+
+/** Current auth state for the frontend. */
+export interface AuthState {
+  status: "unknown" | "required" | "authenticated";
+  isAdmin: boolean;
+  provider: LLMProvider | null;
+  model: string | null;
+  error: string | null;
+  /** Whether the server has an admin account configured. */
+  hasAdmin: boolean;
+  /** Provider the server is configured to use (shown in admin login hint). */
+  serverProvider: LLMProvider | null;
+  serverModel: string | null;
+}

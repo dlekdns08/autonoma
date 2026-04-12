@@ -3,15 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentData,
+  AuthState,
   BossData,
   CookieData,
   FileEntry,
   RelationshipData,
   SwarmState,
   TaskData,
+  UserCredentials,
 } from "@/lib/types";
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
+
+const SESSION_KEY = "autonoma_auth";
 
 const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL ||
