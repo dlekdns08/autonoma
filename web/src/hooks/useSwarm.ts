@@ -125,6 +125,62 @@ export function useSwarm() {
           addEvent(event, data);
         }
 
+        // ── Auth events ──────────────────────────────────────────────
+        if (event === "auth.status") {
+          const hasAdmin = !!(data.has_admin);
+          setAuthState((prev) => ({
+            ...prev,
+            status: "required",
+            hasAdmin,
+            serverProvider: (data.server_provider as AuthState["serverProvider"]) ?? null,
+            serverModel: (data.server_model as string) ?? null,
+            error: null,
+          }));
+          // Auto-authenticate if we have stored credentials
+          const stored = typeof window !== "undefined"
+            ? sessionStorage.getItem(SESSION_KEY)
+            : null;
+          if (stored && wsRef.current?.readyState === WebSocket.OPEN) {
+            try {
+              const creds = JSON.parse(stored) as UserCredentials;
+              wsRef.current.send(JSON.stringify({ command: "authenticate", ...creds }));
+            } catch {
+              sessionStorage.removeItem(SESSION_KEY);
+            }
+          }
+          return;
+        }
+
+        if (event === "auth.success") {
+          setAuthState((prev) => ({
+            ...prev,
+            status: "authenticated",
+            isAdmin: !!(data.is_admin),
+            provider: (data.provider as AuthState["provider"]) ?? null,
+            model: (data.model as string) ?? null,
+            error: null,
+          }));
+          return;
+        }
+
+        if (event === "auth.failed") {
+          setAuthState((prev) => ({
+            ...prev,
+            status: "required",
+            error: (data.message as string) ?? "인증에 실패했습니다.",
+          }));
+          return;
+        }
+
+        if (event === "auth.required") {
+          setAuthState((prev) => ({
+            ...prev,
+            status: "required",
+            error: (data.message as string) ?? "로그인이 필요합니다.",
+          }));
+          return;
+        }
+
         // Generate toasts for important events
         switch (event) {
           case "agent.level_up":
