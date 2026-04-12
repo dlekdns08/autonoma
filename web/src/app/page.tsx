@@ -175,6 +175,11 @@ export default function Home() {
           onSend={sendToAgent}
         />
       )}
+
+      {/* Auth Modal */}
+      {needsAuth && authState.status !== "unknown" && (
+        <AuthModal authState={authState} onAuthenticate={authenticate} />
+      )}
     </div>
   );
 }
