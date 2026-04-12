@@ -125,7 +125,8 @@ class AgentSwarm:
         self._running = True
         self._round = 0
 
-        recorder = start_run(goal=project.description or project.name, model=settings.model)
+        model_name = self._llm_config.model if self._llm_config else settings.model
+        recorder = start_run(goal=project.description or project.name, model=model_name)
 
         try:
             return await self._run_loop(project, max_rounds, recorder)
