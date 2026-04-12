@@ -263,11 +263,15 @@ interface MotionResult {
   pairs: DialoguePair[];
 }
 
+/** How close (percent space) an agent must be to collect their cookie. */
+const COOKIE_COLLECT_RADIUS = 5;
+
 export function useAgentMotion({
   agents,
   map,
   boss = null,
   cookies = [],
+  onCookieCollected,
 }: Options): MotionResult {
   const [tick, setTick] = useState(0);
   const internalRef = useRef<Map<string, MotionInternal>>(new Map());
@@ -280,6 +284,9 @@ export function useAgentMotion({
   // fresh values without needing to be re-created on every update.
   const bossRef = useRef<BossData | null>(boss);
   const cookiesRef = useRef<CookieData[]>(cookies);
+  const onCookieCollectedRef = useRef<((recipient: string) => void) | undefined>(onCookieCollected);
+  /** Per-agent timestamp of the last cookie-collect callback to debounce repeated calls. */
+  const cookieCollectTimeRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     bossRef.current = boss;
@@ -288,6 +295,10 @@ export function useAgentMotion({
   useEffect(() => {
     cookiesRef.current = cookies;
   }, [cookies]);
+
+  useEffect(() => {
+    onCookieCollectedRef.current = onCookieCollected;
+  }, [onCookieCollected]);
 
   // Seed / re-seed character motion state when the agent list or map changes.
   useEffect(() => {
