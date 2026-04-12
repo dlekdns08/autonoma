@@ -175,14 +175,17 @@ function DialogueLinks({
 // triggers from the `hitSeq` counter bumped by useSwarm. A floating
 // damage number shoots up from the boss whenever a new hit lands.
 
-function BossSprite({ boss }: { boss: BossData }) {
+function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingAgents?: string[] }) {
   const [shakeKey, setShakeKey] = useState(0);
   const [damagePops, setDamagePops] = useState<
     Array<{ id: number; value: number; agent: string }>
   >([]);
+  const [localFlash, setLocalFlash] = useState(false);
   const popIdRef = useRef(0);
   const lastHitRef = useRef(0);
+  const localFlashTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Backend hit: shake + damage number
   useEffect(() => {
     if (boss.hitSeq === 0 || boss.hitSeq === lastHitRef.current) return;
     lastHitRef.current = boss.hitSeq;
@@ -198,10 +201,26 @@ function BossSprite({ boss }: { boss: BossData }) {
     }
   }, [boss.hitSeq, boss.lastDamage, boss.lastAttacker]);
 
+  // Local attack flash: pulses faster the more agents are attacking
+  useEffect(() => {
+    if (localFlashTimerRef.current) clearInterval(localFlashTimerRef.current);
+    if (attackingAgents.length === 0) return;
+    const interval = Math.max(300, 900 / attackingAgents.length);
+    localFlashTimerRef.current = setInterval(() => {
+      setShakeKey((k) => k + 1);
+      setLocalFlash(true);
+      setTimeout(() => setLocalFlash(false), 120);
+    }, interval);
+    return () => {
+      if (localFlashTimerRef.current) clearInterval(localFlashTimerRef.current);
+    };
+  }, [attackingAgents.length]);
+
   const icon = BOSS_SPECIES_ICON[boss.species] ?? "☠";
   const hpPct = boss.max_hp > 0 ? (boss.hp / boss.max_hp) * 100 : 0;
   const hpColor =
     hpPct > 60 ? "bg-red-500" : hpPct > 30 ? "bg-orange-500" : "bg-red-700";
+  const isUnderAttack = attackingAgents.length > 0;
 
   return (
     <div
