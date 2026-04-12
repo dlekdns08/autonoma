@@ -261,6 +261,8 @@ interface MotionResult {
   motions: Record<string, MotionState>;
   bubbles: DialogueBubble[];
   pairs: DialoguePair[];
+  /** Names of agents currently within attack range of the boss. */
+  attackingAgents: string[];
 }
 
 /** How close (percent space) an agent must be to collect their cookie. */
@@ -687,8 +689,17 @@ export function useAgentMotion({
     });
   });
 
+  const attackingAgents: string[] = [];
+  if (boss) {
+    internalRef.current.forEach((m: MotionInternal, name: string) => {
+      if (Math.hypot(m.x - boss.x, m.y - boss.y) < BOSS_ORBIT_RADIUS) {
+        attackingAgents.push(name);
+      }
+    });
+  }
+
   void tick;
-  return { motions: snapshot, bubbles: bubblesRef.current.slice(), pairs };
+  return { motions: snapshot, bubbles: bubblesRef.current.slice(), pairs, attackingAgents };
 }
 
 /** Stable small-int hash of a string — used to give each agent a unique
