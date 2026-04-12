@@ -7,8 +7,13 @@ services:
     ports:
       - "3479:8000"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - AUTONOMA_MODEL=${AUTONOMA_MODEL:-claude-sonnet-4-20250514}
+      - AUTONOMA_ADMIN_PASSWORD=${AUTONOMA_ADMIN_PASSWORD:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AUTONOMA_PROVIDER=${AUTONOMA_PROVIDER:-anthropic}
+      - AUTONOMA_MODEL=${AUTONOMA_MODEL:-claude-sonnet-4-6}
+      - AUTONOMA_VLLM_BASE_URL=${AUTONOMA_VLLM_BASE_URL:-}
+      - AUTONOMA_VLLM_API_KEY=${AUTONOMA_VLLM_API_KEY:-}
       - AUTONOMA_MAX_ROUNDS=${AUTONOMA_MAX_ROUNDS:-30}
     volumes:
       # Named volume (not a bind mount) so agent-generated files never land

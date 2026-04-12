@@ -27,8 +27,22 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Create .env file
+        env:
+          AUTONOMA_ADMIN_PASSWORD: ${{ secrets.AUTONOMA_ADMIN_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AUTONOMA_PROVIDER: ${{ secrets.AUTONOMA_PROVIDER || 'anthropic' }}
+          AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-4-6' }}
+          AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
+          AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
         run: |
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" > .env
+          printf 'AUTONOMA_ADMIN_PASSWORD=%s\n' "$AUTONOMA_ADMIN_PASSWORD" >> .env
+          printf 'ANTHROPIC_API_KEY=%s\n'       "$ANTHROPIC_API_KEY"       >> .env
+          printf 'OPENAI_API_KEY=%s\n'          "$OPENAI_API_KEY"          >> .env
+          printf 'AUTONOMA_PROVIDER=%s\n'       "$AUTONOMA_PROVIDER"       >> .env
+          printf 'AUTONOMA_MODEL=%s\n'          "$AUTONOMA_MODEL"          >> .env
+          printf 'AUTONOMA_VLLM_BASE_URL=%s\n'  "$AUTONOMA_VLLM_BASE_URL"  >> .env
+          printf 'AUTONOMA_VLLM_API_KEY=%s\n'   "$AUTONOMA_VLLM_API_KEY"   >> .env
 
       - name: Build and start containers
         run: |
