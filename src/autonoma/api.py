@@ -1,6 +1,24 @@
 """WebSocket API server — bridges the event bus to the Next.js frontend.
 
 Run with:  uv run uvicorn autonoma.api:app --reload --port 8000
+
+Authentication flow
+───────────────────
+Every new WebSocket connection starts unauthenticated.  Before a swarm can
+be started the client must send one of:
+
+  {"command": "authenticate", "type": "admin", "password": "<admin_password>"}
+      → grants access to the server-configured API key.
+
+  {"command": "authenticate", "type": "user",
+   "provider": "anthropic"|"openai"|"vllm",
+   "api_key": "...",
+   "model":   "...",
+   "base_url": "..."   ← required only for vllm}
+      → uses the client's own API key.
+
+On success the server replies with {"event": "auth.success", ...}.
+On failure  the server replies with {"event": "auth.failed",  ...}.
 """
 
 from __future__ import annotations
@@ -18,7 +36,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +47,49 @@ logger = logging.getLogger(__name__)
 _swarm: Any = None       # AgentSwarm instance
 _project: Any = None     # ProjectState instance
 _swarm_task: asyncio.Task | None = None  # Background task running the swarm
+
+
+# ── Per-connection auth store ─────────────────────────────────────────────
+
+# Maps id(WebSocket) → authenticated LLMConfig.  Cleared on disconnect.
+_auth_store: dict[int, LLMConfig] = {}
+
+
+def _build_admin_llm_config() -> LLMConfig | None:
+    """Construct the server-side LLMConfig from settings (admin use only)."""
+    provider = settings.provider
+    if provider == "anthropic":
+        if not settings.anthropic_api_key:
+            return None
+        return LLMConfig(
+            provider="anthropic",
+            api_key=settings.anthropic_api_key,
+            model=settings.model,
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+        )
+    if provider == "openai":
+        if not settings.openai_api_key:
+            return None
+        return LLMConfig(
+            provider="openai",
+            api_key=settings.openai_api_key,
+            model=settings.model,
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+        )
+    if provider == "vllm":
+        if not settings.vllm_base_url:
+            return None
+        return LLMConfig(
+            provider="vllm",
+            api_key=settings.vllm_api_key,
+            model=settings.model,
+            base_url=settings.vllm_base_url,
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+        )
+    return None
 
 
 # ── Connection Manager ────────────────────────────────────────────────────
@@ -45,6 +108,7 @@ class ConnectionManager:
     def disconnect(self, ws: WebSocket) -> None:
         if ws in self.connections:
             self.connections.remove(ws)
+        _auth_store.pop(id(ws), None)
         logger.info(f"[WS] Client disconnected ({len(self.connections)} total)")
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
@@ -80,7 +144,6 @@ def _serialize(obj: Any) -> Any:
 
 # ── Event Bridge: bus → WebSocket ─────────────────────────────────────────
 
-# All events we want to forward to the frontend
 FORWARDED_EVENTS = [
     "swarm.initializing",
     "swarm.ready",
@@ -121,7 +184,6 @@ FORWARDED_EVENTS = [
 
 
 def _make_handler(event_type: str):
-    """Create an async handler that forwards bus events to WebSocket."""
     async def handler(**kwargs: Any) -> None:
         await manager.broadcast(event_type, kwargs)
     return handler
@@ -131,7 +193,6 @@ _handlers: dict[str, Any] = {}
 
 
 def _register_event_bridge() -> None:
-    """Subscribe to all bus events and forward them via WebSocket."""
     for event_type in FORWARDED_EVENTS:
         handler = _make_handler(event_type)
         _handlers[event_type] = handler
@@ -147,19 +208,21 @@ def _unregister_event_bridge() -> None:
 
 # ── Swarm Runner ─────────────────────────────────────────────────────────
 
-async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
+async def _run_swarm(
+    goal: str,
+    max_rounds: int = 30,
+    llm_config: LLMConfig | None = None,
+) -> None:
     """Run the swarm in the background."""
     global _swarm, _project
 
     from autonoma.agents.swarm import AgentSwarm
-    from autonoma.config import settings
     from autonoma.models import ProjectState
     from autonoma.workspace import WorkspaceManager
 
-    # Create project name from goal
     name = goal.lower().replace(" ", "-")[:40]
     project = ProjectState(name=name, description=goal)
-    swarm = AgentSwarm()
+    swarm = AgentSwarm(llm_config=llm_config)
 
     _swarm = swarm
     _project = project
@@ -173,7 +236,6 @@ async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
 
         await swarm.run(project, max_rounds=max_rounds)
 
-        # Write files
         if project.files:
             workspace = WorkspaceManager()
             out = settings.output_dir / name
@@ -190,9 +252,6 @@ async def _run_swarm(goal: str, max_rounds: int = 30) -> None:
         await manager.broadcast("swarm.error", {"error": str(e)})
         _swarm = None
         _project = None
-    # On normal completion we intentionally keep _swarm and _project alive so
-    # the frontend can still download files and view the final answer. They
-    # will be replaced when the user starts a new run.
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
@@ -244,7 +303,6 @@ def _get_snapshot() -> dict[str, Any]:
             for t in project.tasks
         ]
 
-        # Build relationship data from graph
         relationships = []
         if hasattr(swarm, "relationships"):
             for (a, b), rel in swarm.relationships._graph.items():
@@ -257,7 +315,6 @@ def _get_snapshot() -> dict[str, Any]:
 
         status = "finished" if (not swarm._running and project.final_answer) else "running"
 
-        # ── Current boss (if any) ──
         boss_data: dict[str, Any] | None = None
         if hasattr(swarm, "boss_arena") and swarm.boss_arena.current_boss:
             b = swarm.boss_arena.current_boss
@@ -272,7 +329,6 @@ def _get_snapshot() -> dict[str, Any]:
                     "y": 54.0,
                 }
 
-        # ── Active fortune cookies ──
         cookies: list[dict[str, Any]] = []
         if hasattr(swarm, "fortune_jar"):
             for name, cookie in swarm.fortune_jar.active_fortunes.items():
@@ -336,64 +392,173 @@ app.add_middleware(
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     global _swarm_task
+    ws_id = id(ws)
 
     await manager.connect(ws)
     try:
-        # Send initial snapshot
+        # ── Announce auth requirements on connect ──
+        has_admin = bool(settings.admin_password)
+        await ws.send_text(json.dumps({
+            "event": "auth.status",
+            "data": {
+                "requires_auth": True,
+                "has_admin": has_admin,
+                # Tell the UI which provider the server uses so it can show
+                # the correct model name when admin logs in.
+                "server_provider": settings.provider if has_admin else None,
+                "server_model": settings.model if has_admin else None,
+            },
+        }))
+
+        # ── Initial state snapshot ──
         snapshot = _get_snapshot()
         await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
 
-        # Keep connection alive, listen for commands
+        # ── Command loop ──
         while True:
             data = await ws.receive_text()
             msg = json.loads(data)
             cmd = msg.get("command")
 
-            if cmd == "get_snapshot":
+            # ── authenticate ──────────────────────────────────────────
+            if cmd == "authenticate":
+                auth_type = msg.get("type")
+
+                if auth_type == "admin":
+                    if not settings.admin_password:
+                        await ws.send_text(json.dumps({
+                            "event": "auth.failed",
+                            "data": {"message": "관리자 계정이 서버에 설정되어 있지 않습니다."},
+                        }))
+                    elif msg.get("password") != settings.admin_password:
+                        await ws.send_text(json.dumps({
+                            "event": "auth.failed",
+                            "data": {"message": "관리자 비밀번호가 올바르지 않습니다."},
+                        }))
+                    else:
+                        llm_cfg = _build_admin_llm_config()
+                        if llm_cfg is None:
+                            await ws.send_text(json.dumps({
+                                "event": "auth.failed",
+                                "data": {"message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요."},
+                            }))
+                        else:
+                            _auth_store[ws_id] = llm_cfg
+                            logger.info(f"[WS:{ws_id}] Admin authenticated (provider={llm_cfg.provider})")
+                            await ws.send_text(json.dumps({
+                                "event": "auth.success",
+                                "data": {
+                                    "is_admin": True,
+                                    "provider": llm_cfg.provider,
+                                    "model": llm_cfg.model,
+                                },
+                            }))
+
+                elif auth_type == "user":
+                    provider = msg.get("provider", "anthropic")
+                    api_key = (msg.get("api_key") or "").strip()
+                    model = (msg.get("model") or "").strip()
+                    base_url = (msg.get("base_url") or "").strip()
+
+                    error: str | None = None
+                    if provider not in ("anthropic", "openai", "vllm"):
+                        error = f"지원하지 않는 프로바이더입니다: {provider}"
+                    elif not model:
+                        error = "모델명을 입력해주세요."
+                    elif provider != "vllm" and not api_key:
+                        error = "API 키를 입력해주세요."
+                    elif provider == "vllm" and not base_url:
+                        error = "vLLM 서버 URL을 입력해주세요."
+
+                    if error:
+                        await ws.send_text(json.dumps({
+                            "event": "auth.failed",
+                            "data": {"message": error},
+                        }))
+                    else:
+                        llm_cfg = LLMConfig(
+                            provider=provider,  # type: ignore[arg-type]
+                            api_key=api_key,
+                            model=model,
+                            base_url=base_url,
+                            max_tokens=settings.max_tokens,
+                            temperature=settings.temperature,
+                        )
+                        _auth_store[ws_id] = llm_cfg
+                        logger.info(f"[WS:{ws_id}] User authenticated (provider={provider}, model={model})")
+                        await ws.send_text(json.dumps({
+                            "event": "auth.success",
+                            "data": {
+                                "is_admin": False,
+                                "provider": provider,
+                                "model": model,
+                            },
+                        }))
+                else:
+                    await ws.send_text(json.dumps({
+                        "event": "auth.failed",
+                        "data": {"message": "인증 방식이 올바르지 않습니다 (admin 또는 user)."},
+                    }))
+
+            # ── get_snapshot ──────────────────────────────────────────
+            elif cmd == "get_snapshot":
                 snapshot = _get_snapshot()
                 await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
 
+            # ── start ─────────────────────────────────────────────────
             elif cmd == "start":
+                llm_cfg = _auth_store.get(ws_id)
+                if llm_cfg is None:
+                    await ws.send_text(json.dumps({
+                        "event": "auth.required",
+                        "data": {"message": "스웜을 시작하려면 먼저 로그인해주세요."},
+                    }))
+                    continue
+
                 goal = msg.get("goal", "").strip()
                 if not goal:
-                    await ws.send_text(json.dumps({"event": "error", "data": {"message": "Goal is required"}}))
+                    await ws.send_text(json.dumps({
+                        "event": "error",
+                        "data": {"message": "Goal is required"},
+                    }))
                 elif _swarm_task and not _swarm_task.done():
-                    await ws.send_text(json.dumps({"event": "error", "data": {"message": "Swarm is already running"}}))
+                    await ws.send_text(json.dumps({
+                        "event": "error",
+                        "data": {"message": "Swarm is already running"},
+                    }))
                 else:
                     max_rounds = msg.get("max_rounds", 30)
-                    _swarm_task = asyncio.create_task(_run_swarm(goal, max_rounds))
+                    _swarm_task = asyncio.create_task(
+                        _run_swarm(goal, max_rounds, llm_config=llm_cfg)
+                    )
                     await ws.send_text(json.dumps({
                         "event": "swarm.starting",
                         "data": {"goal": goal},
                     }))
 
+            # ── stop ──────────────────────────────────────────────────
             elif cmd == "stop":
                 if _swarm_task and not _swarm_task.done():
                     _swarm_task.cancel()
                     await ws.send_text(json.dumps({"event": "swarm.stopped", "data": {}}))
 
+            # ── message ───────────────────────────────────────────────
             elif cmd == "message":
                 text = msg.get("text", "")
-                target = msg.get("target")  # optional agent name for direct instruction
-                # Handle chat commands from the frontend
+                target = msg.get("target")
                 if text.startswith("/cheer"):
                     await bus.emit("world.event", title="The audience cheers wildly! Agents feel inspired!")
-                elif text.startswith("/status"):
-                    snapshot = _get_snapshot()
-                    await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
-                elif text.startswith("/snapshot"):
+                elif text.startswith("/status") or text.startswith("/snapshot"):
                     snapshot = _get_snapshot()
                     await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
                 elif text.startswith("/stop"):
                     if _swarm_task and not _swarm_task.done():
                         _swarm_task.cancel()
                 else:
-                    # Always echo for the UI log (with target if any)
                     await manager.broadcast(
                         "chat.message",
                         {"text": text, "source": "user", "target": target or ""},
                     )
-                    # If a swarm is running, inject the message into the target agent's inbox
                     if (
                         text
                         and _swarm is not None
@@ -414,7 +579,6 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 @app.get("/api/files")
 async def list_files() -> dict[str, Any]:
-    """Return a listing of files produced by the current/last swarm run."""
     if _project is None:
         return {"project": None, "files": []}
     return {
@@ -433,15 +597,11 @@ async def list_files() -> dict[str, Any]:
 
 @app.get("/api/files/download")
 async def download_file(path: str) -> Response:
-    """Download a single generated file by its project-relative path."""
     if _project is None:
         raise HTTPException(status_code=404, detail="No active project")
-
-    # Path traversal defense — match the artifact by exact recorded path.
     artifact = next((f for f in _project.files if f.path == path), None)
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
     filename = path.rsplit("/", 1)[-1] or "file"
     return Response(
         content=artifact.content.encode("utf-8"),
@@ -452,29 +612,22 @@ async def download_file(path: str) -> Response:
 
 @app.get("/api/files/zip")
 async def download_zip() -> Response:
-    """Download all generated files as a single zip archive."""
     if _project is None or not _project.files:
         raise HTTPException(status_code=404, detail="No files to download")
-
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for artifact in _project.files:
-            # Defense-in-depth: strip leading slashes and any ".." segments
             safe_path = "/".join(
-                seg for seg in artifact.path.split("/")
-                if seg and seg != ".."
+                seg for seg in artifact.path.split("/") if seg and seg != ".."
             )
             if not safe_path:
                 continue
             zf.writestr(safe_path, artifact.content)
-
     project_name = _project.name or "autonoma-project"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{project_name}.zip"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{project_name}.zip"'},
     )
 
 
