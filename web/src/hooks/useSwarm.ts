@@ -477,6 +477,26 @@ export function useSwarm() {
     ws.onmessage = (e) => handleMessage(e.data);
   }, [handleMessage]);
 
+  /** Send authentication credentials to the backend. */
+  const authenticate = useCallback((credentials: UserCredentials) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: "authenticate", ...credentials }));
+      // Persist for auto-reauth on reconnect (never store admin password)
+      if (credentials.type === "user") {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
+      } else {
+        // Admin: don't persist password; clear any stored user creds
+        sessionStorage.removeItem(SESSION_KEY);
+      }
+    }
+  }, []);
+
+  /** Logout: clear auth state and stored credentials. */
+  const logout = useCallback(() => {
+    sessionStorage.removeItem(SESSION_KEY);
+    setAuthState((prev) => ({ ...prev, status: "required", isAdmin: false, provider: null, model: null, error: null }));
+  }, []);
+
   /** Locally mark a fortune cookie as collected when the agent reaches it. */
   const collectCookie = useCallback((recipient: string) => {
     setState((prev) => {
