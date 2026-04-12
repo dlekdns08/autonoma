@@ -78,6 +78,9 @@ export default function Home() {
           />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+        {needsAuth && authState.status !== "unknown" && (
+          <AuthModal authState={authState} onAuthenticate={authenticate} />
+        )}
       </div>
     );
   }
