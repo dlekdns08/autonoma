@@ -22,6 +22,7 @@ interface Props {
   boss?: BossData | null;
   cookies?: CookieData[];
   onSelectAgent?: (name: string) => void;
+  onCookieCollected?: (recipient: string) => void;
 }
 
 const RARITY_TEXT: Record<string, string> = {
