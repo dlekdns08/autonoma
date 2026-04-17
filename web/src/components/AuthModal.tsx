@@ -2,21 +2,24 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { AuthState, LLMProvider, UserCredentials } from "@/lib/types";
+import { API_BASE_URL } from "@/hooks/useSwarm";
 
 interface Props {
   authState: AuthState;
   onAuthenticate: (credentials: UserCredentials) => void;
 }
 
-// ── Preset models per provider ───────────────────────────────────────────
+// ── Preset models per provider (fallback when dynamic lookup fails) ──────
 
-const CLAUDE_MODELS = [
-  { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4 (권장)" },
-  { value: "claude-opus-4-5",          label: "Claude Opus 4.5" },
-  { value: "claude-haiku-4-5-20251001",label: "Claude Haiku 4.5 (빠름)" },
+type ModelOpt = { value: string; label: string };
+
+const CLAUDE_MODELS: ModelOpt[] = [
+  { value: "claude-opus-4-7",           label: "Claude Opus 4.7" },
+  { value: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6 (권장)" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (빠름)" },
 ];
 
-const OPENAI_MODELS = [
+const OPENAI_MODELS: ModelOpt[] = [
   { value: "gpt-4o",       label: "GPT-4o (권장)" },
   { value: "gpt-4o-mini",  label: "GPT-4o mini (빠름)" },
   { value: "gpt-4-turbo",  label: "GPT-4 Turbo" },
@@ -40,18 +43,67 @@ export default function AuthModal({ authState, onAuthenticate }: Props) {
   const [baseUrl, setBaseUrl] = useState("http://localhost:8080/v1");
   const [isCustomModel, setIsCustomModel] = useState(false);
 
-  // When provider changes, reset model to the first preset
+  // Dynamic model catalog — populated by /api/models when the user asks for it.
+  const [dynamicModels, setDynamicModels] = useState<ModelOpt[] | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isLiveList, setIsLiveList] = useState(false);
+
+  // When provider changes, reset model to the first preset and clear dynamic list
   useEffect(() => {
     setIsCustomModel(false);
     setCustomModel("");
+    setDynamicModels(null);
+    setModelsError(null);
+    setIsLiveList(false);
     if (provider === "anthropic") setModel(CLAUDE_MODELS[0].value);
     else if (provider === "openai") setModel(OPENAI_MODELS[0].value);
     else setModel("");
   }, [provider]);
 
-  const presets =
+  const fallbackPresets =
     provider === "anthropic" ? CLAUDE_MODELS :
     provider === "openai"    ? OPENAI_MODELS : [];
+
+  const presets = dynamicModels ?? fallbackPresets;
+
+  const canFetchModels =
+    (provider !== "vllm" && apiKey.trim().length > 0) ||
+    (provider === "vllm" && baseUrl.trim().length > 0);
+
+  const fetchModels = useCallback(async () => {
+    if (!canFetchModels) return;
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          api_key: apiKey.trim(),
+          base_url: provider === "vllm" ? baseUrl.trim() : "",
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        models: ModelOpt[];
+        is_live: boolean;
+      };
+      if (data.models && data.models.length > 0) {
+        setDynamicModels(data.models);
+        setIsLiveList(data.is_live);
+        setModel(data.models[0].value);
+      } else {
+        setModelsError("사용 가능한 모델이 없습니다.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setModelsError(`모델 조회 실패: ${msg}`);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [provider, apiKey, baseUrl, canFetchModels]);
 
   const effectiveModel = isCustomModel || provider === "vllm" ? customModel : model;
 
@@ -246,9 +298,24 @@ export default function AuthModal({ authState, onAuthenticate }: Props) {
 
             {/* Model selector */}
             <div>
-              <label className="mb-1.5 block text-xs font-mono text-white/50">
-                모델
-              </label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="block text-xs font-mono text-white/50">
+                  모델
+                  {isLiveList && (
+                    <span className="ml-2 text-[10px] text-emerald-400/80">
+                      ● live
+                    </span>
+                  )}
+                </label>
+                <button
+                  type="button"
+                  onClick={fetchModels}
+                  disabled={!canFetchModels || modelsLoading}
+                  className="text-[10px] font-mono text-cyan-300/70 hover:text-cyan-300 disabled:text-white/20 disabled:cursor-not-allowed transition-colors"
+                >
+                  {modelsLoading ? "불러오는 중..." : "모델 불러오기 ⟳"}
+                </button>
+              </div>
               {presets.length > 0 && !isCustomModel && (
                 <select
                   value={model}
@@ -284,6 +351,11 @@ export default function AuthModal({ authState, onAuthenticate }: Props) {
                 >
                   {isCustomModel ? "← 프리셋 목록으로" : "직접 입력..."}
                 </button>
+              )}
+              {modelsError && (
+                <p className="mt-1.5 text-[10px] font-mono text-red-400/80">
+                  {modelsError}
+                </p>
               )}
             </div>
 
