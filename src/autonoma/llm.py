@@ -4,7 +4,7 @@ All agents interact with a `BaseLLMClient` rather than the Anthropic SDK
 directly, so the rest of the codebase stays provider-agnostic.
 
 Usage:
-    config = LLMConfig(provider="anthropic", api_key="sk-ant-...", model="claude-sonnet-4-20250514")
+    config = LLMConfig(provider="anthropic", api_key="sk-ant-...", model="claude-sonnet-4-6")
     client = create_llm_client(config)
     response = await client.create(system="...", messages=[...], model=..., max_tokens=..., temperature=...)
     text = response.content[0].text   # same shape as the old Anthropic response
