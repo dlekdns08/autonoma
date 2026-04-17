@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # ── Default provider/model used when admin authenticates ──
     provider: Literal["anthropic", "openai", "vllm"] = "anthropic"
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-4-6"
     max_tokens: int = 8192
     temperature: float = 0.1
 
