@@ -638,3 +638,53 @@ async def health():
         "connections": len(manager.connections),
         "swarm_running": _swarm_task is not None and not _swarm_task.done(),
     }
+
+
+# ── Model discovery ───────────────────────────────────────────────────────
+
+
+@app.get("/api/models/{provider}")
+async def list_models_server(provider: str):
+    """Return models available via the server-configured admin key.
+
+    Used by the Admin tab to show what the server-side key can actually reach.
+    Unauthenticated from the network's perspective, but only exposes the
+    server's own key indirectly (we only return model IDs, never the key).
+    """
+    from autonoma.model_catalog import list_models
+
+    if provider not in ("anthropic", "openai", "vllm"):
+        raise HTTPException(status_code=400, detail="unknown provider")
+
+    api_key = ""
+    base_url = ""
+    if provider == "anthropic":
+        api_key = settings.anthropic_api_key
+    elif provider == "openai":
+        api_key = settings.openai_api_key
+    elif provider == "vllm":
+        api_key = settings.vllm_api_key
+        base_url = settings.vllm_base_url
+
+    models, is_live = await asyncio.to_thread(list_models, provider, api_key, base_url)
+    return {"provider": provider, "is_live": is_live, "models": models}
+
+
+@app.post("/api/models")
+async def list_models_with_key(payload: dict[str, Any]):
+    """Return models for a user-supplied key (used by the 'User API key' tab).
+
+    Request body:
+        {"provider": "anthropic"|"openai"|"vllm", "api_key": "...", "base_url": "..."}
+    """
+    from autonoma.model_catalog import list_models
+
+    provider = (payload.get("provider") or "").strip()
+    api_key = (payload.get("api_key") or "").strip()
+    base_url = (payload.get("base_url") or "").strip()
+
+    if provider not in ("anthropic", "openai", "vllm"):
+        raise HTTPException(status_code=400, detail="unknown provider")
+
+    models, is_live = await asyncio.to_thread(list_models, provider, api_key, base_url)
+    return {"provider": provider, "is_live": is_live, "models": models}
