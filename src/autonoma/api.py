@@ -24,15 +24,17 @@ On failure  the server replies with {"event": "auth.failed",  ...}.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import io
 import zipfile
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
@@ -42,17 +44,31 @@ from autonoma.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
 
-# ── Swarm State (managed by the API) ────────────────────────────────────
+# ── Per-session state ────────────────────────────────────────────────────
+# Each WebSocket connection owns its own swarm/project/task so that
+# concurrent users don't share state or see each other's events.
+# The session id we hand out to clients is the integer id of the
+# WebSocket object; it is unique for the lifetime of the connection.
 
-_swarm: Any = None       # AgentSwarm instance
-_project: Any = None     # ProjectState instance
-_swarm_task: asyncio.Task | None = None  # Background task running the swarm
+
+@dataclass
+class SessionState:
+    ws: WebSocket
+    session_id: int
+    llm_config: LLMConfig | None = None
+    swarm: Any = None          # AgentSwarm instance
+    project: Any = None        # ProjectState instance
+    task: asyncio.Task | None = None  # background swarm runner
 
 
-# ── Per-connection auth store ─────────────────────────────────────────────
+_sessions: dict[int, SessionState] = {}
 
-# Maps id(WebSocket) → authenticated LLMConfig.  Cleared on disconnect.
-_auth_store: dict[int, LLMConfig] = {}
+# Carries the current session id down through every awaitable that runs
+# inside a swarm task, so that bus handlers can send events only to the
+# originating client rather than broadcasting to every connection.
+_current_session_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "autonoma_current_session_id", default=None
+)
 
 
 def _build_admin_llm_config() -> LLMConfig | None:
@@ -95,7 +111,13 @@ def _build_admin_llm_config() -> LLMConfig | None:
 # ── Connection Manager ────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Manages WebSocket connections and broadcasts events."""
+    """Tracks live WebSocket connections and provides routed delivery.
+
+    Events are never fanned out to all connections anymore — each event
+    belongs to a single session and is sent only to that session's ws.
+    ``broadcast`` is kept for the rare system-wide message but should be
+    used sparingly now that swarms are per-session.
+    """
 
     def __init__(self) -> None:
         self.connections: list[WebSocket] = []
@@ -108,11 +130,22 @@ class ConnectionManager:
     def disconnect(self, ws: WebSocket) -> None:
         if ws in self.connections:
             self.connections.remove(ws)
-        _auth_store.pop(id(ws), None)
         logger.info(f"[WS] Client disconnected ({len(self.connections)} total)")
 
+    async def send_to_ws(
+        self, ws: WebSocket, event_type: str, data: dict[str, Any]
+    ) -> bool:
+        """Send a single event to one websocket. Returns False on failure."""
+        try:
+            await ws.send_text(
+                json.dumps({"event": event_type, "data": _serialize(data)})
+            )
+            return True
+        except Exception:
+            return False
+
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
-        """Broadcast an event to all connected clients."""
+        """Fan out an event to every live connection (system-wide only)."""
         message = json.dumps({"event": event_type, "data": _serialize(data)})
         disconnected: list[WebSocket] = []
         for ws in self.connections:
@@ -180,12 +213,34 @@ FORWARDED_EVENTS = [
     "quest.completed",
     "quest.assigned",
     "human.feedback",
+    "swarm.diagnostic",
 ]
 
 
 def _make_handler(event_type: str):
+    """Build a bus handler that routes events to the session that emitted them.
+
+    The session id is carried via ``_current_session_id`` (a ContextVar set
+    at the top of ``_run_swarm``). Because asyncio propagates context into
+    awaitables and tasks it creates, every ``bus.emit`` that originates
+    inside a swarm task inherits the right session id automatically.
+    """
+
     async def handler(**kwargs: Any) -> None:
-        await manager.broadcast(event_type, kwargs)
+        sid = _current_session_id.get()
+        if sid is None:
+            # Emitted outside a swarm task (CLI/TUI/tests). Preserve the old
+            # broadcast semantics for backward compatibility.
+            await manager.broadcast(event_type, kwargs)
+            return
+        session = _sessions.get(sid)
+        if session is None:
+            return
+        ok = await manager.send_to_ws(session.ws, event_type, kwargs)
+        if not ok:
+            # ws is gone — drop this session so we stop trying to send.
+            _sessions.pop(sid, None)
+
     return handler
 
 
@@ -209,23 +264,33 @@ def _unregister_event_bridge() -> None:
 # ── Swarm Runner ─────────────────────────────────────────────────────────
 
 async def _run_swarm(
+    session_id: int,
     goal: str,
     max_rounds: int = 30,
     llm_config: LLMConfig | None = None,
 ) -> None:
-    """Run the swarm in the background."""
-    global _swarm, _project
+    """Run the swarm for a single session in the background."""
+    # Tag every awaitable spawned from this task with our session id so bus
+    # events get delivered only to this session's WebSocket.
+    _current_session_id.set(session_id)
 
     from autonoma.agents.swarm import AgentSwarm
     from autonoma.models import ProjectState
     from autonoma.workspace import WorkspaceManager
 
+    session = _sessions.get(session_id)
+    if session is None:
+        logger.warning(
+            f"[Swarm] session {session_id} vanished before run could start"
+        )
+        return
+
     name = goal.lower().replace(" ", "-")[:40]
     project = ProjectState(name=name, description=goal)
     swarm = AgentSwarm(llm_config=llm_config)
 
-    _swarm = swarm
-    _project = project
+    session.swarm = swarm
+    session.project = project
 
     try:
         await swarm.initialize(project)
@@ -240,30 +305,31 @@ async def _run_swarm(
             workspace = WorkspaceManager()
             out = settings.output_dir / name
             await workspace.write_all(project)
-            logger.info(f"[Swarm] Files written to {out}")
+            logger.info(f"[Swarm:{session_id}] Files written to {out}")
 
     except asyncio.CancelledError:
         swarm.stop()
-        logger.info("[Swarm] Cancelled")
-        _swarm = None
-        _project = None
+        logger.info(f"[Swarm:{session_id}] Cancelled")
+        raise
     except Exception as e:
-        logger.error(f"[Swarm] Error: {e}")
-        await manager.broadcast("swarm.error", {"error": str(e)})
-        _swarm = None
-        _project = None
+        logger.exception(f"[Swarm:{session_id}] Error: {e}")
+        # Send the failure only to the owner — never to other sessions.
+        sess = _sessions.get(session_id)
+        if sess is not None:
+            await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
 
-def _get_snapshot() -> dict[str, Any]:
-    """Get current swarm state for newly connected clients."""
+def _get_snapshot(session_id: int | None) -> dict[str, Any]:
+    """Build the current swarm snapshot for a single session."""
     try:
-        if not _swarm or not _project:
+        session = _sessions.get(session_id) if session_id is not None else None
+        if session is None or session.swarm is None or session.project is None:
             return {"status": "idle"}
 
-        swarm = _swarm
-        project = _project
+        swarm = session.swarm
+        project = session.project
 
         agents = []
         for name, agent in swarm.agents.items():
