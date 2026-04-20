@@ -35,6 +35,11 @@ interface Props {
   speakingAgents: Set<string>;
   /** Click → open agent modal in the parent. */
   onSelectAgent?: (name: string) => void;
+  /** Streaming-friendly variant used by the /obs route. Drops the
+   *  gallery, border, grid backdrop, and camera controls so OBS /
+   *  chromakey compositing gets a clean character + name tag + speech
+   *  bubble on whatever background the outer page provides. */
+  obsMode?: boolean;
 }
 
 const MOOD_COLORS: Record<string, string> = {
@@ -53,6 +58,7 @@ export default function VTuberStage({
   getMouthAmplitude,
   speakingAgents,
   onSelectAgent,
+  obsMode = false,
 }: Props) {
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
@@ -98,16 +104,26 @@ export default function VTuberStage({
   return (
     <div className="flex h-full flex-col gap-2 overflow-hidden">
       {/* ── Spotlight ────────────────────────────────────────────── */}
-      <div className="relative flex-1 min-h-0 overflow-hidden rounded-xl border border-fuchsia-500/25 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 shadow-[0_0_30px_rgba(244,114,182,0.08)]">
-        {/* Subtle grid backdrop */}
-        <div
-          className="absolute inset-0 opacity-[0.06]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(244,114,182,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(244,114,182,0.6) 1px, transparent 1px)",
-            backgroundSize: "48px 48px",
-          }}
-        />
+      <div
+        className={`relative flex-1 min-h-0 overflow-hidden rounded-xl ${
+          obsMode
+            ? ""
+            : "border border-fuchsia-500/25 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 shadow-[0_0_30px_rgba(244,114,182,0.08)]"
+        }`}
+      >
+        {/* Subtle grid backdrop — skipped in OBS mode so chromakey stays
+         *  clean and the character sits on whatever the outer page
+         *  provides (transparent / green / etc.). */}
+        {!obsMode && (
+          <div
+            className="absolute inset-0 opacity-[0.06]"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(244,114,182,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(244,114,182,0.6) 1px, transparent 1px)",
+              backgroundSize: "48px 48px",
+            }}
+          />
+        )}
 
         {/* Mood-tinted radial backlight — follows the spotlighted agent. */}
         <div
