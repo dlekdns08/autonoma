@@ -117,6 +117,17 @@ export function useSwarm() {
   // navigation that wipes the URL (which is the right behavior).
   const pendingJoinCodeRef = useRef<string | null>(null);
   const voice = useAgentVoice();
+  // The voice object's reference changes whenever `speakingAgents` updates
+  // (it's inside useMemo deps there — necessarily, since consumers read the
+  // live Set through this reference). If `voice` sits directly in the deps
+  // of `handleMessage`/`resetSwarm`/`connect`, every TTS start/stop rebuilds
+  // those callbacks and the WebSocket useEffect re-fires — closing and
+  // reopening the socket mid-run. The symptoms: first command sent, then
+  // connection flaps, the original session is cleaned up (cancelling the
+  // swarm), and the UI sits forever on "running" with no further events.
+  // Route through a ref so handlers keep a stable identity.
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   // Exponential backoff state: attempt count resets on successful open.
@@ -158,7 +169,7 @@ export function useSwarm() {
           event === "agent.speech_audio_end" ||
           event === "agent.speech_audio_dropped"
         ) {
-          voice.pushAudioEvent(event, data);
+          voiceRef.current.pushAudioEvent(event, data);
           return;
         }
 
@@ -491,7 +502,7 @@ export function useSwarm() {
               // Speak via Web Speech API when server TTS is not producing audio
               const speechText = data.text as string | undefined;
               if (agentName && speechText) {
-                voice.speakText(agentName, speechText);
+                voiceRef.current.speakText(agentName, speechText);
               }
               break;
             }
@@ -636,7 +647,7 @@ export function useSwarm() {
         // ignore parse errors
       }
     },
-    [addEvent, addToast, voice],
+    [addEvent, addToast],
   );
 
   const connect = useCallback(() => {
@@ -771,8 +782,8 @@ export function useSwarm() {
     // backend until the next auth.status round-trip.
     setState(INITIAL_STATE);
     setEmotes({});
-    voice.reset();
-  }, [voice]);
+    voiceRef.current.reset();
+  }, []);
 
   useEffect(() => {
     connect();
