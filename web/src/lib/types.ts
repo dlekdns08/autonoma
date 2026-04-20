@@ -97,6 +97,17 @@ export interface CookieData {
   openedAt?: number;
 }
 
+/** A short-lived reaction icon floating above an agent's head. The
+ *  backend emits one per `_say` whose mood maps to an icon; the
+ *  frontend keeps it visible until `expiresAt` and then drops it. */
+export interface AgentEmote {
+  icon: string;
+  expiresAt: number;
+  /** Bumped each time the same agent re-emotes so the React `key` flips
+   *  and the CSS animation restarts cleanly. */
+  seq: number;
+}
+
 export interface RelationshipData {
   from: string;
   to: string;
