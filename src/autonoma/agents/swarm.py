@@ -286,7 +286,7 @@ class AgentSwarm:
                 if uid and w.get("text"):
                     will_rows.append({"character_uuid": uid, "text": w["text"]})
 
-            exit_reason = getattr(project, "exit_reason", "") or "ended"
+            exit_reason = self._last_exit_reason or "ended"
             status = "completed" if getattr(project, "completed", False) else "incomplete"
 
             await self.registry.finish_project(
