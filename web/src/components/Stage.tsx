@@ -155,6 +155,22 @@ function DialogueLinks({
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >
+      <defs>
+        {pairs.map((p) => (
+          <linearGradient
+            key={`grad-${p.a}-${p.b}`}
+            id={`dlg-grad-${p.a}-${p.b}`}
+            gradientUnits="userSpaceOnUse"
+            x1={motions[p.a]?.x ?? 0}
+            y1={(motions[p.a]?.y ?? 0) - 8}
+            x2={motions[p.b]?.x ?? 0}
+            y2={(motions[p.b]?.y ?? 0) - 8}
+          >
+            <stop offset="0%" stopColor="rgba(139,92,246,0.7)" />
+            <stop offset="100%" stopColor="rgba(34,211,238,0.7)" />
+          </linearGradient>
+        ))}
+      </defs>
       {pairs.map((p) => {
         const a = motions[p.a];
         const b = motions[p.b];
@@ -170,10 +186,11 @@ function DialogueLinks({
               y1={ay}
               x2={bx}
               y2={by}
-              stroke="rgba(244, 114, 182, 0.55)"
-              strokeWidth={0.35}
-              strokeDasharray="1.2 0.8"
+              stroke={`url(#dlg-grad-${p.a}-${p.b})`}
+              strokeWidth={1}
+              strokeDasharray="4 3"
               vectorEffect="non-scaling-stroke"
+              style={{ animation: "dialogue-flow 0.8s linear infinite" }}
             />
           </g>
         );
@@ -267,8 +284,11 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
 
   const icon = BOSS_SPECIES_ICON[boss.species] ?? "☠";
   const hpPct = boss.max_hp > 0 ? (boss.hp / boss.max_hp) * 100 : 0;
-  const hpColor =
-    hpPct > 60 ? "bg-red-500" : hpPct > 30 ? "bg-orange-500" : "bg-red-700";
+  const hpGradient =
+    hpPct > 50
+      ? "bg-gradient-to-r from-rose-600 to-red-500"
+      : "bg-gradient-to-r from-red-700 to-orange-600";
+  const hpPulse = hpPct <= 20 ? "animate-pulse" : "";
   const isUnderAttack = attackingAgents.length > 0;
 
   return (
@@ -332,9 +352,15 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
         <div className="mt-0.5 rounded border border-red-500/60 bg-black/80 px-1.5 py-0.5 font-mono text-[8px] text-red-200 whitespace-nowrap">
           ☠ {boss.name} Lv{boss.level}
         </div>
-        <div className="mt-0.5 h-1 w-16 overflow-hidden rounded-full border border-red-900/80 bg-black/70">
+        <div
+          className="mt-0.5 h-1 w-16 overflow-hidden rounded-full"
+          style={{
+            background: "rgba(0,0,0,0.6)",
+            border: "1px solid rgba(239,68,68,0.3)",
+          }}
+        >
           <div
-            className={`h-full transition-all duration-200 ${hpColor}`}
+            className={`h-full transition-all duration-200 ${hpGradient} ${hpPulse}`}
             style={{ width: `${hpPct}%` }}
           />
         </div>
@@ -484,26 +510,57 @@ function AgentOnMap({
   getMouthAmplitude?: (agent: string) => number;
   onClick?: () => void;
 }) {
-  const rarityClass = RARITY_TEXT[agent.rarity || "common"] ?? RARITY_TEXT.common;
+  // Drive a "speaking glow ring" off the live audio amplitude. We mutate
+  // boxShadow directly on a ref so React doesn't re-render at 60 fps per
+  // agent. The ring color is rose when speaking, falls back to state color.
+  const ringRef = useRef<HTMLDivElement | null>(null);
 
-  // Drive a "speaking glow" off the live audio amplitude. We mutate a CSS
-  // variable on a single ref each frame so React doesn't re-render on
-  // every audio sample (would cost ~60 renders/sec per agent).
-  const glowRef = useRef<HTMLDivElement | null>(null);
+  // Derive a static boxShadow from agent.state for non-speaking states.
+  // This is also used as the fallback when amplitude is 0.
+  const stateBoxShadow = (() => {
+    const s = agent.state ?? "";
+    if (s === "working")
+      return "0 0 0 2px rgba(34,211,238,0.5), 0 0 10px rgba(34,211,238,0.2)";
+    if (s === "thinking")
+      return "0 0 0 2px rgba(139,92,246,0.5), 0 0 10px rgba(139,92,246,0.2)";
+    return "none";
+  })();
+
   useEffect(() => {
     if (!getMouthAmplitude) return;
     let raf = 0;
     const tick = () => {
       const amp = getMouthAmplitude(agent.name);
-      const el = glowRef.current;
+      const el = ringRef.current;
       if (el) {
-        el.style.setProperty("--amp", String(amp));
+        if (amp > 0.01) {
+          el.style.boxShadow =
+            "0 0 0 2px rgba(251,113,133,0.65), 0 0 14px rgba(251,113,133,0.3)";
+        } else {
+          el.style.boxShadow = stateBoxShadow;
+        }
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [agent.name, getMouthAmplitude]);
+  }, [agent.name, getMouthAmplitude, stateBoxShadow]);
+
+  // When there's no amplitude source, derive the ring from agent.state only.
+  const staticBoxShadow = (() => {
+    const s = agent.state ?? "";
+    if (s === "speaking")
+      return "0 0 0 2px rgba(251,113,133,0.65), 0 0 14px rgba(251,113,133,0.3)";
+    if (s === "working")
+      return "0 0 0 2px rgba(34,211,238,0.5), 0 0 10px rgba(34,211,238,0.2)";
+    if (s === "thinking")
+      return "0 0 0 2px rgba(139,92,246,0.5), 0 0 10px rgba(139,92,246,0.2)";
+    return "none";
+  })();
+
+  const isSpeaking =
+    (agent.state ?? "") === "speaking" ||
+    (getMouthAmplitude ? getMouthAmplitude(agent.name) > 0.01 : false);
 
   return (
     <div
@@ -532,25 +589,43 @@ function AgentOnMap({
         // the animation instead of being silently merged.
         <div
           key={emote.seq}
-          className="pointer-events-none absolute -top-3 left-1/2 -translate-x-1/2 select-none text-[16px] drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]"
+          className="pointer-events-none absolute -top-3 left-1/2 -translate-x-1/2 select-none text-[16px]"
           style={{
             animation: "emote-pop 1800ms ease-out forwards",
+            background: "rgba(12,11,29,0.75)",
+            border: "1px solid rgba(139,92,246,0.3)",
+            borderRadius: "8px",
+            padding: "2px 4px",
+            backdropFilter: "blur(6px)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
           }}
         >
           {emote.icon}
         </div>
       )}
 
+      {/* Sprite wrapper — carries the mood-colored glow ring */}
       <div
-        ref={glowRef}
-        className="pointer-events-none absolute inset-0 rounded-full"
+        ref={ringRef}
+        className="pointer-events-none absolute inset-0 rounded-sm"
         style={{
-          // CSS var is updated on RAF; opacity scales with amplitude so a
-          // speaking agent has a soft halo and a silent one fades out.
-          opacity: "calc(var(--amp, 0) * 0.7)",
-          background:
-            "radial-gradient(circle, rgba(125,211,252,0.55) 0%, rgba(125,211,252,0) 65%)",
-          transform: "scale(1.4)",
+          boxShadow: getMouthAmplitude ? stateBoxShadow : staticBoxShadow,
+          transition: "box-shadow 0.15s ease-out",
+        }}
+      />
+
+      {/* Ground shadow — elliptical blob behind the sprite */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: -2,
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: 10,
+          height: 3,
+          background: "rgba(0,0,0,0.45)",
+          borderRadius: "50%",
+          filter: "blur(1px)",
         }}
       />
 
@@ -564,10 +639,22 @@ function AgentOnMap({
       />
 
       <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 flex flex-col items-center whitespace-nowrap">
+        {/* Pill name badge */}
         <div
-          className={`rounded-full bg-black/70 px-1.5 py-[1px] font-mono text-[9px] font-bold ${rarityClass} shadow-md`}
+          className="font-mono text-[8px] max-w-[52px] overflow-hidden text-ellipsis"
+          style={{
+            background: "rgba(12,11,29,0.82)",
+            border: `1px solid ${isSpeaking ? "rgba(251,113,133,0.5)" : "rgba(139,92,246,0.25)"}`,
+            borderRadius: "9999px",
+            padding: "1px 5px",
+            color: "#c4b5fd",
+            whiteSpace: "nowrap",
+          }}
         >
-          {agent.name.slice(0, 10)} · Lv{agent.level}
+          {agent.name.slice(0, 8)}
+          <span className="text-[7px] text-amber-400/80 ml-0.5">
+            L{agent.level}
+          </span>
         </div>
         <div className="mt-0.5 h-[3px] w-10 overflow-hidden rounded-full bg-black/50">
           <div
