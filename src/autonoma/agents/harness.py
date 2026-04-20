@@ -14,9 +14,18 @@ Key patterns ported:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
+
+# Actions that are not in AgentCapability but are always permitted because
+# they are no-op / meta actions (they don't mutate project state). All harnesses
+# must allow these so that an LLM that decides to "idle" or "celebrate" is
+# never incorrectly blocked.
+_ALWAYS_ALLOWED_ACTIONS = {"idle", "celebrate"}
 
 
 class AgentCapability(str, Enum):
@@ -71,11 +80,23 @@ class AgentHarness:
         return set(self.allowed_capabilities)
 
     def can_perform(self, action: str) -> bool:
-        """Check if this harness allows a given action."""
+        """Check if this harness allows a given action.
+
+        Unknown actions are REJECTED by default (strict mode). This prevents
+        LLM typos in action names from silently being permitted. Legitimate
+        meta-actions that are not AgentCapability values (``idle``,
+        ``celebrate``) are always allowed.
+        """
+        if action in _ALWAYS_ALLOWED_ACTIONS:
+            return True
         try:
             cap = AgentCapability(action)
         except ValueError:
-            return True  # Unknown actions are allowed by default
+            logger.warning(
+                f"[Harness:{self.name}] rejecting unknown action '{action}' "
+                f"(not a recognized AgentCapability). Likely an LLM typo."
+            )
+            return False
         return cap in self.get_effective_capabilities()
 
     def build_system_prompt(self, agent_name: str, skills: list[str]) -> str:
