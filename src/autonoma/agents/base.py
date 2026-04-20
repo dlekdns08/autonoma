@@ -670,6 +670,17 @@ Rules:
     # ── TUI Helpers ────────────────────────────────────────────────────
 
     async def _say(self, text: str, style: str = "dim") -> None:
+        # Apply per-character speech styling so every utterance picks up
+        # the agent's sonic personality (rarity + traits + mood). The
+        # transform is deterministic and never paraphrases — call sites
+        # don't need to know it ran.
+        from autonoma.dialogue_style import style_speech
+        text = style_speech(
+            name=self.name,
+            text=text,
+            bones=getattr(self, "bones", None),
+            mood=self.mood.value if self.mood else "",
+        )
         self.speech = SpeechBubble(text=text[:60], style=style)
         await bus.emit("agent.speech", agent=self.name, text=text, style=style)
         # Fire TTS when enabled. Every agent gets a deterministic voice
