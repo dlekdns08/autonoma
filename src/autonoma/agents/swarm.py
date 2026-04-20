@@ -193,6 +193,15 @@ class AgentSwarm:
 
         # Attach uuid so death/relationship persistence can find the right row.
         agent.character_uuid = live.character_uuid
+        # Carry over the voice across sessions too — hearing the same
+        # character narrated by the same voice is half the charm.
+        if live.voice_id:
+            agent.voice_id = live.voice_id
+        else:
+            # First time this character speaks: pick now, store on live so
+            # finish_project persists it.
+            voice = agent._resolve_voice()
+            live.voice_id = voice
         # Apply persisted growth: level + total XP carry over, stats carry over
         # (they hold lifetime averages). The per-run counters (tasks_completed
         # etc. on AgentStats) intentionally restart at 0 — AgentStats tracks
@@ -323,6 +332,12 @@ class AgentSwarm:
             # Update round number on all agents
             for agent in self.agents.values():
                 agent._round_number = self._round
+
+            # Reset per-round TTS char budget so this round's agents
+            # each get a fair share of synthesis credits.
+            if settings.tts_enabled:
+                from autonoma.tts_worker import get_default_worker
+                get_default_worker().reset_round_budget()
 
             # ── Tick World Clock ──
             clock_changes = self.world_clock.tick(self._round)
