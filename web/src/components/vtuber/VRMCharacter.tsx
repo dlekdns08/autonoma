@@ -219,6 +219,7 @@ interface ModelProps {
   url: string;
   agentName: string;
   mood: string;
+  state: string;
   getMouthAmplitude?: (name: string) => number;
   spotlight: boolean;
   cameraResetNonce?: number;
@@ -228,6 +229,7 @@ function VRMModel({
   url,
   agentName,
   mood,
+  state,
   getMouthAmplitude,
   spotlight,
   cameraResetNonce,
@@ -296,21 +298,36 @@ function VRMModel({
     };
   }, [vrm, camera]);
 
-  // Mood-triggered gestures. When `mood` changes we schedule the
-  // matching gesture (wave, hype, think, bow) after a small random
-  // delay so a whole cast flipping to the same mood doesn't gesture in
-  // lockstep. The cleanup cancels a pending fire if the component
-  // unmounts mid-delay.
+  // Mood-triggered gestures — picks randomly from MOOD_GESTURE_OPTIONS
+  // so the same mood doesn't always play the exact same clip.
   useEffect(() => {
-    const next = MOOD_GESTURES[mood];
-    if (!next) return;
-    const delay = Math.random() * 400;
+    const options = MOOD_GESTURE_OPTIONS[mood];
+    if (!options || options.length === 0) return;
+    const next = options[Math.floor(Math.random() * options.length)];
+    const delay = 200 + Math.random() * 600;
     const timer = window.setTimeout(() => {
       stateRef.current.gesture = next;
       stateRef.current.gestureStart = performance.now() / 1000;
     }, delay);
     return () => window.clearTimeout(timer);
   }, [mood]);
+
+  // State-triggered gestures. Celebrating always fires hype; talking
+  // occasionally fires a wave to punctuate dialogue.
+  useEffect(() => {
+    if (state === "celebrating") {
+      stateRef.current.gesture = "hype";
+      stateRef.current.gestureStart = performance.now() / 1000;
+    } else if (state === "talking") {
+      const timer = window.setTimeout(() => {
+        if (Math.random() > 0.5) {
+          stateRef.current.gesture = "wave";
+          stateRef.current.gestureStart = performance.now() / 1000;
+        }
+      }, 400 + Math.random() * 800);
+      return () => window.clearTimeout(timer);
+    }
+  }, [state]);
 
   // Blink + mood + mouth state lives in refs so we don't re-render each
   // frame — the changes are all inside the WebGL scene.
@@ -365,9 +382,14 @@ function VRMModel({
       em.setValue("aa", Math.min(1, amp * 1.2));
     }
 
-    // ── Mood emotes ──────────────────────────────────────────────────
+    // ── Mood emotes + state boost ────────────────────────────────────
     if (em) {
-      const target = MOOD_MAP[mood] ?? {};
+      const base = MOOD_MAP[mood] ?? {};
+      const boost = STATE_EXPRESSION_BOOST[state] ?? {};
+      const target: MoodTarget = {};
+      for (const key of EMOTE_KEYS) {
+        target[key] = Math.min(1, (base[key] ?? 0) + (boost[key] ?? 0));
+      }
       const s = st.smoothMood;
       // Ease at ~4/sec so a mood flip takes ~250ms to settle.
       const k = 1 - Math.exp(-delta * 4);
