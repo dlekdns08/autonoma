@@ -801,5 +801,10 @@ export function useSwarm() {
     emotes,
     getMouthAmplitude: voice.getMouthAmplitude,
     speakingAgents: voice.speakingAgents,
+    room,
+    chat,
+    sendChat,
+    setDisplayName,
+    joinRoom,
   };
 }
