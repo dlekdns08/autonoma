@@ -141,6 +141,9 @@ class AutonomousAgent:
         # code that writes to the graveyard / wills tables checks for
         # truthiness before recording.
         self.character_uuid: str = ""
+        # Populated lazily by _resolve_voice() on first speech (or
+        # eagerly by _hydrate_agent from the DB row).
+        self.voice_id: str = ""
 
     @property
     def name(self) -> str:
@@ -649,6 +652,37 @@ Rules:
     async def _say(self, text: str, style: str = "dim") -> None:
         self.speech = SpeechBubble(text=text[:60], style=style)
         await bus.emit("agent.speech", agent=self.name, text=text, style=style)
+        # Fire TTS when enabled. Every agent gets a deterministic voice
+        # from its bones seed the first time it speaks (or via the
+        # persistent registry). We enqueue and return immediately — the
+        # worker handles budget, rate-limiting, and audio fan-out.
+        if settings.tts_enabled:
+            voice = self._resolve_voice()
+            from autonoma.tts_worker import get_default_worker
+            get_default_worker().enqueue(
+                agent=self.name,
+                text=text,
+                voice=voice,
+                mood=self.mood.value if self.mood else "",
+                language=settings.tts_default_language,
+            )
+
+    def _resolve_voice(self) -> str:
+        """Return the voice id for this agent. Memoized on ``voice_id``
+        so the same character always sounds the same across a run."""
+        if getattr(self, "voice_id", ""):
+            return self.voice_id
+        import hashlib
+        from autonoma.tts import pick_voice_for
+        seed = hashlib.md5(
+            f"{self.persona.role}:{self.persona.name}:autonoma-world-v1".encode()
+        ).hexdigest()
+        self.voice_id = pick_voice_for(
+            seed_hash=seed,
+            provider=settings.tts_provider,
+            language=settings.tts_default_language,
+        )
+        return self.voice_id
 
     async def _set_state(self, state: AgentState) -> None:
         self.state = state
