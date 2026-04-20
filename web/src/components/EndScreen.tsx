@@ -12,6 +12,7 @@ interface Props {
   graveyard: string;
   files: FileEntry[];
   projectName: string;
+  sessionId: number | null;
   onReset: () => void;
 }
 
@@ -25,6 +26,7 @@ export default function EndScreen({
   graveyard,
   files,
   projectName,
+  sessionId,
   onReset,
 }: Props) {
   const [tab, setTab] = useState<Tab>("final");
@@ -41,7 +43,8 @@ export default function EndScreen({
   );
 
   const activeContent = tabs.find((t) => t.id === tab)?.content || finalAnswer || epilogue;
-  const zipUrl = `${API_BASE_URL}/api/files/zip`;
+  const sessionQuery = sessionId !== null ? `?session=${sessionId}` : "";
+  const zipUrl = `${API_BASE_URL}/api/files/zip${sessionQuery}`;
 
   return (
     <div className="flex flex-col items-center justify-start h-full gap-5 p-6 overflow-y-auto scrollbar-thin">
@@ -124,7 +127,7 @@ export default function EndScreen({
                   </span>
                 )}
                 <a
-                  href={`${API_BASE_URL}/api/files/download?path=${encodeURIComponent(f.path)}`}
+                  href={`${API_BASE_URL}/api/files/download?path=${encodeURIComponent(f.path)}${sessionId !== null ? `&session=${sessionId}` : ""}`}
                   download
                   className="text-white/40 hover:text-cyan-300 text-xs"
                   title={`Download ${f.path}`}
