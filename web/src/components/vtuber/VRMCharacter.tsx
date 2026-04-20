@@ -302,6 +302,7 @@ export default function VRMCharacter({
   getMouthAmplitude,
   spotlight = false,
   onClick,
+  cameraResetNonce,
 }: Props) {
   const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
   const url = `/vrm/${file}`;
@@ -309,8 +310,13 @@ export default function VRMCharacter({
   return (
     <div
       className="relative h-full w-full overflow-hidden"
-      onClick={onClick}
-      style={{ cursor: onClick ? "pointer" : "default" }}
+      // Only the gallery tile should fire onClick on the whole area —
+      // in spotlight the OrbitControls need the drag gestures and the
+      // parent attaches click handlers to separate overlay elements.
+      onClick={spotlight ? undefined : onClick}
+      style={{
+        cursor: spotlight ? "grab" : onClick ? "pointer" : "default",
+      }}
     >
       <Canvas
         // `dpr` bounded so a Retina display doesn't hammer the GPU on 10
@@ -333,6 +339,7 @@ export default function VRMCharacter({
             mood={agent.mood}
             getMouthAmplitude={getMouthAmplitude}
             spotlight={spotlight}
+            cameraResetNonce={cameraResetNonce}
           />
         </Suspense>
       </Canvas>
