@@ -190,6 +190,7 @@ FORWARDED_EVENTS = [
     "agent.speech_audio_chunk",
     "agent.speech_audio_end",
     "agent.speech_audio_dropped",
+    "agent.emote",
     "agent.state",
     "agent.spawned",
     "agent.spawn_failed",
