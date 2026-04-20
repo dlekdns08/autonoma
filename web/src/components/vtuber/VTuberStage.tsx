@@ -57,6 +57,12 @@ export default function VTuberStage({
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
   const lastSpeakerRef = useRef<string | null>(null);
+  // Bumped when the user clicks "reset view" — VRMCharacter watches this
+  // and snaps the camera back to the default full-body framing.
+  const [resetNonce, setResetNonce] = useState(0);
+  // Controls hint fades out a few seconds after the spotlight loads so
+  // the host isn't staring at an overlay forever.
+  const [showHint, setShowHint] = useState(true);
 
   useEffect(() => {
     if (speakingAgents.size === 0) return;
@@ -66,6 +72,11 @@ export default function VTuberStage({
       setLastSpeaker(next);
     }
   }, [speakingAgents]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setShowHint(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
 
   const spotlightName = pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
   const spotlightAgent = spotlightName
@@ -126,6 +137,7 @@ export default function VTuberStage({
                 agent={spotlightAgent}
                 getMouthAmplitude={getMouthAmplitude}
                 spotlight
+                cameraResetNonce={resetNonce}
                 onClick={
                   onSelectAgent
                     ? () => onSelectAgent(spotlightAgent.name)
@@ -154,16 +166,49 @@ export default function VTuberStage({
               )}
             </div>
 
-            {/* Pinned indicator — top-right */}
-            {pinned && (
-              <button
-                type="button"
-                onClick={() => setPinned(null)}
-                className="absolute right-3 top-3 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/20"
-              >
-                pinned · unpin
-              </button>
-            )}
+            {/* Camera controls — top-right. Stacked vertically so they
+             *  don't collide with the pinned chip or the LIVE badge. */}
+            <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
+              {pinned && (
+                <button
+                  type="button"
+                  onClick={() => setPinned(null)}
+                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/25"
+                >
+                  pinned · unpin
+                </button>
+              )}
+              <div className="flex gap-1 rounded-lg border border-white/10 bg-black/60 p-1 backdrop-blur-sm">
+                <button
+                  type="button"
+                  title="View agent details"
+                  onClick={() =>
+                    onSelectAgent && onSelectAgent(spotlightAgent.name)
+                  }
+                  className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
+                >
+                  ℹ︎
+                </button>
+                <button
+                  type="button"
+                  title="Reset camera"
+                  onClick={() => setResetNonce((n) => n + 1)}
+                  className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
+                >
+                  ⟲
+                </button>
+              </div>
+            </div>
+
+            {/* Controls hint — auto-fades after 6s so it doesn't loiter
+             *  on screen once the host knows they can drag/scroll. */}
+            <div
+              className={`pointer-events-none absolute bottom-2 right-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[9px] text-white/55 backdrop-blur-sm transition-opacity duration-700 ${
+                showHint ? "opacity-100" : "opacity-0"
+              }`}
+            >
+              drag · scroll · ⟲ reset
+            </div>
 
             {/* Speech line — bottom overlay near the character's feet. */}
             {spotlightAgent.speech && (
