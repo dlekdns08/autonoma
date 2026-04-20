@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentData, BossData, CookieData } from "@/lib/types";
+import type { AgentData, AgentEmote, BossData, CookieData } from "@/lib/types";
 import PixelMap from "./stage/pixel/PixelMap";
 import PixelCharacter from "./stage/pixel/PixelCharacter";
 import { STAGE, CHAR } from "./stage/pixel/types";
@@ -21,6 +21,11 @@ interface Props {
   theme?: MapTheme;
   boss?: BossData | null;
   cookies?: CookieData[];
+  /** Per-agent reaction icons; expired entries are pruned by useSwarm. */
+  emotes?: Record<string, AgentEmote>;
+  /** Live amplitude getter from useAgentVoice. Sampled per-frame inside
+   *  AgentOnMap to drive a small "speaking" glow. Returns 0 when silent. */
+  getMouthAmplitude?: (agent: string) => number;
   onSelectAgent?: (name: string) => void;
   onCookieCollected?: (recipient: string) => void;
 }
