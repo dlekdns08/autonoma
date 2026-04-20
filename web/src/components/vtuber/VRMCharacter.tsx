@@ -120,7 +120,7 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
 // against the VRoid-style rigs in `public/vrm/`; different rigs may
 // need a second pass.
 
-type GestureName = "wave" | "hype" | "think" | "bow";
+type GestureName = "wave" | "hype" | "think" | "bow" | "beat" | "nod";
 
 interface Bones {
   head: THREE.Object3D | null;
@@ -190,6 +190,30 @@ const GESTURES: Record<
       // Forward spine flex with matching head dip.
       if (b.chest) b.chest.rotation.x += env * 0.28;
       if (b.head) b.head.rotation.x += env * 0.12;
+    },
+  },
+  // Short, low-magnitude hand flick — used as a conversational beat
+  // gesture during continuous talking so the character isn't static
+  // between bigger waves. Roughly 40% the amplitude of `wave`.
+  beat: {
+    duration: 0.55,
+    apply: (t, b, env) => {
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 0.6;
+        b.rightUpperArm.rotation.x -= env * 0.14;
+      }
+      if (b.rightLowerArm) {
+        b.rightLowerArm.rotation.y +=
+          env * Math.sin(t * Math.PI * 3) * 0.22;
+      }
+    },
+  },
+  // Short forward head dip — conversational acknowledgement nod.
+  nod: {
+    duration: 0.45,
+    apply: (_t, b, env) => {
+      if (b.head) b.head.rotation.x += env * 0.10;
+      if (b.chest) b.chest.rotation.x += env * 0.02;
     },
   },
 };
@@ -322,17 +346,35 @@ function VRMModel({
   }, [vrm, camera]);
 
   // Mood-triggered gestures — picks randomly from MOOD_GESTURE_OPTIONS
-  // so the same mood doesn't always play the exact same clip.
+  // so the same mood doesn't always play the exact same clip. Re-fires
+  // every 9-18s (randomized per cycle) while the mood is held, so that
+  // a long-held `excited` mood keeps producing occasional `hype`/`wave`
+  // clips instead of playing exactly once.
   useEffect(() => {
     const options = MOOD_GESTURE_OPTIONS[mood];
     if (!options || options.length === 0) return;
-    const next = options[Math.floor(Math.random() * options.length)];
-    const delay = 200 + Math.random() * 600;
-    const timer = window.setTimeout(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const playOne = () => {
+      if (cancelled) return;
+      const next = options[Math.floor(Math.random() * options.length)];
       stateRef.current.gesture = next;
       stateRef.current.gestureStart = performance.now() / 1000;
-    }, delay);
-    return () => window.clearTimeout(timer);
+    };
+    const scheduleNext = (initial: boolean) => {
+      const delay = initial
+        ? 200 + Math.random() * 600
+        : 9000 + Math.random() * 9000; // 9-18s while mood is held
+      timer = window.setTimeout(() => {
+        playOne();
+        scheduleNext(false);
+      }, delay);
+    };
+    scheduleNext(true);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [mood]);
 
   // Emote-triggered gestures — fires whenever a new emote arrives (seq bumps).
@@ -351,19 +393,48 @@ function VRMModel({
   }, [emote?.seq]);
 
   // State-triggered gestures. Celebrating always fires hype; talking
-  // occasionally fires a wave to punctuate dialogue.
+  // fires an initial punctuation plus occasional beat gestures on a
+  // 3-5s cadence for as long as the state remains `talking` (25% chance
+  // per cycle — most cycles produce nothing, keeping it non-spammy).
   useEffect(() => {
     if (state === "celebrating") {
       stateRef.current.gesture = "hype";
       stateRef.current.gestureStart = performance.now() / 1000;
-    } else if (state === "talking") {
-      const timer = window.setTimeout(() => {
+      return;
+    }
+    if (state === "talking") {
+      let cancelled = false;
+      let timer: number | undefined;
+      const initial = window.setTimeout(() => {
+        if (cancelled) return;
         if (Math.random() > 0.5) {
           stateRef.current.gesture = "wave";
           stateRef.current.gestureStart = performance.now() / 1000;
         }
       }, 400 + Math.random() * 800);
-      return () => window.clearTimeout(timer);
+      const scheduleBeat = () => {
+        const delay = 3000 + Math.random() * 2000; // 3-5s
+        timer = window.setTimeout(() => {
+          if (cancelled) return;
+          if (Math.random() < 0.25) {
+            // Lightweight subset — gentle nod or short hand-flick.
+            const opts: GestureName[] = ["nod", "beat"];
+            const pick = opts[Math.floor(Math.random() * opts.length)];
+            // Skip if a bigger gesture is already running.
+            if (!stateRef.current.gesture) {
+              stateRef.current.gesture = pick;
+              stateRef.current.gestureStart = performance.now() / 1000;
+            }
+          }
+          scheduleBeat();
+        }, delay);
+      };
+      scheduleBeat();
+      return () => {
+        cancelled = true;
+        window.clearTimeout(initial);
+        if (timer !== undefined) window.clearTimeout(timer);
+      };
     }
   }, [state]);
 
