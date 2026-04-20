@@ -48,6 +48,8 @@ const INITIAL_STATE: SwarmState = {
   graveyard: "",
   relationships: [],
   final_answer: "",
+  completed: false,
+  incompleteReason: "",
 };
 
 /** Pick a placement for a fortune cookie inside one of the three HQ rooms.
