@@ -136,7 +136,7 @@ export default function Home() {
             onSelectAgent={handleSelectAgent}
           />
 
-          <FileTree files={state.files} />
+          <FileTree files={state.files} sessionId={sessionId} />
 
           {/* Agent Cards */}
           <div className="flex flex-col gap-2 rounded-xl border border-purple-500/20 bg-slate-900/50 p-3">
