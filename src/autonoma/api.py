@@ -777,6 +777,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     })
                 else:
                     max_rounds = msg.get("max_rounds", 30)
+                    # Materialize a real room so other viewers can join via
+                    # short code. ``room_id == session.session_id`` is
+                    # preserved so the existing ContextVar routing keeps
+                    # working without a parallel id space.
+                    room = _rooms.get(session.session_id)
+                    if room is None:
+                        room = _create_room_for(session)
                     # Capture the current context so _run_swarm starts with
                     # our session id set on the ContextVar.
                     ctx = contextvars.copy_context()
@@ -790,7 +797,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         ),
                         context=ctx,
                     )
-                    await manager.send_to_ws(ws, "swarm.starting", {"goal": goal})
+                    await manager.send_to_ws(ws, "swarm.starting", {
+                        "goal": goal,
+                        "room_code": room.short_code,
+                    })
 
             # ── stop ──────────────────────────────────────────────────
             elif cmd == "stop":
