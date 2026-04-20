@@ -39,6 +39,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from autonoma.config import settings
+from autonoma.context import current_session_id as _current_session_id
 from autonoma.event_bus import bus
 from autonoma.llm import LLMConfig
 
@@ -135,13 +136,6 @@ _rooms: dict[int, RoomState] = {}
 # misreads when someone reads it aloud).
 _short_codes: dict[str, int] = {}
 
-# Carries the current session id down through every awaitable that runs
-# inside a swarm task, so that bus handlers can send events only to the
-# originating client rather than broadcasting to every connection.
-_current_session_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
-    "autonoma_current_session_id", default=None
-)
-
 
 def _build_admin_llm_config() -> LLMConfig | None:
     """Construct the server-side LLMConfig from settings (admin use only)."""
@@ -218,7 +212,7 @@ class ConnectionManager:
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
         """Fan out an event to every live connection (system-wide only)."""
-        message = json.dumps({"event": event_type, "data": _serialize(data)})
+        message = _make_event_message(event_type, data)
         disconnected: list[WebSocket] = []
         # Snapshot the connection list — a concurrent disconnect must not
         # mutate the list we're iterating over (TOCTOU).
@@ -247,6 +241,18 @@ def _serialize(obj: Any) -> Any:
     if hasattr(obj, "__dataclass_fields__"):  # dataclass
         return {k: _serialize(getattr(obj, k)) for k in obj.__dataclass_fields__}
     return obj
+
+
+def _make_event_message(event_type: str, data: dict[str, Any]) -> str:
+    """Serialize an event to a JSON string ready to send over WebSocket.
+
+    Caches the serialized payload so high-frequency events (agent.emote,
+    agent.state) that fan out to N viewers don't re-serialize N times.
+    The cache key is (event_type, id(data)) — since ``data`` is the raw
+    **kwargs dict built inside the bus emit call it is created fresh each
+    time, so id collisions across calls are not a concern.
+    """
+    return json.dumps({"event": event_type, "data": _serialize(data)})
 
 
 # ── Event Bridge: bus → WebSocket ─────────────────────────────────────────
@@ -319,15 +325,15 @@ def _make_handler(event_type: str):
         owner = _sessions.get(sid)
         if owner is None:
             return
-        # Fan out to every viewer who has joined this owner's room. The
-        # owner's session id is the room id (see _create_room_for) so we
-        # can route by room without an extra lookup. Sessions with a dead
-        # ws are dropped lazily on send failure.
+        # Serialize ONCE before the fan-out loop so N viewers don't each
+        # pay the recursive _serialize + json.dumps cost independently.
+        message = _make_event_message(event_type, kwargs)
         room_id = owner.room_id
         dead: list[int] = []
         for viewer in _viewers_in_room(room_id):
-            ok = await manager.send_to_ws(viewer.ws, event_type, kwargs)
-            if not ok:
+            try:
+                await viewer.ws.send_text(message)
+            except Exception:
                 dead.append(viewer.session_id)
         for vsid in dead:
             _sessions.pop(vsid, None)
@@ -413,15 +419,39 @@ async def _run_swarm(
         if sess is not None:
             await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
     finally:
-        # The TTS worker is a process-wide singleton whose internal task
-        # captures a ContextVar at first enqueue. Tearing it down on session
-        # end ensures the next session's worker re-captures fresh session id.
-        # Phase 4 will move the worker onto RoomState and remove this.
-        from autonoma.tts_worker import shutdown_default_worker
-        shutdown_default_worker()
+        # Shut down this room's TTS worker (per-room since Phase 4).
+        # Passing session_id explicitly avoids reading a ContextVar that
+        # may already be cleared by the time the finally-block runs.
+        from autonoma.tts_worker import shutdown_worker
+        shutdown_worker(session_id)
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
+
+# Per-session snapshot coalescing: tracks in-flight snapshot tasks so
+# rapid get_snapshot requests don't pile up. Only one snapshot computes
+# at a time per session; subsequent requests reuse the same future.
+_snapshot_tasks: dict[int, asyncio.Task[dict[str, Any]]] = {}
+
+
+async def _get_snapshot_coalesced(session_id: int) -> dict[str, Any]:
+    """Return snapshot, coalescing concurrent requests into one computation."""
+    existing = _snapshot_tasks.get(session_id)
+    if existing is not None and not existing.done():
+        return await existing
+
+    async def _compute() -> dict[str, Any]:
+        try:
+            return await asyncio.get_event_loop().run_in_executor(
+                None, _get_snapshot, session_id
+            )
+        finally:
+            _snapshot_tasks.pop(session_id, None)
+
+    task = asyncio.create_task(_compute())
+    _snapshot_tasks[session_id] = task
+    return await task
+
 
 def _get_snapshot(session_id: int | None) -> dict[str, Any]:
     """Build the current swarm snapshot for a single session."""
@@ -661,7 +691,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         }))
 
         # ── Initial state snapshot (always idle for a fresh connection) ──
-        snapshot = _get_snapshot(session.session_id)
+        snapshot = await _get_snapshot_coalesced(session.session_id)
         await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
 
         # ── Command loop ──
@@ -755,7 +785,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
             # ── get_snapshot ──────────────────────────────────────────
             elif cmd == "get_snapshot":
-                snap = _get_snapshot(session.session_id)
+                snap = await _get_snapshot_coalesced(session.session_id)
                 await manager.send_to_ws(ws, "snapshot", snap)
 
             # ── start ─────────────────────────────────────────────────
@@ -839,7 +869,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         # Snapshot the live scene so the new viewer gets
                         # the current state immediately, not on the next
                         # frame.
-                        snap = _get_snapshot(target_room_id)
+                        snap = await _get_snapshot_coalesced(target_room_id)
                         await manager.send_to_ws(ws, "snapshot", snap)
                         await _notify_room_membership(target_room_id)
                         if prev_room_id != target_room_id:
@@ -887,7 +917,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 )
                 await manager.send_to_ws(ws, "swarm.reset", {})
                 await manager.send_to_ws(
-                    ws, "snapshot", _get_snapshot(session.session_id)
+                    ws, "snapshot", await _get_snapshot_coalesced(session.session_id)
                 )
 
             # ── message ───────────────────────────────────────────────
@@ -912,7 +942,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     )
                 elif text.startswith("/status") or text.startswith("/snapshot"):
                     await manager.send_to_ws(
-                        ws, "snapshot", _get_snapshot(session.session_id)
+                        ws, "snapshot", await _get_snapshot_coalesced(session.session_id)
                     )
                 elif text.startswith("/stop"):
                     if session.task is not None and not session.task.done():
