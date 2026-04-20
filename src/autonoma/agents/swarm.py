@@ -90,6 +90,9 @@ class AgentSwarm:
         # _create_ghost so finish_project can persist it.
         self._deaths: list[dict[str, Any]] = []
         self._wills: list[dict[str, str]] = []
+        # Captured by _run_loop just before it exits so the finally-block
+        # persister gets the right exit reason.
+        self._last_exit_reason: str = ""
 
         # ── World Systems ──
         self.relationships = RelationshipGraph()
