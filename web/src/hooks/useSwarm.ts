@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentData,
+  AgentEmote,
   AuthState,
   BossData,
   CookieData,
@@ -96,6 +97,8 @@ export function useSwarm() {
   // Per-connection session id issued by the backend on auth.status. Every
   // HTTP download route requires it so concurrent users stay isolated.
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const [emotes, setEmotes] = useState<Record<string, AgentEmote>>({});
+  const emoteSeqRef = useRef(0);
   const voice = useAgentVoice();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
