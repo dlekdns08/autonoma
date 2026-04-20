@@ -4,8 +4,9 @@ Each provider exposes a ``list models`` endpoint that we call at runtime so
 the frontend dropdown reflects whatever the upstream actually supports,
 without us having to hardcode and then chase new model IDs.
 
-Results are cached for ``_TTL_SECONDS`` per (provider, api_key/base_url)
-tuple so that repeated UI polls don't hammer the upstream API.
+Results are cached for ``_TTL_SECONDS`` per ``(provider, api_key, base_url)``
+tuple so that repeated UI polls don't hammer the upstream API and so that
+entries for different providers/keys/endpoints never collide.
 
 If the remote call fails, we fall back to a small curated list of
 known-good IDs so the UI still offers sensible defaults.
@@ -54,10 +55,14 @@ _FALLBACK: dict[Provider, list[ModelInfo]] = {
 # ── Response cache ────────────────────────────────────────────────────────
 
 _TTL_SECONDS = 300  # 5 min
-_cache: dict[tuple[str, str], tuple[float, list[ModelInfo]]] = {}
+# Cache key includes all three of (provider, api_key, base_url) so entries
+# for different providers or different vllm base_urls never collide, and a
+# key-less ("_anon") call can't return a stale authenticated result.
+CacheKey = tuple[str, str, str]
+_cache: dict[CacheKey, tuple[float, list[ModelInfo]]] = {}
 
 
-def _cache_get(key: tuple[str, str]) -> list[ModelInfo] | None:
+def _cache_get(key: CacheKey) -> list[ModelInfo] | None:
     entry = _cache.get(key)
     if entry is None:
         return None
@@ -68,7 +73,7 @@ def _cache_get(key: tuple[str, str]) -> list[ModelInfo] | None:
     return models
 
 
-def _cache_set(key: tuple[str, str], models: list[ModelInfo]) -> None:
+def _cache_set(key: CacheKey, models: list[ModelInfo]) -> None:
     _cache[key] = (time.time(), models)
 
 
@@ -165,9 +170,12 @@ def list_models(
     ``is_live`` is True when the list came from the upstream API and False
     when we had to fall back to the hardcoded catalog.
     """
-    cache_key = (provider, api_key or base_url or "_anon")
+    cache_key: CacheKey = (provider, api_key, base_url)
     cached = _cache_get(cache_key)
     if cached is not None:
+        # Cache hit: the stored entry came from a successful live fetch
+        # (we only populate the cache on success below), so is_live=True
+        # here honestly reflects that the upstream was reachable recently.
         return [m.as_dict() for m in cached], True
 
     try:
@@ -186,11 +194,15 @@ def list_models(
         else:
             raise ValueError(f"unknown provider: {provider!r}")
     except Exception as exc:
+        # Live fetch failed on THIS call → return fallback with is_live=False,
+        # regardless of whether some other (stale) cache entry might exist.
         logger.warning(f"model discovery failed for {provider}: {exc}")
         fallback = _FALLBACK.get(provider, [])
         return [m.as_dict() for m in fallback], False
 
     if not models:
+        # Live call succeeded but returned nothing useful; fallback list is
+        # static/hardcoded, so is_live=False is the accurate signal.
         fallback = _FALLBACK.get(provider, [])
         return [m.as_dict() for m in fallback], False
 
