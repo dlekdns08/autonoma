@@ -619,6 +619,15 @@ export function useSwarm() {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
+    // Pull the room code off the URL once. We only do this on first
+    // connect — manual joins via the "Join room" UI go through
+    // joinRoom(code) instead.
+    if (typeof window !== "undefined" && pendingJoinCodeRef.current === null) {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("room");
+      if (code) pendingJoinCodeRef.current = code.trim().toUpperCase();
+    }
+
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
@@ -687,6 +696,25 @@ export function useSwarm() {
         }),
       );
     }
+  }, []);
+
+  const sendChat = useCallback((text: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    wsRef.current.send(JSON.stringify({ command: "chat", text: trimmed }));
+  }, []);
+
+  const setDisplayName = useCallback((name: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ command: "set_name", name }));
+  }, []);
+
+  const joinRoom = useCallback((code: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(
+      JSON.stringify({ command: "join_room", code: code.trim().toUpperCase() }),
+    );
   }, []);
 
   const startSwarm = useCallback((goal: string) => {
