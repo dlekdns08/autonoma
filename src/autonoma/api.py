@@ -186,6 +186,10 @@ FORWARDED_EVENTS = [
     "swarm.round",
     "swarm.finished",
     "agent.speech",
+    "agent.speech_audio_start",
+    "agent.speech_audio_chunk",
+    "agent.speech_audio_end",
+    "agent.speech_audio_dropped",
     "agent.state",
     "agent.spawned",
     "agent.spawn_failed",
@@ -323,6 +327,13 @@ async def _run_swarm(
         sess = _sessions.get(session_id)
         if sess is not None:
             await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
+    finally:
+        # The TTS worker is a process-wide singleton whose internal task
+        # captures a ContextVar at first enqueue. Tearing it down on session
+        # end ensures the next session's worker re-captures fresh session id.
+        # Phase 4 will move the worker onto RoomState and remove this.
+        from autonoma.tts_worker import shutdown_default_worker
+        shutdown_default_worker()
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
