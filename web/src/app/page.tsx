@@ -31,6 +31,9 @@ export default function Home() {
     speakingAgents,
   } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
+  // Pixel → VTuber transition state
+  const [bloomingAgent, setBloomingAgent] = useState<string | null>(null);
+  const [vtPinned, setVtPinned] = useState<string | null>(null);
 
   const needsAuth = authState.status !== "authenticated";
 
@@ -40,6 +43,20 @@ export default function Home() {
       if (agent) setSelectedAgent(agent);
     },
     [state.agents],
+  );
+
+  // Clicking a pixel sprite → bloom dissolve → VTuber reveal
+  const handlePixelClick = useCallback(
+    (name: string) => {
+      if (bloomingAgent) return; // already transitioning
+      setBloomingAgent(name);
+      const t = setTimeout(() => {
+        setVtPinned(name);
+        setBloomingAgent(null);
+      }, 520);
+      return () => clearTimeout(t);
+    },
+    [bloomingAgent],
   );
 
   // ── Idle ────────────────────────────────────────────────────────────
@@ -124,6 +141,7 @@ export default function Home() {
             speakingAgents={speakingAgents}
             onSelectAgent={handleSelectAgent}
             backdrop="studio"
+            forcePinnedAgent={vtPinned}
           />
         </div>
 
@@ -148,8 +166,9 @@ export default function Home() {
               cookies={state.cookies}
               emotes={emotes}
               getMouthAmplitude={getMouthAmplitude}
-              onSelectAgent={handleSelectAgent}
+              onSelectAgent={handlePixelClick}
               onCookieCollected={collectCookie}
+              transitioningAgent={bloomingAgent}
             />
             {state.boss && <BossOverlay boss={state.boss} />}
 
