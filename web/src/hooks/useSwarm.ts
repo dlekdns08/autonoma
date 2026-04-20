@@ -220,6 +220,70 @@ export function useSwarm() {
             model: (data.model as string) ?? null,
             error: null,
           }));
+          // Once authenticated, attempt the deferred ?room=CODE join.
+          // We can't join earlier because the server requires auth
+          // before any non-auth command is honoured.
+          const code = pendingJoinCodeRef.current;
+          if (code && wsRef.current?.readyState === WebSocket.OPEN) {
+            pendingJoinCodeRef.current = null;
+            wsRef.current.send(JSON.stringify({ command: "join_room", code }));
+          }
+          return;
+        }
+
+        // ── Multi-viewer ─────────────────────────────────────────────
+        if (event === "swarm.starting") {
+          // We started the swarm — the room is now ours and the server
+          // hands us back the short code to share.
+          const code = (data.room_code as string) ?? null;
+          setRoom((prev) => ({ ...prev, code, isOwner: true }));
+          return;
+        }
+
+        if (event === "room.joined") {
+          setRoom((prev) => ({
+            ...prev,
+            code: (data.code as string) ?? prev.code,
+            isOwner: !!(data.is_owner),
+          }));
+          return;
+        }
+
+        if (event === "room.join_failed") {
+          // Don't toss the user back to "private room of one" silently —
+          // surface it so they know the link was stale.
+          addToast(
+            "info",
+            "Join failed",
+            (data.message as string) || "Could not join room.",
+            "✕",
+          );
+          return;
+        }
+
+        if (event === "room.viewers") {
+          setRoom((prev) => ({
+            ...prev,
+            viewerCount: (data.viewer_count as number) ?? prev.viewerCount,
+            viewers: (data.viewers as string[]) ?? prev.viewers,
+          }));
+          return;
+        }
+
+        if (event === "viewer.chat") {
+          const id = ++chatSeqRef.current;
+          setChat((prev) =>
+            [
+              ...prev.slice(-200),
+              {
+                id,
+                from: (data.from as string) ?? "anon",
+                text: (data.text as string) ?? "",
+                isOwner: !!(data.is_owner),
+                timestamp: Date.now(),
+              },
+            ],
+          );
           return;
         }
 
