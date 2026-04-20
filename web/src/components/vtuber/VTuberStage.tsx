@@ -23,7 +23,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentData } from "@/lib/types";
+import type { AgentData, AgentEmote } from "@/lib/types";
 import VRMCharacter from "./VRMCharacter";
 import { creditForAgent } from "./vrmCredits";
 
