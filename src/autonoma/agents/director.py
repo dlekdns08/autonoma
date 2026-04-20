@@ -98,6 +98,10 @@ Rules:
             "Decompose this into tasks and decide what agents we need."
         )
 
+        logger.info(
+            f"[Director] Decomposing goal: '{project.description[:120]}' "
+            f"(model={self._model})"
+        )
         try:
             response = await traced_messages_create(
                 self.client,
@@ -111,8 +115,16 @@ Rules:
             )
             self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
             data = _extract_json(response.content[0].text)
+            logger.info(
+                f"[Director] LLM plan parsed: tasks={len(data.get('tasks', []))}, "
+                f"agents_needed={len(data.get('agents_needed', []))}"
+            )
         except Exception as e:
-            logger.error(f"[Director] Goal decomposition failed: {e}")
+            logger.error(
+                f"[Director] Goal decomposition failed ({type(e).__name__}: {e}); "
+                f"falling back to 1-task/1-agent plan — this is the likely cause "
+                f"if the run later ends with 0 completed tasks."
+            )
             await self._say(f"Planning error: {e}", style="bold red")
             await bus.emit("director.plan_failed", error=str(e))
             fallback = Task(
@@ -166,7 +178,10 @@ Rules:
             logger.warning(f"[Director] Unresolved dependencies: {unresolved_deps}")
 
         if not tasks:
-            logger.warning("[Director] LLM returned empty task list, creating fallback")
+            logger.warning(
+                "[Director] LLM returned empty task list, creating fallback "
+                "(single 'Implement project' task, one Builder agent)"
+            )
             tasks = [Task(
                 title="Implement project",
                 description=project.description,
@@ -351,12 +366,31 @@ Rules:
 
         if assigned_count == 0 and in_progress == 0 and done < total:
             self._stall_counter += 1
+            logger.warning(
+                f"[Director] Stall detected (counter={self._stall_counter}/3): "
+                f"done={done}/{total}, in_progress=0, assigned_this_round=0, "
+                f"available_agents={len(available_agents)}, "
+                f"blocked={blocked}, "
+                f"open_ready={len(open_tasks)}"
+            )
             if self._stall_counter >= 3:
                 stuck_tasks = [t for t in project.tasks if t.status == TaskStatus.OPEN]
                 if stuck_tasks and available_agents:
+                    cleared = list(stuck_tasks[0].depends_on)
                     stuck_tasks[0].depends_on.clear()
+                    logger.warning(
+                        f"[Director] Forcibly unblocking '{stuck_tasks[0].title}' "
+                        f"by clearing its dependencies={cleared}"
+                    )
                     await self._say("Unblocking stuck task!", style="bold red")
                     self._stall_counter = 0
+                else:
+                    logger.error(
+                        f"[Director] Stalled 3 rounds but cannot unblock: "
+                        f"stuck_open_tasks={len(stuck_tasks)}, "
+                        f"available_agents={len(available_agents)} — "
+                        f"run will keep spinning until max_rounds unless agents recover"
+                    )
         else:
             self._stall_counter = 0
 
