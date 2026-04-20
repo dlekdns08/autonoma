@@ -470,6 +470,11 @@ export function useSwarm() {
               next.agents = prev.agents.map((a) =>
                 a.name === agentName ? { ...a, speech: data.text as string } : a,
               );
+              // Speak via Web Speech API when server TTS is not producing audio
+              const speechText = data.text as string | undefined;
+              if (agentName && speechText) {
+                voice.speakText(agentName, speechText);
+              }
               break;
             }
 
