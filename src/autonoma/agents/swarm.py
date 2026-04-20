@@ -68,13 +68,28 @@ AGENT_TIMEOUT_SECONDS = 90
 class AgentSwarm:
     """Manages the self-organizing swarm of autonomous agents."""
 
-    def __init__(self, llm_config: LLMConfig | None = None) -> None:
+    def __init__(
+        self,
+        llm_config: LLMConfig | None = None,
+        registry: CharacterRegistry | None = None,
+    ) -> None:
         self._llm_config = llm_config
         self.agents: dict[str, AutonomousAgent] = {}
         self.director = DirectorAgent(llm_config=llm_config)
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
+
+        # Persistent character registry. When None we use a disabled one,
+        # which short-circuits every DB call so tests and one-shot scripts
+        # don't need to spin up SQLite. Real server paths pass a real one.
+        self.registry: CharacterRegistry = registry or CharacterRegistry(
+            enabled=settings.persistent_characters,
+        )
+        # List[{character_uuid, round, cause, epitaph}] — populated by
+        # _create_ghost so finish_project can persist it.
+        self._deaths: list[dict[str, Any]] = []
+        self._wills: list[dict[str, str]] = []
 
         # ── World Systems ──
         self.relationships = RelationshipGraph()
