@@ -143,6 +143,16 @@ export default function Home() {
             onSelectAgent={handleSelectAgent}
           />
 
+          <div className="h-72">
+            <ChatPanel
+              room={room}
+              messages={chat}
+              onSend={sendChat}
+              onSetName={setDisplayName}
+              onJoinRoom={joinRoom}
+            />
+          </div>
+
           <FileTree files={state.files} sessionId={sessionId} />
 
           {/* Agent Cards */}
