@@ -86,13 +86,19 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: num
     // Enter animation
     requestAnimationFrame(() => setVisible(true));
 
-    // Auto-dismiss after 4s
+    // Auto-dismiss after 4s. Track both the outer and the nested exit timer
+    // so a fast unmount (e.g. the toast list is trimmed) doesn't leave an
+    // orphan timer that calls onDismiss after the component is gone.
+    let exitTimerId: ReturnType<typeof setTimeout> | undefined;
     const t = setTimeout(() => {
       setExiting(true);
-      setTimeout(() => onDismiss(toast.id), 300);
+      exitTimerId = setTimeout(() => onDismiss(toast.id), 300);
     }, 4000);
 
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      if (exitTimerId !== undefined) clearTimeout(exitTimerId);
+    };
   }, [toast.id, onDismiss]);
 
   return (
