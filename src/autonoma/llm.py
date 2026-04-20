@@ -158,13 +158,46 @@ class AnthropicLLMClient(BaseLLMClient):
 # ── OpenAI / vLLM implementation ─────────────────────────────────────────
 
 
+def _is_openai_reasoning_model(model: str) -> bool:
+    """Return True for OpenAI reasoning-family models (o1/o3/...) that
+    don't accept ``temperature`` and require ``max_completion_tokens``
+    instead of ``max_tokens``.
+
+    Extend the prefix tuple as new reasoning-family models ship.
+    """
+    lowered = model.lower()
+    return lowered.startswith(("o1", "o3"))
+
+
 class OpenAILLMClient(BaseLLMClient):
     """Works for both the OpenAI API and vLLM's OpenAI-compatible endpoint."""
 
-    def __init__(self, api_key: str, base_url: str = "") -> None:
+    def __init__(self, api_key: str, base_url: str | None = "", provider: str = "openai") -> None:
         from openai import AsyncOpenAI
-        kwargs: dict[str, Any] = {"api_key": api_key or "dummy"}
-        if base_url:
+
+        # Normalize empty base_url → None so the SDK's default-URL path kicks in.
+        base_url = base_url or None
+
+        if provider == "openai":
+            if not api_key:
+                raise ValueError("OpenAI requires an API key")
+            effective_key = api_key
+        elif provider == "vllm":
+            if not api_key:
+                logger.info(
+                    "vllm client: empty api_key; using placeholder 'dummy' "
+                    "(self-hosted vllm typically has no auth)"
+                )
+                effective_key = "dummy"
+            else:
+                effective_key = api_key
+        else:
+            # Unknown provider; keep old permissive behavior for safety.
+            effective_key = api_key or "dummy"
+
+        self._provider = provider
+        kwargs: dict[str, Any] = {"api_key": effective_key}
+        if base_url is not None:
             kwargs["base_url"] = base_url
         self._client = AsyncOpenAI(**kwargs)
 
@@ -179,11 +212,21 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> LLMResponse:
         try:
             full_messages = [{"role": "system", "content": system}] + list(messages)
+
+            # Reasoning models (o1/o3...) don't accept `temperature` and use
+            # `max_completion_tokens` instead of `max_tokens`.
+            create_kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": full_messages,
+            }
+            if _is_openai_reasoning_model(model):
+                create_kwargs["max_completion_tokens"] = max_tokens
+            else:
+                create_kwargs["max_tokens"] = max_tokens
+                create_kwargs["temperature"] = temperature
+
             response = await self._client.chat.completions.create(
-                model=model,
-                messages=full_messages,  # type: ignore[arg-type]
-                max_tokens=max_tokens,
-                temperature=temperature,
+                **create_kwargs,  # type: ignore[arg-type]
             )
             text = response.choices[0].message.content or ""
             usage = response.usage
@@ -194,16 +237,25 @@ class OpenAILLMClient(BaseLLMClient):
                 stop_reason=response.choices[0].finish_reason or "stop",
             )
         except Exception as exc:
+            # Log BEFORE re-raising so the Director/agent loop can surface
+            # the real reason a fallback was taken (empty runs were previously
+            # mysterious because the root cause was swallowed).
+            logger.error(
+                "OpenAI-compatible create() failed: provider=%s model=%s error=%s",
+                self._provider,
+                model,
+                exc,
+            )
             try:
                 from openai import APIConnectionError, RateLimitError, AuthenticationError
-                if isinstance(exc, APIConnectionError):
-                    raise LLMConnectionError(str(exc)) from exc
-                if isinstance(exc, RateLimitError):
-                    raise LLMRateLimitError(str(exc)) from exc
-                if isinstance(exc, AuthenticationError):
-                    raise LLMAuthError(str(exc)) from exc
             except ImportError:
-                pass
+                raise
+            if isinstance(exc, APIConnectionError):
+                raise LLMConnectionError(str(exc)) from exc
+            if isinstance(exc, RateLimitError):
+                raise LLMRateLimitError(str(exc)) from exc
+            if isinstance(exc, AuthenticationError):
+                raise LLMAuthError(str(exc)) from exc
             raise
 
 
@@ -216,7 +268,11 @@ def create_llm_client(config: LLMConfig) -> BaseLLMClient:
         return AnthropicLLMClient(api_key=config.api_key)
     if config.provider in ("openai", "vllm"):
         base_url = config.base_url if config.provider == "vllm" else ""
-        return OpenAILLMClient(api_key=config.api_key, base_url=base_url)
+        return OpenAILLMClient(
+            api_key=config.api_key,
+            base_url=base_url,
+            provider=config.provider,
+        )
     raise ValueError(f"Unknown LLM provider: {config.provider!r}")
 
 
