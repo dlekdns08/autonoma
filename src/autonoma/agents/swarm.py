@@ -140,6 +140,12 @@ class AgentSwarm:
         recorder: Any,
     ) -> ProjectState:
         await bus.emit("swarm.started", max_rounds=max_rounds)
+        logger.info(
+            f"[Swarm] Starting run '{project.name}' "
+            f"(max_rounds={max_rounds}, tasks={len(project.tasks)}, "
+            f"agents={len(self.agents)})"
+        )
+        exit_reason = "unknown"
 
         while self._running and self._round < max_rounds:
             self._round += 1
@@ -196,6 +202,8 @@ class AgentSwarm:
                 director_result = {"action": "timeout"}
 
             if director_result.get("action") == "project_complete":
+                exit_reason = "project_complete"
+                logger.info(f"[Swarm] Director declared project_complete at round {self._round}")
                 break
 
             # All other agents act concurrently with individual timeouts
@@ -287,11 +295,69 @@ class AgentSwarm:
                 self.narrative.narrate_project_complete(
                     project.description or "the project", agent_names, self._round,
                 )
+                exit_reason = "completed_flag"
+                logger.info(f"[Swarm] project.completed flag set at round {self._round}")
                 break
 
             await asyncio.sleep(0.1)
 
+        if exit_reason == "unknown":
+            if not self._running:
+                exit_reason = "stopped_externally"
+            elif self._round >= max_rounds:
+                exit_reason = "max_rounds_reached"
+
         self._running = False
+
+        # ── Terminal-state diagnostic ──────────────────────────────────────
+        # Captures exactly why the run ended and what state the tasks were in.
+        # Critical for debugging runs that finish with incomplete tasks.
+        status_counts: dict[str, int] = {s.value: 0 for s in TaskStatus}
+        for t in project.tasks:
+            status_counts[t.status.value] = status_counts.get(t.status.value, 0) + 1
+        unfinished = [t for t in project.tasks if t.status != TaskStatus.DONE]
+
+        logger.info(
+            f"[Swarm] Run ended: reason={exit_reason}, round={self._round}/{max_rounds}, "
+            f"project.completed={project.completed}, "
+            f"tasks(total={len(project.tasks)}, done={status_counts.get('done', 0)}, "
+            f"open={status_counts.get('open', 0)}, assigned={status_counts.get('assigned', 0)}, "
+            f"in_progress={status_counts.get('in_progress', 0)}, "
+            f"blocked={status_counts.get('blocked', 0)}, review={status_counts.get('review', 0)}), "
+            f"files={len(project.files)}, agents={len(self.agents)}"
+        )
+        for t in unfinished:
+            logger.warning(
+                f"[Swarm] Unfinished task '{t.title}' "
+                f"status={t.status.value} assigned_to={t.assigned_to or '(none)'} "
+                f"depends_on={t.depends_on or '[]'} artifacts={t.artifacts or '[]'}"
+            )
+        for name, agent in self.agents.items():
+            if name == "Director":
+                continue
+            errs = getattr(agent.stats, "errors", 0)
+            if errs:
+                logger.warning(
+                    f"[Swarm] Agent '{name}' finished with errors={errs} "
+                    f"files_created={agent.stats.files_created} "
+                    f"tasks_completed={agent.stats.tasks_completed}"
+                )
+
+        await bus.emit(
+            "swarm.diagnostic",
+            exit_reason=exit_reason,
+            rounds=self._round,
+            max_rounds=max_rounds,
+            task_status_counts=status_counts,
+            unfinished_tasks=[
+                {
+                    "title": t.title,
+                    "status": t.status.value,
+                    "assigned_to": t.assigned_to or "",
+                }
+                for t in unfinished
+            ],
+        )
 
         # Collect total token usage
         total_tokens = sum(a.total_tokens for a in self.agents.values())
