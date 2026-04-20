@@ -390,16 +390,19 @@ class AgentMemory:
 
     def recall(self, keyword: str = "") -> list[MemoryEntry]:
         """Recall private memories, optionally filtered by keyword."""
-        if not keyword:
-            return self.private[-10:]
-        return [e for e in self.private if keyword.lower() in e.text.lower()][-5:]
+        with self._private_lock:
+            if not keyword:
+                return self.private[-10:]
+            return [e for e in self.private if keyword.lower() in e.text.lower()][-5:]
 
     def get_summary(self) -> str:
         """Format both layers for injection into situation report."""
         lines = []
-        if self.private:
+        with self._private_lock:
+            private_snapshot = list(self.private)
+        if private_snapshot:
             lines.append("  [Private Memories]")
-            for e in self.private[-6:]:
+            for e in private_snapshot[-6:]:
                 lines.append(f"    {e}")
         else:
             lines.append("  No memories yet - this is a fresh start!")
@@ -412,11 +415,13 @@ class AgentMemory:
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
-        return {
-            "private": [
+        with self._private_lock:
+            private_dump = [
                 {"text": e.text, "type": e.memory_type, "round": e.round_number}
                 for e in self.private
-            ],
+            ]
+        return {
+            "private": private_dump,
             "hindsight": [
                 {
                     "title": n.title,
@@ -432,7 +437,10 @@ class AgentMemory:
     # Backwards compatibility
     @property
     def entries(self) -> list[MemoryEntry]:
-        return self.private
+        # Return a snapshot so callers iterating outside the lock don't
+        # observe mid-mutation state.
+        with self._private_lock:
+            return list(self.private)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
