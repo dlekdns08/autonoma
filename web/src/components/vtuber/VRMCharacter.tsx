@@ -433,14 +433,29 @@ function VRMModel({
       bones.hips.rotation.y = Math.sin(now * 0.23 + phase * 1.3) * 0.015;
     }
     if (bones.leftUpperArm) {
-      // Additive around the 1.15 base set at mount — arms drift rather
-      // than snap, which is what makes the pose feel "alive".
+      // Left arm: slower frequency, bigger amplitude — natural asymmetry
       bones.leftUpperArm.rotation.z =
-        1.15 + Math.sin(now * 0.8 + phase) * 0.03;
+        1.15 + Math.sin(now * 0.65 + phase) * 0.055 +
+        Math.sin(now * 0.23 + phase * 0.7) * 0.02;
+      bones.leftUpperArm.rotation.x =
+        Math.sin(now * 0.4 + phase + 1.1) * 0.018;
     }
     if (bones.rightUpperArm) {
+      // Right arm: faster oscillation, independent phase
       bones.rightUpperArm.rotation.z =
-        -1.15 + Math.sin(now * 0.8 + phase + Math.PI) * 0.03;
+        -1.15 + Math.sin(now * 0.9 + phase + Math.PI * 0.85) * 0.05 +
+        Math.sin(now * 0.31 + phase * 1.4) * 0.018;
+      bones.rightUpperArm.rotation.x =
+        Math.sin(now * 0.37 + phase + 2.3) * 0.015;
+    }
+    // Forearm subtle flex — makes arms feel alive even in idle
+    if (bones.leftLowerArm) {
+      bones.leftLowerArm.rotation.z = Math.sin(now * 0.5 + phase + 0.8) * 0.04;
+      bones.leftLowerArm.rotation.y = Math.sin(now * 0.28 + phase) * 0.025;
+    }
+    if (bones.rightLowerArm) {
+      bones.rightLowerArm.rotation.z = -Math.sin(now * 0.6 + phase + 1.2) * 0.035;
+      bones.rightLowerArm.rotation.y = -Math.sin(now * 0.35 + phase + 0.5) * 0.02;
     }
 
     // ── Speech-triggered head nod ────────────────────────────────────
