@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     # ── Workspace ──
     output_dir: Path = Path("./output")
 
+    # ── Persistent character database ──
+    # Where the SQLite file lives. Default is a `data/` dir next to the
+    # working directory so it survives across runs. In Docker this is
+    # mounted to a named volume (`autonoma_db:/app/data`).
+    data_dir: Path = Path("./data")
+    db_filename: str = "autonoma.db"
+    # Enable the persistent character registry. When False the swarm
+    # behaves exactly as before (fresh characters every run, no memory
+    # across sessions). Useful for tests and CI.
+    persistent_characters: bool = True
+
     # ── Swarm ──
     max_agents: int = 8
     tick_rate: float = 0.15  # TUI animation tick in seconds
