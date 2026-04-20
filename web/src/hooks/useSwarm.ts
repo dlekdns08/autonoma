@@ -639,6 +639,25 @@ export function useSwarm() {
     };
   }, [connect]);
 
+  // Sweep expired emotes once a second. Cheap; the map is tiny (one
+  // entry per agent) so this is well below noise.
+  useEffect(() => {
+    if (Object.keys(emotes).length === 0) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setEmotes((prev) => {
+        let changed = false;
+        const next: Record<string, AgentEmote> = {};
+        for (const [name, e] of Object.entries(prev)) {
+          if (e.expiresAt > now) next[name] = e;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 500);
+    return () => clearInterval(t);
+  }, [emotes]);
+
   // Drop cookies ~1.2s after they open, so Stage has time to play the poof.
   useEffect(() => {
     const opened = state.cookies.filter((c) => c.openedAt !== undefined);
