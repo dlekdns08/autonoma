@@ -67,6 +67,9 @@ interface Props {
    *  instead of the in-scene speech bubble. `undefined` → follow
    *  `obsMode` (subtitles are the clip-friendly default for streams). */
   subtitles?: boolean;
+  /** External pinning — when set, overrides the internal pinned state
+   *  and triggers the reveal flash overlay (pixel → VTuber transition). */
+  forcePinnedAgent?: string | null;
 }
 
 const MOOD_COLORS: Record<string, string> = {
@@ -88,6 +91,7 @@ export default function VTuberStage({
   obsMode = false,
   backdrop = "default",
   subtitles,
+  forcePinnedAgent,
 }: Props) {
   // Subtitles default: on in OBS (clip-friendly), off on the main
   // dashboard (the in-scene speech bubble is part of the aesthetic
@@ -102,6 +106,9 @@ export default function VTuberStage({
   // Controls hint fades out a few seconds after the spotlight loads so
   // the host isn't staring at an overlay forever.
   const [showHint, setShowHint] = useState(true);
+  // Flash overlay for the pixel → VTuber reveal transition.
+  const [revealFlash, setRevealFlash] = useState(false);
+  const prevForcedRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (speakingAgents.size === 0) return;
@@ -116,6 +123,17 @@ export default function VTuberStage({
     const t = setTimeout(() => setShowHint(false), 6000);
     return () => clearTimeout(t);
   }, []);
+
+  // Sync external pin + trigger reveal flash when the forced agent changes.
+  useEffect(() => {
+    if (forcePinnedAgent == null) return;
+    if (forcePinnedAgent === prevForcedRef.current) return;
+    prevForcedRef.current = forcePinnedAgent;
+    setPinned(forcePinnedAgent);
+    setRevealFlash(true);
+    const t = setTimeout(() => setRevealFlash(false), 700);
+    return () => clearTimeout(t);
+  }, [forcePinnedAgent]);
 
   const spotlightName = pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
   const spotlightAgent = spotlightName
@@ -160,6 +178,16 @@ export default function VTuberStage({
             background: `radial-gradient(ellipse at center 55%, var(--tw-gradient-stops))`,
           }}
         />
+
+        {/* Pixel → VTuber reveal flash overlay */}
+        {revealFlash && (
+          <div
+            className="pointer-events-none absolute inset-0 z-30 animate-vtuber-flash"
+            style={{
+              background: "radial-gradient(ellipse at center, rgba(139,92,246,0.95) 0%, rgba(34,211,238,0.6) 50%, transparent 80%)",
+            }}
+          />
+        )}
 
         {spotlightAgent && (
           <div
