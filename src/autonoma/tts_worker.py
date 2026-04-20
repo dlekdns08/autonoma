@@ -234,25 +234,49 @@ class TTSWorker:
         )
 
 
-# ── Module-level convenience ──────────────────────────────────────────
+# ── Per-room worker registry ──────────────────────────────────────────
+#
+# Keyed by room_id (== owner session_id).  One TTSWorker per active room
+# so two concurrent swarms can't share a budget or a rate-limit window.
+#
+# ``get_default_worker()`` reads the current room_id from the ContextVar
+# that ``api.py`` sets before launching a swarm task.  Agent code (base.py,
+# swarm.py) calls ``get_default_worker()`` unchanged — the routing is now
+# transparent.
 
-# Current swarm always runs one session in-process. If that ever becomes
-# "multiple rooms per server", move this to a per-session attribute on
-# RoomState (Phase 4 will do exactly this).
-_default_worker: TTSWorker | None = None
+from autonoma.context import current_session_id as _current_session_id
+
+_workers: dict[int, TTSWorker] = {}
+
+
+def get_worker(room_id: int) -> TTSWorker:
+    """Return (creating if needed) the TTSWorker for *room_id*."""
+    worker = _workers.get(room_id)
+    if worker is None:
+        worker = TTSWorker()
+        _workers[room_id] = worker
+    return worker
 
 
 def get_default_worker() -> TTSWorker:
-    global _default_worker
-    if _default_worker is None:
-        _default_worker = TTSWorker()
-    return _default_worker
+    """Return the worker for the current session (read from ContextVar).
+
+    Falls back to room_id=0 when called outside a swarm context (tests,
+    CLI invocations) so existing call-sites need no changes.
+    """
+    room_id = _current_session_id.get() or 0
+    return get_worker(room_id)
+
+
+def shutdown_worker(room_id: int) -> asyncio.Task | None:
+    """Stop and remove the worker for *room_id*. Safe to call if absent."""
+    worker = _workers.pop(room_id, None)
+    if worker is None:
+        return None
+    return asyncio.create_task(worker.stop())
 
 
 def shutdown_default_worker() -> asyncio.Task | None:
-    global _default_worker
-    if _default_worker is None:
-        return None
-    task = asyncio.create_task(_default_worker.stop())
-    _default_worker = None
-    return task
+    """Backward-compat shim — shuts down the current session's worker."""
+    room_id = _current_session_id.get() or 0
+    return shutdown_worker(room_id)
