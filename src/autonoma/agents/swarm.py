@@ -14,6 +14,7 @@ from autonoma.agents.base import AutonomousAgent
 from autonoma.agents.director import DirectorAgent
 from autonoma.agents.harness import get_harness
 from autonoma.config import settings
+from autonoma.db.registry import CharacterRegistry
 from autonoma.event_bus import bus
 from autonoma.llm import LLMConfig
 from autonoma.tracing import finish_run, start_run
