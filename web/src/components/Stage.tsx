@@ -70,7 +70,11 @@ export default function Stage({
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
-  const { motions, bubbles, pairs, attackingAgents } = useAgentMotion({
+  // Speech bubbles are rendered in the VTuber panel now (with lip-sync
+  // and proper framing), so we no longer surface them on the pixel map.
+  // Keeping the bubbles pipeline so other callers (pairs, attackingAgents)
+  // keep working — we just stop passing `bubble` down to AgentOnMap.
+  const { motions, pairs, attackingAgents } = useAgentMotion({
     agents,
     map,
     boss,
@@ -121,14 +125,12 @@ export default function Stage({
         {agents.map((agent) => {
           const motion = motions[agent.name];
           if (!motion) return null;
-          const bubble = bubbles.find((b) => b.speaker === agent.name);
           const emote = emotes?.[agent.name] ?? null;
           return (
             <AgentOnMap
               key={agent.name}
               agent={agent}
               motion={motion}
-              dialogue={bubble ?? null}
               emote={emote}
               getMouthAmplitude={getMouthAmplitude}
               onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
@@ -473,20 +475,17 @@ function CookieSprite({ cookie }: { cookie: CookieData }) {
 function AgentOnMap({
   agent,
   motion,
-  dialogue,
   emote,
   getMouthAmplitude,
   onClick,
 }: {
   agent: AgentData;
   motion: MotionState;
-  dialogue: DialogueBubble | null;
   emote: AgentEmote | null;
   getMouthAmplitude?: (agent: string) => number;
   onClick?: () => void;
 }) {
   const rarityClass = RARITY_TEXT[agent.rarity || "common"] ?? RARITY_TEXT.common;
-  const speech = dialogue?.text ?? agent.speech;
 
   // Drive a "speaking glow" off the live audio amplitude. We mutate a CSS
   // variable on a single ref each frame so React doesn't re-render on
