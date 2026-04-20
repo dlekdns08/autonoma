@@ -90,6 +90,9 @@ export function useSwarm() {
   const [connected, setConnected] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authState, setAuthState] = useState<AuthState>(INITIAL_AUTH);
+  // Per-connection session id issued by the backend on auth.status. Every
+  // HTTP download route requires it so concurrent users stay isolated.
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
