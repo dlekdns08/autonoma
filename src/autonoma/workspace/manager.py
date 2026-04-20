@@ -22,16 +22,68 @@ class WorkspaceManager:
         """Write all project artifacts to disk."""
         project_dir = self.base_dir / project.name
         project_dir.mkdir(parents=True, exist_ok=True)
+        project_root = project_dir.resolve()
+
+        # Dedup by path: if two agents produced the same path this round, the
+        # LAST artifact is the most recent write and should win. We do this on
+        # an in-memory copy so we don't mutate project.files (owned by the
+        # model layer).
+        dedup: dict[str, FileArtifact] = {}
+        for artifact in project.files:
+            dedup[artifact.path] = artifact
+        collapsed = len(project.files) - len(dedup)
+        if collapsed > 0:
+            logger.info(
+                f"[Workspace] Collapsed {collapsed} duplicate file artifact(s) "
+                f"(kept most recent per path)"
+            )
+        artifacts = list(dedup.values())
 
         written: list[str] = []
         skipped: list[str] = []
-        for artifact in project.files:
-            # Defense-in-depth: validate path stays within project dir
-            sanitized = artifact.path.lstrip("/").replace("..", "")
-            resolved = (project_dir / sanitized).resolve()
-            if not str(resolved).startswith(str(project_dir.resolve())):
-                logger.warning(f"[Workspace] Skipping path traversal attempt: {artifact.path}")
-                skipped.append(artifact.path)
+        for artifact in artifacts:
+            raw_path = artifact.path
+            # Robust path traversal defense:
+            # 1) no backslashes or null bytes
+            # 2) no absolute paths (POSIX leading slash or Windows drive)
+            # 3) resolved path must stay inside project_dir
+            if "\x00" in raw_path or "\\" in raw_path:
+                logger.warning(
+                    f"[Workspace] Skipping unsafe path (null byte or backslash): {raw_path!r}"
+                )
+                skipped.append(raw_path)
+                continue
+
+            safe_path = raw_path
+            # Reject absolute POSIX paths
+            if safe_path.startswith("/"):
+                logger.warning(
+                    f"[Workspace] Skipping absolute path: {raw_path!r}"
+                )
+                skipped.append(raw_path)
+                continue
+            # Reject Windows-style absolute paths (e.g. "C:/foo")
+            if len(safe_path) >= 2 and safe_path[1] == ":" and safe_path[0].isalpha():
+                logger.warning(
+                    f"[Workspace] Skipping absolute (drive-letter) path: {raw_path!r}"
+                )
+                skipped.append(raw_path)
+                continue
+
+            try:
+                resolved = (project_dir / safe_path).resolve()
+            except (OSError, RuntimeError) as e:
+                logger.warning(
+                    f"[Workspace] Skipping path that failed to resolve ({raw_path!r}): {e}"
+                )
+                skipped.append(raw_path)
+                continue
+
+            if not resolved.is_relative_to(project_root):
+                logger.warning(
+                    f"[Workspace] Skipping path traversal attempt: {raw_path!r}"
+                )
+                skipped.append(raw_path)
                 continue
 
             resolved.parent.mkdir(parents=True, exist_ok=True)
