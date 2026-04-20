@@ -229,11 +229,12 @@ function VRMModel({
     vrm.update(delta);
   });
 
-  // Full-body framing. We compute a body center from the head and hips
-  // bones each render — model heights differ so we can't hard-code Y.
-  // The spotlight frame is slightly tighter on the upper body; the
-  // gallery frame is a touch wider to fit everyone in a small tile.
-  useFrame(({ camera }) => {
+  // Initial / reset framing. We compute a body center from the head and
+  // hips bones *once* — not every frame — so OrbitControls can take over
+  // without a per-frame setter stealing the camera back from the user.
+  // The effect re-runs when `cameraResetNonce` bumps, giving the parent
+  // a way to snap back to defaults after the viewer has orbited.
+  useEffect(() => {
     if (!vrm) return;
     const humanoid = vrm.humanoid;
     if (!humanoid) return;
@@ -245,25 +246,53 @@ function VRMModel({
     head.getWorldPosition(headPos);
     hips.getWorldPosition(hipsPos);
 
-    // Approximate full-body center. We bias slightly upward from the
-    // hips — this keeps the chest/face area in the optical center where
-    // the viewer's eye lands first, rather than landing on the stomach.
     const centerX = (headPos.x + hipsPos.x) / 2;
     const centerY = hipsPos.y + (headPos.y - hipsPos.y) * 0.55;
     const centerZ = (headPos.z + hipsPos.z) / 2;
 
-    if (spotlight) {
-      // Close enough to see facial expressions, far enough to catch hands.
-      camera.position.set(centerX, centerY + 0.05, centerZ + 2.4);
-      camera.lookAt(centerX, centerY - 0.05, centerZ);
-    } else {
-      // Gallery tile: step back a hair, tilt down slightly.
-      camera.position.set(centerX, centerY + 0.1, centerZ + 2.8);
-      camera.lookAt(centerX, centerY - 0.1, centerZ);
-    }
-  });
+    // Distance: tighter in spotlight (you're "looking at" the character),
+    // wider for gallery tiles so everyone fits.
+    const distance = spotlight ? 2.4 : 2.8;
+    camera.position.set(centerX, centerY + 0.05, centerZ + distance);
+    camera.lookAt(centerX, centerY - 0.05, centerZ);
 
-  return <primitive object={vrm.scene} />;
+    // Tell OrbitControls where to pivot. Without this the controls would
+    // orbit around the origin, which for VRoid models puts the pivot at
+    // the character's feet and makes rotation feel wildly off.
+    if (controlsRef.current) {
+      controlsRef.current.target.set(centerX, centerY - 0.05, centerZ);
+      controlsRef.current.update();
+    }
+  }, [vrm, spotlight, cameraResetNonce, camera]);
+
+  return (
+    <>
+      <primitive object={vrm.scene} />
+      {/* Orbit controls only in the spotlight view. Gallery thumbs are
+          too small to be usefully interactive and would just eat touch
+          events meant for the tile's onClick. */}
+      {spotlight && (
+        <OrbitControls
+          ref={controlsRef}
+          enablePan={false}
+          enableDamping
+          dampingFactor={0.12}
+          rotateSpeed={0.8}
+          zoomSpeed={0.8}
+          // Prevent the viewer from zooming inside the mesh or so far
+          // out that the character becomes a dot.
+          minDistance={1.1}
+          maxDistance={5.5}
+          // Keep the camera roughly level — disallow looking at the
+          // character from directly overhead or underneath, both of
+          // which expose ugly rigging seams.
+          minPolarAngle={Math.PI * 0.2}
+          maxPolarAngle={Math.PI * 0.82}
+          makeDefault
+        />
+      )}
+    </>
+  );
 }
 
 // ── Outer component: Canvas + lighting + fallback ─────────────────────
