@@ -46,8 +46,10 @@ class TestAgentHarness:
     def test_tester_has_verdict_format(self):
         assert "VERDICT" in TESTER_HARNESS.output_format
 
-    def test_unknown_action_allowed_by_default(self):
-        assert CODER_HARNESS.can_perform("some_unknown_action")
+    def test_unknown_action_rejected(self):
+        # Unknown action names (typos, hallucinations) must be rejected so a
+        # mis-spelled action can't bypass harness restrictions.
+        assert not CODER_HARNESS.can_perform("some_unknown_action")
 
 
 class TestHarnessPrompt:
