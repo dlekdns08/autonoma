@@ -1,0 +1,70 @@
+{
+  "midori.vrm": {
+    "character": "Midori",
+    "title": "Midori — Redesigned (from \"Libinika Extras...\")",
+    "author": "NorthrnPoakr",
+    "url": "https://hub.vroid.com/en/characters/2042997311814320466/models/7960975711904385388",
+    "uploaded": "2026-03-19",
+    "license": {
+      "avatarUse": "Allow",
+      "violentActs": "Allow",
+      "sexualActs": "Allow",
+      "corporateUse": "Allow",
+      "individualCommercialUse": "Allow",
+      "redistribution": "Allow",
+      "alterations": "Allow",
+      "attribution": "Required"
+    }
+  },
+  "konomi.vrm": {
+    "character": "Konomi",
+    "title": "このみ / Konomi",
+    "author": "キャラクター紹介サイト管理人",
+    "url": "https://hub.vroid.com/en/characters/4633719109621809644/models/7532679100113812494",
+    "uploaded": "2026-04-16",
+    "license": {
+      "avatarUse": "Allow",
+      "violentActs": "Allow",
+      "sexualActs": "Allow",
+      "corporateUse": "Allow",
+      "individualCommercialUse": "Allow",
+      "redistribution": "Allow",
+      "alterations": "Allow",
+      "attribution": "Not required"
+    }
+  },
+  "ca06.vrm": {
+    "character": "CA06",
+    "title": "CA06 (from \"SS13\")",
+    "author": "桜田とまこ",
+    "url": "https://hub.vroid.com/en/characters/6149999330314262985/models/5866099083641763739",
+    "uploaded": "2026-04-17",
+    "license": {
+      "avatarUse": "Allow",
+      "violentActs": "Allow",
+      "sexualActs": "Allow",
+      "corporateUse": "Allow",
+      "individualCommercialUse": "Allow",
+      "redistribution": "Allow",
+      "alterations": "Allow",
+      "attribution": "Not required"
+    }
+  },
+  "os01.vrm": {
+    "character": "OS01",
+    "title": "OS01 (from \"LS01\")",
+    "author": "桜田とまこ",
+    "url": "https://hub.vroid.com/en/characters/4155066439525369707/models/7769484947925027526",
+    "uploaded": "2026-03-06",
+    "license": {
+      "avatarUse": "Allow",
+      "violentActs": "Allow",
+      "sexualActs": "Allow",
+      "corporateUse": "Allow",
+      "individualCommercialUse": "Allow",
+      "redistribution": "Allow",
+      "alterations": "Allow",
+      "attribution": "Not required"
+    }
+  }
+}

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "vrm:sync-licenses": "node scripts/sync-vrm-licenses.mjs"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.2",
