@@ -27,6 +27,8 @@ interface Props {
   getMouthAmplitude?: (agent: string) => number;
   onSelectAgent?: (name: string) => void;
   onCookieCollected?: (recipient: string) => void;
+  /** When set, the matching pixel sprite plays the bloom-dissolve animation. */
+  transitioningAgent?: string | null;
 }
 
 const RARITY_TEXT: Record<string, string> = {
@@ -66,6 +68,7 @@ export default function Stage({
   getMouthAmplitude,
   onSelectAgent,
   onCookieCollected,
+  transitioningAgent = null,
 }: Props) {
   const skyMode = resolveSky(sky);
   const map = useMemo(() => buildMap(theme), [theme]);
@@ -125,6 +128,7 @@ export default function Stage({
           const motion = motions[agent.name];
           if (!motion) return null;
           const emote = emotes?.[agent.name] ?? null;
+          const isTransitioning = transitioningAgent === agent.name;
           return (
             <AgentOnMap
               key={agent.name}
@@ -133,6 +137,7 @@ export default function Stage({
               emote={emote}
               getMouthAmplitude={getMouthAmplitude}
               onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
+              blooming={isTransitioning}
             />
           );
         })}
@@ -503,12 +508,14 @@ function AgentOnMap({
   emote,
   getMouthAmplitude,
   onClick,
+  blooming = false,
 }: {
   agent: AgentData;
   motion: MotionState;
   emote: AgentEmote | null;
   getMouthAmplitude?: (agent: string) => number;
   onClick?: () => void;
+  blooming?: boolean;
 }) {
   // Drive a "speaking glow ring" off the live audio amplitude. We mutate
   // boxShadow directly on a ref so React doesn't re-render at 60 fps per
@@ -564,12 +571,12 @@ function AgentOnMap({
 
   return (
     <div
-      className={`absolute ${onClick ? "cursor-pointer" : ""}`}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
+      className={`absolute ${onClick && !blooming ? "cursor-pointer" : ""} ${blooming ? "animate-pixel-bloom" : ""}`}
+      role={onClick && !blooming ? "button" : undefined}
+      tabIndex={onClick && !blooming ? 0 : undefined}
+      onClick={blooming ? undefined : onClick}
       onKeyDown={(e) => {
-        if (!onClick) return;
+        if (!onClick || blooming) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onClick();
@@ -581,7 +588,9 @@ function AgentOnMap({
         width: `${CHAR_W_PCT}%`,
         height: `${CHAR_H_PCT}%`,
         transform: `translate(-50%, -100%) translateY(${-motion.jumpOffset}px)`,
-        transition: "top 120ms linear",
+        transition: blooming ? "none" : "top 120ms linear",
+        transformOrigin: "center bottom",
+        zIndex: blooming ? 20 : undefined,
       }}
     >
       {emote && (
