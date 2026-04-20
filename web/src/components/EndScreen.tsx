@@ -43,6 +43,10 @@ export default function EndScreen({
   );
 
   const activeContent = tabs.find((t) => t.id === tab)?.content || finalAnswer || epilogue;
+  // When sessionId is null (mid-reconnect) the backend would reject downloads
+  // with 400/404 because the session= query param is missing. Render the
+  // links as disabled placeholders in that case.
+  const downloadsDisabled = sessionId === null;
   const sessionQuery = sessionId !== null ? `?session=${sessionId}` : "";
   const zipUrl = `${API_BASE_URL}/api/files/zip${sessionQuery}`;
 
@@ -101,12 +105,22 @@ export default function EndScreen({
             <h2 className="text-sm font-bold text-cyan-300 font-mono">
               ♪ 생성된 결과물 ({files.length})
             </h2>
-            <a
-              href={zipUrl}
-              className="rounded border border-cyan-500/40 bg-cyan-500/15 px-3 py-1 text-xs font-mono text-cyan-200 transition-colors hover:bg-cyan-500/25"
-            >
-              ⬇ 전체 .zip 다운로드
-            </a>
+            {downloadsDisabled ? (
+              <span
+                aria-disabled="true"
+                title="재연결 중…"
+                className="rounded border border-white/15 bg-white/5 px-3 py-1 text-xs font-mono text-white/30 cursor-not-allowed select-none"
+              >
+                ⬇ 전체 .zip 다운로드
+              </span>
+            ) : (
+              <a
+                href={zipUrl}
+                className="rounded border border-cyan-500/40 bg-cyan-500/15 px-3 py-1 text-xs font-mono text-cyan-200 transition-colors hover:bg-cyan-500/25"
+              >
+                ⬇ 전체 .zip 다운로드
+              </a>
+            )}
           </div>
           <div className="flex flex-col gap-1 max-h-64 overflow-y-auto scrollbar-thin">
             {files.map((f) => (
@@ -126,14 +140,24 @@ export default function EndScreen({
                     {f.description}
                   </span>
                 )}
-                <a
-                  href={`${API_BASE_URL}/api/files/download?path=${encodeURIComponent(f.path)}${sessionId !== null ? `&session=${sessionId}` : ""}`}
-                  download
-                  className="text-white/40 hover:text-cyan-300 text-xs"
-                  title={`Download ${f.path}`}
-                >
-                  ⬇
-                </a>
+                {downloadsDisabled ? (
+                  <span
+                    aria-disabled="true"
+                    title="재연결 중…"
+                    className="text-white/20 text-xs cursor-not-allowed select-none"
+                  >
+                    ⬇
+                  </span>
+                ) : (
+                  <a
+                    href={`${API_BASE_URL}/api/files/download?path=${encodeURIComponent(f.path)}&session=${sessionId}`}
+                    download
+                    className="text-white/40 hover:text-cyan-300 text-xs"
+                    title={`Download ${f.path}`}
+                  >
+                    ⬇
+                  </a>
+                )}
               </div>
             ))}
           </div>
