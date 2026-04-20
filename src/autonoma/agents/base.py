@@ -136,6 +136,11 @@ class AutonomousAgent:
         self.mood = Mood.CURIOUS
         self.memory = AgentMemory()
         self.stats = AgentStats()
+        # Populated by AgentSwarm._hydrate_agent when the persistent
+        # character registry is enabled. Empty string means "no DB row";
+        # code that writes to the graveyard / wills tables checks for
+        # truthiness before recording.
+        self.character_uuid: str = ""
 
     @property
     def name(self) -> str:
