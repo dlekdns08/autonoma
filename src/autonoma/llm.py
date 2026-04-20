@@ -115,6 +115,23 @@ class BaseLLMClient(ABC):
 # ── Anthropic implementation ──────────────────────────────────────────────
 
 
+# Per-process memo: models that Anthropic has told us don't accept
+# `temperature`. The set is seeded lazily the first time we hit the
+# "temperature is deprecated for this model" 400 for a given model name.
+_ANTHROPIC_MODELS_NO_TEMPERATURE: set[str] = set()
+
+
+def _is_temperature_deprecation_error(exc: Exception) -> bool:
+    """Heuristic match for Anthropic's `temperature is deprecated` 400.
+
+    We can't rely on a structured error code, so match the human message
+    text. This is narrow on purpose — we only want to retry on THIS failure
+    mode, never on generic 400s.
+    """
+    msg = str(exc).lower()
+    return "temperature" in msg and "deprecated" in msg
+
+
 class AnthropicLLMClient(BaseLLMClient):
     def __init__(self, api_key: str) -> None:
         import anthropic
@@ -129,15 +146,41 @@ class AnthropicLLMClient(BaseLLMClient):
         system: str,
         messages: list[dict[str, Any]],
     ) -> LLMResponse:
+        import anthropic
+
+        # Fast path: if we've previously learned this model rejects
+        # temperature, skip it up front so we don't burn a 400 every call.
+        send_temperature = model not in _ANTHROPIC_MODELS_NO_TEMPERATURE
+
+        async def _call(include_temperature: bool):
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": messages,
+            }
+            if include_temperature:
+                kwargs["temperature"] = temperature
+            return await self._client.messages.create(**kwargs)
+
         try:
-            import anthropic
-            response = await self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system,
-                messages=messages,
-            )
+            try:
+                response = await _call(include_temperature=send_temperature)
+            except anthropic.BadRequestError as exc:
+                # Some Claude models (e.g. opus-4-7) have dropped support for
+                # `temperature`. Detect the specific deprecation error, memo
+                # the model, and retry once without the parameter.
+                if send_temperature and _is_temperature_deprecation_error(exc):
+                    logger.warning(
+                        "Anthropic model %r rejected `temperature` "
+                        "(deprecated). Retrying without it and memoizing.",
+                        model,
+                    )
+                    _ANTHROPIC_MODELS_NO_TEMPERATURE.add(model)
+                    response = await _call(include_temperature=False)
+                else:
+                    raise
+
             return LLMResponse(
                 text=response.content[0].text,
                 input_tokens=response.usage.input_tokens,
@@ -145,7 +188,9 @@ class AnthropicLLMClient(BaseLLMClient):
                 stop_reason=str(response.stop_reason or "end_turn"),
             )
         except Exception as exc:
-            import anthropic
+            logger.error(
+                "Anthropic create() failed: model=%s error=%s", model, exc,
+            )
             if isinstance(exc, anthropic.APIConnectionError):
                 raise LLMConnectionError(str(exc)) from exc
             if isinstance(exc, anthropic.RateLimitError):
