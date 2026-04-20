@@ -113,6 +113,8 @@ export default function Home() {
               sky={state.sky}
               boss={state.boss}
               cookies={state.cookies}
+              emotes={emotes}
+              getMouthAmplitude={getMouthAmplitude}
               onSelectAgent={handleSelectAgent}
               onCookieCollected={collectCookie}
             />
