@@ -55,6 +55,25 @@ logger = logging.getLogger(__name__)
 MAX_INBOX_SIZE = 50
 LLM_TIMEOUT_SECONDS = 60
 
+# Shared async lock protecting the task list of the single running project.
+# Both the Director's assignment code and individual agents' self-assign path
+# must acquire this lock before mutating Task.status / Task.assigned_to to
+# avoid two agents claiming the same OPEN task in the same round.
+#
+# The swarm only runs one project at a time in-process, so a module-level
+# lock is sufficient; if that assumption changes, move this onto ProjectState.
+TASKS_LOCK: asyncio.Lock = asyncio.Lock()
+
+
+def _atomic_claim_task(task: Task, agent_name: str) -> None:
+    """Atomically mark a task as IN_PROGRESS and assigned to ``agent_name``.
+
+    Must be called while holding ``TASKS_LOCK``. Keeps ``status`` and
+    ``assigned_to`` in sync so callers never see a half-updated task.
+    """
+    task.assigned_to = agent_name
+    task.status = TaskStatus.IN_PROGRESS
+
 
 def _extract_json(text: str) -> dict[str, Any]:
     """Robustly extract JSON from LLM response, handling markdown fences."""
@@ -355,22 +374,36 @@ Rules:
     # ── Actions ────────────────────────────────────────────────────────
 
     async def _action_work(self, decision: dict, project: ProjectState) -> dict[str, Any]:
-        """Pick up or continue working on a task."""
+        """Pick up or continue working on a task.
+
+        Uses ``TASKS_LOCK`` so the status/assigned_to double-write is atomic
+        with respect to the Director's assignment loop — prevents two agents
+        claiming the same OPEN task in the same round.
+        """
         await self._set_state(AgentState.WORKING)
 
         task_id = decision.get("target_task_id")
         if task_id:
-            task = next((t for t in project.tasks if t.id == task_id), None)
-            if task:
-                if task.status == TaskStatus.OPEN:
-                    task.assigned_to = self.name
-                    task.status = TaskStatus.IN_PROGRESS
-                    self.current_task = task
-                    await bus.emit("task.assigned", agent=self.name, task_id=task.id, title=task.title)
-                elif task.assigned_to == self.name and task.status == TaskStatus.ASSIGNED:
-                    task.status = TaskStatus.IN_PROGRESS
-                    self.current_task = task
-                    await bus.emit("task.started", agent=self.name, task_id=task.id)
+            async with TASKS_LOCK:
+                task = next((t for t in project.tasks if t.id == task_id), None)
+                claimed = False
+                started = False
+                if task:
+                    if task.status == TaskStatus.OPEN:
+                        _atomic_claim_task(task, self.name)
+                        self.current_task = task
+                        claimed = True
+                    elif task.assigned_to == self.name and task.status == TaskStatus.ASSIGNED:
+                        task.status = TaskStatus.IN_PROGRESS
+                        self.current_task = task
+                        started = True
+            # Emit events outside the lock to avoid holding it across awaits.
+            if task is not None and claimed:
+                await bus.emit(
+                    "task.assigned", agent=self.name, task_id=task.id, title=task.title,
+                )
+            elif task is not None and started:
+                await bus.emit("task.started", agent=self.name, task_id=task.id)
 
         return {"agent": self.name, "action": "work_on_task", "task_id": task_id}
 
