@@ -11,10 +11,10 @@
 import type { PixelPalette } from "./types";
 
 // ── shared tones ──────────────────────────────────────────────────────────
-export const OUTLINE = "#1f1633";
-export const SKIN_LIGHT = "#f8d4a8";
-export const SKIN_SHADE = "#d89868";
-export const EYE_DARK = "#1f1633";
+export const OUTLINE = "#120d24";
+export const SKIN_LIGHT = "#fddcb0";
+export const SKIN_SHADE = "#c98050";
+export const EYE_DARK = "#120d24";
 export const MOUTH = "#8a2b3c";
 export const SHADOW = "#00000044";
 export const EAR_INNER_HIGHLIGHT = "#ffb8cc";
@@ -31,60 +31,60 @@ export interface RoleColors {
 
 export const ROLE_COLORS: Record<string, RoleColors> = {
   director: {
-    outfitDark: "#6b1f4a",
-    outfitLight: "#c23f7a",
-    pantsDark: "#2a1a3a",
-    pantsLight: "#4a2c5a",
-    bootsDark: "#1a0f22",
-    bootsLight: "#3a2244",
+    outfitDark: "#5a1840",
+    outfitLight: "#cc3377",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   coder: {
-    outfitDark: "#1a4b7a",
-    outfitLight: "#3a8bd6",
-    pantsDark: "#1a2230",
-    pantsLight: "#34445a",
-    bootsDark: "#0f1520",
-    bootsLight: "#252c38",
+    outfitDark: "#12387a",
+    outfitLight: "#2266cc",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   reviewer: {
-    outfitDark: "#2d5e3e",
-    outfitLight: "#5ab973",
-    pantsDark: "#26361e",
-    pantsLight: "#4a5d33",
-    bootsDark: "#13200c",
-    bootsLight: "#2a3a1c",
+    outfitDark: "#1a4a2e",
+    outfitLight: "#2d9955",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   tester: {
-    outfitDark: "#7a4a18",
-    outfitLight: "#e8a050",
-    pantsDark: "#3a2510",
-    pantsLight: "#664020",
-    bootsDark: "#1e1208",
-    bootsLight: "#3a2310",
+    outfitDark: "#7a2e10",
+    outfitLight: "#dd6622",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   writer: {
-    outfitDark: "#5c2b7a",
-    outfitLight: "#a55ad9",
-    pantsDark: "#2a1a3a",
-    pantsLight: "#4a2c5a",
-    bootsDark: "#1a0f22",
-    bootsLight: "#3a2244",
+    outfitDark: "#3d1a6e",
+    outfitLight: "#8833cc",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   designer: {
-    outfitDark: "#b8533a",
-    outfitLight: "#f49a6e",
-    pantsDark: "#2f2332",
-    pantsLight: "#52404f",
-    bootsDark: "#1e1420",
-    bootsLight: "#3b2838",
+    outfitDark: "#7a2218",
+    outfitLight: "#ee5533",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
   generic: {
-    outfitDark: "#2a5a80",
-    outfitLight: "#5ea3d0",
-    pantsDark: "#2a2038",
-    pantsLight: "#463854",
-    bootsDark: "#18121e",
-    bootsLight: "#302436",
+    outfitDark: "#1a3d6a",
+    outfitLight: "#3377bb",
+    pantsDark: "#0e0b1e",
+    pantsLight: "#1a1535",
+    bootsDark: "#110d20",
+    bootsLight: "#1e193a",
   },
 };
 
@@ -128,6 +128,8 @@ export const HAIR_SLOTS: HairColors[] = [
   { dark: "#8b5a1f", light: "#e8b447" }, // gold blonde
   { dark: "#0f2a3a", light: "#2c5f7c" }, // teal
   { dark: "#3f0a1a", light: "#8a1f3a" }, // wine
+  { dark: "#3d1a7a", light: "#9944ee" }, // electric violet
+  { dark: "#0d5a48", light: "#20bb88" }, // seafoam
 ];
 
 // ── species skin / animal tint ────────────────────────────────────────────
@@ -139,10 +141,10 @@ export interface SpeciesColors {
 }
 
 export const SPECIES_COLORS: Record<string, SpeciesColors> = {
-  human: { skin: SKIN_LIGHT, skinShade: SKIN_SHADE, accent: "#c23f7a" },
-  cat: { skin: "#f3d2a0", skinShade: "#c48a54", accent: "#6b3a14" },
-  fox: { skin: "#f4c79a", skinShade: "#c56a2a", accent: "#e56824" },
-  rabbit: { skin: "#fbeedc", skinShade: "#d6b38d", accent: "#eaeaea" },
+  human: { skin: "#f0d4aa", skinShade: SKIN_SHADE, accent: "#c23f7a" },
+  cat: { skin: "#ff9944", skinShade: "#c48a54", accent: "#6b3a14" },
+  fox: { skin: "#dd5522", skinShade: "#c56a2a", accent: "#e56824" },
+  rabbit: { skin: "#ffaacc", skinShade: "#d6b38d", accent: "#eaeaea" },
   dog: { skin: "#f0d0a0", skinShade: "#a86a34", accent: "#5a3214" },
   hamster: { skin: "#f7d88a", skinShade: "#c8963a", accent: "#e4b44a" },
   panda: { skin: "#f6eedc", skinShade: "#b8b0a0", accent: "#1a1a22" },
@@ -220,11 +222,13 @@ export function buildCharacterPalette(input: CharacterPaletteInput): PixelPalett
 
   // Mood tweaks eye colour subtly
   const eyeByMood: Record<string, string> = {
-    excited: "#ffdf4a",
-    inspired: "#9adfff",
-    frustrated: "#ff5a4a",
-    tired: "#8a8aa0",
-    proud: "#ffb93a",
+    excited: "#ffe44d",
+    inspired: "#44ddff",
+    frustrated: "#ff3344",
+    tired: "#6e6e94",
+    proud: "#ffaa22",
+    happy: "#66ffaa",
+    focused: "#88aaff",
   };
   const mood = (input.mood ?? "").toLowerCase();
   const eye = eyeByMood[mood] ?? EYE_DARK;
