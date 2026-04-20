@@ -1,31 +1,31 @@
 "use client";
 
 /**
- * Twitch-style VTuber panel.
+ * Full-body VTuber panel — designed to occupy the whole left column.
  *
- *   ┌──────────────── spotlight ─────────────────┐
- *   │                                            │
- *   │          [big face of current speaker]     │
- *   │                                            │
- *   │          "speech bubble text here"         │
- *   └────────────────────────────────────────────┘
- *   ┌──────────────── gallery ────────────────────┐
- *   │  [f1]  [f2]  [f3]  [f4]                     │  ← all agents
- *   └─────────────────────────────────────────────┘
+ *   ┌─────────────────────────────┐
+ *   │                             │
+ *   │      [ full-body VRM ]      │  ← spotlight, ~70% of height
+ *   │                             │
+ *   │                             │
+ *   │  ┌───────────────────────┐  │
+ *   │  │   speech bubble       │  │  ← overlaid near the model's feet
+ *   │  └───────────────────────┘  │
+ *   ├─────────────────────────────┤
+ *   │ [tile][tile][tile][tile]    │  ← gallery, one per agent
+ *   └─────────────────────────────┘
  *
  * The spotlight auto-switches to whoever started speaking most
- * recently. Clicking a gallery tile pins the spotlight to that agent
- * until a new utterance takes over.
- *
- * We intentionally avoid a "most active speaker" heuristic based on
- * amplitude — by the time audio starts decoding on the client, the
- * backend has already told us which agent is speaking via the
- * `agent.speech` event. The hook below listens for that directly.
+ * recently (driven by `useAgentVoice.speakingAgents`). When the set
+ * empties we hold the previous speaker in the spotlight so it doesn't
+ * flicker to an empty frame. Clicking a gallery tile pins the spotlight
+ * until the next utterance from someone else takes over.
  */
 
 import { useEffect, useRef, useState } from "react";
 import type { AgentData } from "@/lib/types";
-import VTuberFace from "./VTuberFace";
+import VRMCharacter from "./VRMCharacter";
+import { creditForAgent } from "./vrmCredits";
 
 interface Props {
   agents: AgentData[];
@@ -37,17 +37,23 @@ interface Props {
   onSelectAgent?: (name: string) => void;
 }
 
+const MOOD_COLORS: Record<string, string> = {
+  happy: "from-emerald-500/20 to-transparent",
+  excited: "from-yellow-500/25 to-transparent",
+  proud: "from-fuchsia-500/25 to-transparent",
+  frustrated: "from-red-500/25 to-transparent",
+  worried: "from-orange-500/20 to-transparent",
+  relaxed: "from-cyan-500/20 to-transparent",
+  determined: "from-amber-500/25 to-transparent",
+  focused: "from-blue-500/20 to-transparent",
+};
+
 export default function VTuberStage({
   agents,
   getMouthAmplitude,
   speakingAgents,
   onSelectAgent,
 }: Props) {
-  // ── Spotlight selection ──────────────────────────────────────────
-  //
-  // We latch onto the first name in `speakingAgents`; when that set
-  // empties we keep the previous spotlight so the panel doesn't flicker
-  // to an empty state between utterances.
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
   const lastSpeakerRef = useRef<string | null>(null);
@@ -61,10 +67,10 @@ export default function VTuberStage({
     }
   }, [speakingAgents]);
 
-  const spotlightName =
-    pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
-  const spotlightAgent =
-    spotlightName ? agents.find((a) => a.name === spotlightName) : null;
+  const spotlightName = pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
+  const spotlightAgent = spotlightName
+    ? agents.find((a) => a.name === spotlightName)
+    : null;
 
   if (agents.length === 0) {
     return (
@@ -74,60 +80,125 @@ export default function VTuberStage({
     );
   }
 
+  const spotlightMood = spotlightAgent
+    ? MOOD_COLORS[spotlightAgent.mood] ?? "from-fuchsia-500/15 to-transparent"
+    : "from-fuchsia-500/10 to-transparent";
+
   return (
     <div className="flex h-full flex-col gap-2 overflow-hidden">
       {/* ── Spotlight ────────────────────────────────────────────── */}
-      <div className="relative flex-1 min-h-0 overflow-hidden rounded-xl border border-fuchsia-500/20 bg-gradient-to-b from-slate-950 to-slate-900">
-        {/* subtle grid backdrop */}
+      <div className="relative flex-1 min-h-0 overflow-hidden rounded-xl border border-fuchsia-500/25 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 shadow-[0_0_30px_rgba(244,114,182,0.08)]">
+        {/* Subtle grid backdrop */}
         <div
-          className="absolute inset-0 opacity-[0.08]"
+          className="absolute inset-0 opacity-[0.06]"
           style={{
             backgroundImage:
               "linear-gradient(rgba(244,114,182,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(244,114,182,0.6) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
+            backgroundSize: "48px 48px",
+          }}
+        />
+
+        {/* Mood-tinted radial backlight — follows the spotlighted agent. */}
+        <div
+          key={`mood-${spotlightAgent?.name}-${spotlightAgent?.mood}`}
+          className={`pointer-events-none absolute inset-0 bg-gradient-radial-[at_center_40%] ${spotlightMood} transition-opacity duration-700`}
+          style={{
+            background: `radial-gradient(ellipse at center 55%, var(--tw-gradient-stops))`,
+          }}
+        />
+
+        {/* Floor glow — gives the character a sense of grounding. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-32"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 100%, rgba(244,114,182,0.18) 0%, transparent 60%)",
           }}
         />
 
         {spotlightAgent && (
           <div
             key={spotlightAgent.name}
-            className="relative flex h-full flex-col items-center justify-center px-4 animate-[spotlight-in_360ms_ease-out]"
+            className="relative flex h-full flex-col items-center justify-center animate-[spotlight-in_420ms_ease-out]"
           >
-            <div className="h-[78%] max-h-[420px] w-auto aspect-[200/260]">
-              <VTuberFace
+            <div className="relative h-full w-full">
+              <VRMCharacter
                 agent={spotlightAgent}
                 getMouthAmplitude={getMouthAmplitude}
                 spotlight
-                onClick={onSelectAgent ? () => onSelectAgent(spotlightAgent.name) : undefined}
+                onClick={
+                  onSelectAgent
+                    ? () => onSelectAgent(spotlightAgent.name)
+                    : undefined
+                }
               />
             </div>
 
-            {/* Speech line — pulled directly from agent.speech so it
-             *  tracks the most recent utterance without needing a
-             *  separate event queue. */}
-            {spotlightAgent.speech && (
-              <div className="mt-2 max-w-[80%] rounded-xl border border-fuchsia-500/30 bg-black/70 px-3 py-1.5 text-center font-mono text-sm text-fuchsia-100 shadow-lg">
-                {spotlightAgent.speech}
+            {/* Name tag — top-left */}
+            <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-2">
+              <div className="rounded-md border border-fuchsia-400/40 bg-black/70 px-2 py-0.5 backdrop-blur-sm">
+                <div className="font-mono text-sm font-bold text-fuchsia-100">
+                  {spotlightAgent.name}
+                </div>
+                <div className="font-mono text-[9px] text-white/50">
+                  Lv{spotlightAgent.level} · {spotlightAgent.role}
+                </div>
               </div>
-            )}
+              {speakingAgents.has(spotlightAgent.name) && (
+                <div className="flex items-center gap-1 rounded-md border border-red-400/50 bg-red-500/20 px-1.5 py-0.5 backdrop-blur-sm">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.9)]" />
+                  <span className="font-mono text-[9px] font-bold text-red-200">
+                    LIVE
+                  </span>
+                </div>
+              )}
+            </div>
 
-            {/* Pinned indicator — tells the host they're overriding
-             *  the auto-follow. */}
+            {/* Pinned indicator — top-right */}
             {pinned && (
               <button
                 type="button"
                 onClick={() => setPinned(null)}
-                className="absolute right-3 top-3 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 hover:bg-amber-500/20"
+                className="absolute right-3 top-3 rounded border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/20"
               >
                 pinned · unpin
               </button>
             )}
+
+            {/* Speech line — bottom overlay near the character's feet. */}
+            {spotlightAgent.speech && (
+              <div className="pointer-events-none absolute inset-x-3 bottom-10 flex justify-center">
+                <div
+                  key={`speech-${spotlightAgent.speech}`}
+                  className="max-w-full rounded-xl border border-fuchsia-500/40 bg-black/80 px-3 py-2 text-center font-mono text-sm text-fuchsia-100 shadow-[0_4px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm animate-[bubble-in_280ms_ease-out]"
+                >
+                  {spotlightAgent.speech}
+                </div>
+              </div>
+            )}
+
+            {/* Attribution — bottom-left, tiny */}
+            {(() => {
+              const credit = creditForAgent(spotlightAgent.name);
+              return (
+                <a
+                  href={credit.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[9px] text-white/40 backdrop-blur-sm hover:text-fuchsia-200"
+                  title={`${credit.character} by ${credit.author} — VRoid Hub`}
+                >
+                  ♥ {credit.character}
+                </a>
+              );
+            })()}
           </div>
         )}
       </div>
 
       {/* ── Gallery strip ─────────────────────────────────────────── */}
-      <div className="flex shrink-0 gap-2 overflow-x-auto rounded-xl border border-cyan-500/15 bg-slate-950/60 px-2 py-2 scrollbar-thin">
+      <div className="flex shrink-0 gap-1.5 overflow-x-auto rounded-xl border border-cyan-500/15 bg-slate-950/70 p-1.5 scrollbar-thin">
         {agents.map((agent) => {
           const isSpeaking = speakingAgents.has(agent.name);
           const isFocus = spotlightName === agent.name;
@@ -136,21 +207,29 @@ export default function VTuberStage({
               key={agent.name}
               type="button"
               onClick={() => setPinned(agent.name)}
-              className={`relative flex shrink-0 flex-col items-center rounded-lg border p-1 transition-all ${
+              className={`group relative flex shrink-0 flex-col items-stretch overflow-hidden rounded-lg border transition-all ${
                 isFocus
-                  ? "border-fuchsia-500/70 bg-fuchsia-500/10"
-                  : "border-white/10 hover:border-white/30"
+                  ? "border-fuchsia-400/70 bg-fuchsia-500/10 shadow-[0_0_12px_rgba(244,114,182,0.35)]"
+                  : isSpeaking
+                    ? "border-red-400/40 bg-red-500/5"
+                    : "border-white/10 bg-white/[0.02] hover:border-white/30"
               }`}
-              style={{ width: 72 }}
+              style={{ width: 78, height: 108 }}
+              title={`${agent.name} · Lv${agent.level} · ${agent.role}`}
             >
-              <div className="w-full aspect-[200/260]">
-                <VTuberFace
-                  agent={agent}
-                  getMouthAmplitude={getMouthAmplitude}
-                />
+              <div className="flex-1 min-h-0">
+                <VRMCharacter agent={agent} getMouthAmplitude={getMouthAmplitude} />
+              </div>
+              <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-1 py-0.5">
+                <span className="truncate font-mono text-[8px] font-bold text-white/80">
+                  {agent.name.slice(0, 7)}
+                </span>
+                <span className="font-mono text-[7px] text-yellow-400/90">
+                  L{agent.level}
+                </span>
               </div>
               {isSpeaking && (
-                <span className="absolute right-1 top-1 h-2 w-2 animate-pulse rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(244,114,182,0.9)]" />
+                <span className="absolute right-1 top-1 h-2 w-2 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.9)]" />
               )}
             </button>
           );
@@ -161,11 +240,21 @@ export default function VTuberStage({
         @keyframes spotlight-in {
           0% {
             opacity: 0;
-            transform: scale(0.96);
+            transform: scale(0.97);
           }
           100% {
             opacity: 1;
             transform: scale(1);
+          }
+        }
+        @keyframes bubble-in {
+          0% {
+            opacity: 0;
+            transform: translateY(8px) scale(0.96);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
           }
         }
       `}</style>
