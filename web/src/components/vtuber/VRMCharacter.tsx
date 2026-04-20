@@ -337,14 +337,15 @@ function VRMModel({
     blinkT: 0,
     smoothMood: { happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0 },
     lookBias: Math.random() * Math.PI * 2,
-    // Rising-edge detector on the mouth amplitude feeds the speech nod —
-    // nodStart < 0 means inactive, otherwise it's the seconds-timestamp
-    // the nod began at so the render loop can compute a decay curve.
+    // Rising-edge detector on the mouth amplitude feeds the speech nod.
     prevAmp: 0,
     nodStart: -1,
-    // Currently-playing gesture. `null` when idle; otherwise the render
-    // loop applies the gesture's additive transform until its duration
-    // elapses.
+    // Prevents nods from firing too rapidly (1 s cooldown after each nod).
+    nodCooldownUntil: 0,
+    // Smoothed arm velocity for pendulum-feel secondary motion.
+    leftArmVel: 0,
+    rightArmVel: 0,
+    // Currently-playing gesture.
     gesture: null as GestureName | null,
     gestureStart: 0,
   });
@@ -419,70 +420,99 @@ function VRMModel({
     }
 
     // ── Procedural idle — breathing, weight shift, arm sway ──────────
-    // Driven by sin waves keyed on `phase` (per-agent) so the whole
-    // cast doesn't inhale in unison. No external clip assets required
-    // — keeps bundle size flat and avoids Mixamo/VRMA retarget edge
-    // cases across rigs.
+    // Multiple overlapping sine waves per bone (Perlin-like layering)
+    // give the "alive but not robotic" quality. Each agent gets a unique
+    // phase offset so no two characters move in lockstep.
+    const breathe = Math.sin(now * 1.4 + phase);          // ~13 BPM
+    const breatheSlow = Math.sin(now * 0.7 + phase * 0.6); // half speed breath
+
     if (bones.chest) {
-      // ~14 BPM breathing as a gentle forward-back chest tilt.
-      bones.chest.rotation.x = Math.sin(now * 1.5 + phase) * 0.015;
+      // Chest breathes forward-back; tiny side sway adds life.
+      bones.chest.rotation.x = breathe * 0.012 + breatheSlow * 0.004;
+      bones.chest.rotation.z = Math.sin(now * 0.28 + phase) * 0.006;
     }
     if (bones.hips) {
-      // Slow lateral weight shift — reads like a standing idle.
-      bones.hips.rotation.z = Math.sin(now * 0.3 + phase) * 0.022;
-      bones.hips.rotation.y = Math.sin(now * 0.23 + phase * 1.3) * 0.015;
+      // Counter-balance to chest — hips shift opposite to weight foot.
+      bones.hips.rotation.z = Math.sin(now * 0.28 + phase + Math.PI * 0.4) * 0.014;
+      bones.hips.rotation.y = Math.sin(now * 0.19 + phase * 1.1) * 0.009;
     }
+
+    // ── Natural arm movement — pendulum + breathing coupling ──────────
+    // Arm hangs from shoulder; gravity pulls it down. The "elbow" (lower
+    // arm) lags behind the upper arm with its own slower oscillation,
+    // simulating the weight-and-drag of a real forearm.
+    //
+    // Two additive waves per arm:
+    //   primary   — slow, large  (shoulder rock from breathing/weight shift)
+    //   secondary — faster, tiny (residual micro-tremor from muscle tension)
+    // Left and right use deliberately different frequencies so they never
+    // sync up — that's what makes idle hands look robotic when they do.
+
+    const lPrimary   = Math.sin(now * 0.52 + phase) * 0.045
+                     + Math.sin(now * 0.19 + phase * 1.3) * 0.018;
+    const lSecondary = Math.sin(now * 1.3  + phase * 0.8) * 0.008;
+    const rPrimary   = Math.sin(now * 0.67 + phase + 2.1) * 0.040
+                     + Math.sin(now * 0.24 + phase * 0.7) * 0.015;
+    const rSecondary = Math.sin(now * 1.1  + phase * 1.2) * 0.007;
+
+    // Upper arms breathe with the chest — they hang from it.
+    const chestCoupling = breathe * 0.008;
+
     if (bones.leftUpperArm) {
-      // Left arm: slower frequency, bigger amplitude — natural asymmetry
-      bones.leftUpperArm.rotation.z =
-        1.15 + Math.sin(now * 0.65 + phase) * 0.055 +
-        Math.sin(now * 0.23 + phase * 0.7) * 0.02;
-      bones.leftUpperArm.rotation.x =
-        Math.sin(now * 0.4 + phase + 1.1) * 0.018;
+      bones.leftUpperArm.rotation.z = 1.15 + lPrimary + lSecondary + chestCoupling;
+      // Forward/back swing — small but makes the arm look less pinned.
+      bones.leftUpperArm.rotation.x = Math.sin(now * 0.43 + phase + 0.9) * 0.012;
     }
     if (bones.rightUpperArm) {
-      // Right arm: faster oscillation, independent phase
-      bones.rightUpperArm.rotation.z =
-        -1.15 + Math.sin(now * 0.9 + phase + Math.PI * 0.85) * 0.05 +
-        Math.sin(now * 0.31 + phase * 1.4) * 0.018;
-      bones.rightUpperArm.rotation.x =
-        Math.sin(now * 0.37 + phase + 2.3) * 0.015;
+      bones.rightUpperArm.rotation.z = -1.15 + rPrimary + rSecondary - chestCoupling;
+      bones.rightUpperArm.rotation.x = Math.sin(now * 0.38 + phase + 2.5) * 0.011;
     }
-    // Forearm subtle flex — makes arms feel alive even in idle
+
+    // Forearms lag ~120ms behind the upper arm (physics approximation).
+    // The lag is modelled as a phase-shifted and attenuated copy of the
+    // primary wave, plus their own micro-tremor. Elbow bend (rotation.z
+    // for forearms in VRM space) should ALWAYS be ≥ 0 (extended = 0).
     if (bones.leftLowerArm) {
-      bones.leftLowerArm.rotation.z = Math.sin(now * 0.5 + phase + 0.8) * 0.04;
-      bones.leftLowerArm.rotation.y = Math.sin(now * 0.28 + phase) * 0.025;
+      const lLag = Math.sin(now * 0.52 + phase - 0.6) * 0.025; // lagged primary
+      bones.leftLowerArm.rotation.z = Math.max(0, lLag + lSecondary * 0.6);
+      bones.leftLowerArm.rotation.y = Math.sin(now * 0.31 + phase + 1.0) * 0.018;
     }
     if (bones.rightLowerArm) {
-      bones.rightLowerArm.rotation.z = -Math.sin(now * 0.6 + phase + 1.2) * 0.035;
-      bones.rightLowerArm.rotation.y = -Math.sin(now * 0.35 + phase + 0.5) * 0.02;
+      const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.022;
+      bones.rightLowerArm.rotation.z = -Math.max(0, rLag + rSecondary * 0.6);
+      bones.rightLowerArm.rotation.y = -Math.sin(now * 0.36 + phase + 3.2) * 0.016;
     }
 
     // ── Speech-triggered head nod ────────────────────────────────────
-    // When the mouth opens sharply, fire a small damped bow so the
-    // character "punctuates" its sentence. Rising-edge detect keeps us
-    // from retriggering every frame of a sustained loud phrase.
-    if (amp > 0.18 && st.prevAmp <= 0.18 && st.nodStart < 0) {
+    // Rising-edge on amplitude fires a single small bow. The cooldown
+    // (1 s after nod finishes) prevents rapid chained nods that look
+    // like the character is headbanging.
+    if (amp > 0.22 && st.prevAmp <= 0.22 && st.nodStart < 0 && now > st.nodCooldownUntil) {
       st.nodStart = now;
     }
     st.prevAmp = amp;
     let nodX = 0;
     if (st.nodStart >= 0) {
       const nt = now - st.nodStart;
-      if (nt > 0.6) {
+      if (nt > 0.55) {
         st.nodStart = -1;
+        st.nodCooldownUntil = now + 1.2; // 1.2 s before next nod can fire
       } else {
-        // Damped sine: peaks ~0.17s in, settles by ~0.6s. Negative
-        // because forward-chin (downward) is the natural bow axis.
-        nodX = -Math.sin(nt * Math.PI * 2) * Math.exp(-nt * 3.5) * 0.12;
+        // Damped sine — gentle forward dip, 5° max.
+        nodX = -Math.sin(nt * Math.PI * 2) * Math.exp(-nt * 4.0) * 0.055;
       }
     }
 
     // ── Head sway + nod (combined) ───────────────────────────────────
+    // IMPORTANT: ALL three axes must be SET (=) here so that gesture and
+    // state overlay additions later in the frame are pure deltas and do
+    // NOT accumulate across frames. Any axis left un-set drifts without
+    // bound whenever something does "+= value" to it each frame.
     if (bones.head) {
-      bones.head.rotation.y = Math.sin(now * 0.6 + phase) * 0.06;
-      bones.head.rotation.x =
-        Math.sin(now * 0.4 + phase) * 0.03 + nodX;
+      bones.head.rotation.y = Math.sin(now * 0.45 + phase) * 0.028        // gentle look-left/right
+                             + Math.sin(now * 0.17 + phase * 0.6) * 0.008; // slow drift
+      bones.head.rotation.x = Math.sin(now * 0.32 + phase + 0.5) * 0.012 + nodX; // subtle nod + speech
+      bones.head.rotation.z = 0; // reset every frame — gestures/state add on top safely
     }
 
     // ── Gesture playback ─────────────────────────────────────────────
@@ -504,40 +534,41 @@ function VRMModel({
     }
 
     // ── State-driven pose overlays ────────────────────────────────────
-    // Applied after gestures so state never fights an active gesture.
+    // These add DELTAS on top of bones already SET in the idle section.
+    // head.rotation.z is safe to use here because idle now resets it to 0.
+    // Applied after gestures so state never fights an active gesture clip.
     if (!st.gesture) {
       switch (state) {
         case "working":
-          // Lean slightly forward, arms closer in — like typing
-          if (bones.chest) bones.chest.rotation.x += 0.04;
-          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 0.08;
-          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 0.08;
+          // Slight forward lean; arms pulled in — like focusing on a task.
+          if (bones.chest) bones.chest.rotation.x += 0.03;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 0.06;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 0.06;
           break;
         case "talking": {
-          // Arms drift slightly outward — open posture for dialogue
-          const talkSway = Math.sin(now * 1.1 + phase) * 0.04;
-          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z += 0.06 + talkSway;
-          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z -= 0.06 - talkSway;
-          if (bones.leftLowerArm) bones.leftLowerArm.rotation.z += 0.05;
-          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z -= 0.05;
+          // Arms open slightly — welcoming, expressive posture.
+          const talkSway = Math.sin(now * 0.9 + phase) * 0.02;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z += 0.04 + talkSway;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z -= 0.04 - talkSway;
           break;
         }
         case "thinking":
-          // Right hand slightly raised toward chin — contemplative
+          // Right forearm drifts upward toward chin — classic "hmm" pose.
           if (bones.rightUpperArm) {
-            bones.rightUpperArm.rotation.z += 0.22;
-            bones.rightUpperArm.rotation.x -= 0.15;
+            bones.rightUpperArm.rotation.z += 0.18;
+            bones.rightUpperArm.rotation.x -= 0.12;
           }
-          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.3;
-          if (bones.head) bones.head.rotation.z -= 0.04;
+          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.25;
+          // Slight head tilt — safe because idle set rotation.z = 0 above.
+          if (bones.head) bones.head.rotation.z = -0.04;
           break;
         case "celebrating": {
-          // Both arms up — victory pose with oscillation
-          const celebAmp = Math.sin(now * 2.5 + phase) * 0.12;
-          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 1.0 + celebAmp;
-          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 1.0 - celebAmp;
-          if (bones.leftLowerArm) bones.leftLowerArm.rotation.z -= 0.3;
-          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.3;
+          // Victory arms with subtle bounce oscillation.
+          const celebOsc = Math.sin(now * 2.2 + phase) * 0.08;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 0.85 + celebOsc;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 0.85 - celebOsc;
+          if (bones.leftLowerArm) bones.leftLowerArm.rotation.z = Math.max(0, -0.25);
+          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z = Math.min(0, 0.25);
           break;
         }
       }

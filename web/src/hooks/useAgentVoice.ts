@@ -322,13 +322,18 @@ export function useAgentVoice(): UseAgentVoiceResult {
       slot.amp = 0;
       setSpeaking(agentName, true);
       // Oscillate amp to drive mouth animation
-      fakeAmpTimer = setInterval(() => {
+      // Smoothly interpolate toward a random target amplitude so the
+    // lip-sync envelope eases in and out rather than jumping. This
+    // prevents the sharp amplitude spikes that triggered rapid head-nods.
+    let fakeTarget = 0.3;
+    fakeAmpTimer = setInterval(() => {
         if (!slot.speaking) {
           if (fakeAmpTimer) clearInterval(fakeAmpTimer);
           return;
         }
-        slot.amp = 0.15 + Math.random() * 0.55;
-      }, 80);
+        fakeTarget = 0.1 + Math.random() * 0.45;
+        slot.amp = slot.amp * 0.55 + fakeTarget * 0.45; // smooth blend
+      }, 120);
     };
 
     utterance.onend = () => {
