@@ -5,6 +5,7 @@ Uses the DIRECTOR_HARNESS for constraint enforcement and failure mode inoculatio
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -196,35 +197,37 @@ Rules:
 
         project.tasks = tasks
 
-        # Emit spawn requests for needed agents (with harness-aware role matching)
-        agents_spawned = 0
+        # Build spawn payloads first (pure data, no I/O), then fire all
+        # agent.spawn_requested events concurrently so the DB hydration
+        # calls in _on_spawn_request overlap rather than serializing.
+        spawn_payloads: list[dict] = []
         for agent_data in data.get("agents_needed", []):
             role = agent_data.get("role", "coder")
-            # Match to harness to get proper capabilities
             harness = get_harness(role)
-
-            await bus.emit(
-                "agent.spawn_requested",
+            spawn_payloads.append(dict(
                 requester="Director",
                 name=agent_data.get("name", "Worker"),
                 role=role,
                 skills=agent_data.get("skills", harness.default_skills),
                 emoji=agent_data.get("emoji", harness.emoji),
                 color=agent_data.get("color", harness.color),
-            )
-            agents_spawned += 1
+            ))
 
         # Ensure at least one worker agent exists
-        if agents_spawned == 0:
-            await bus.emit(
-                "agent.spawn_requested",
+        if not spawn_payloads:
+            spawn_payloads.append(dict(
                 requester="Director",
                 name="Builder",
                 role="coder",
                 skills=["coding", "testing", "documentation"],
                 emoji="🔨",
                 color="cyan",
-            )
+            ))
+
+        agents_spawned = len(spawn_payloads)
+        await asyncio.gather(
+            *(bus.emit("agent.spawn_requested", **p) for p in spawn_payloads)
+        )
 
         await self._say(
             f"Plan ready! {len(tasks)} tasks, {agents_spawned} agents",
