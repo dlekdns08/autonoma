@@ -70,6 +70,8 @@ interface Props {
   /** External pinning — when set, overrides the internal pinned state
    *  and triggers the reveal flash overlay (pixel → VTuber transition). */
   forcePinnedAgent?: string | null;
+  /** Live emote map from the pixel stage — VRMCharacter reacts with a gesture. */
+  emotes?: Record<string, AgentEmote>;
 }
 
 const MOOD_COLORS: Record<string, string> = {
@@ -92,6 +94,7 @@ export default function VTuberStage({
   backdrop = "default",
   subtitles,
   forcePinnedAgent,
+  emotes,
 }: Props) {
   // Subtitles default: on in OBS (clip-friendly), off on the main
   // dashboard (the in-scene speech bubble is part of the aesthetic
@@ -201,6 +204,7 @@ export default function VTuberStage({
                 spotlight
                 state={spotlightAgent.state ?? "idle"}
                 cameraResetNonce={resetNonce}
+                emote={emotes?.[spotlightAgent.name] ?? null}
                 onClick={
                   onSelectAgent
                     ? () => onSelectAgent(spotlightAgent.name)
