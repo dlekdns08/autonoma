@@ -22,7 +22,7 @@
  * we can layer MSE in for Chrome/Firefox without changing the contract.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type AudioEventName =
   | "agent.speech_audio_start"
@@ -305,5 +305,12 @@ export function useAgentVoice(): UseAgentVoiceResult {
     };
   }, [reset]);
 
-  return { pushAudioEvent, getMouthAmplitude, speakingAgents, reset };
+  // Memoize the returned object so consumers that include this value in
+  // effect/callback deps (e.g. useSwarm's handleMessage → connect) don't
+  // see a fresh reference on every render — which previously caused the
+  // WebSocket to be torn down and re-created in a tight loop.
+  return useMemo(
+    () => ({ pushAudioEvent, getMouthAmplitude, speakingAgents, reset }),
+    [pushAudioEvent, getMouthAmplitude, speakingAgents, reset],
+  );
 }
