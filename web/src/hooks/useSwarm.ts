@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
+import { useAgentVoice } from "@/hooks/useAgentVoice";
 
 const SESSION_KEY = "autonoma_auth";
 
@@ -95,6 +96,7 @@ export function useSwarm() {
   // Per-connection session id issued by the backend on auth.status. Every
   // HTTP download route requires it so concurrent users stay isolated.
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const voice = useAgentVoice();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -124,6 +126,19 @@ export function useSwarm() {
       try {
         const msg = JSON.parse(raw) as { event: string; data: Record<string, unknown> };
         const { event, data } = msg;
+
+        // Audio events drive lip-sync only — they're hot-path and would
+        // flood the events panel if logged. Pipe them straight to the voice
+        // hook and bail before the addEvent / setState reducer below.
+        if (
+          event === "agent.speech_audio_start" ||
+          event === "agent.speech_audio_chunk" ||
+          event === "agent.speech_audio_end" ||
+          event === "agent.speech_audio_dropped"
+        ) {
+          voice.pushAudioEvent(event, data);
+          return;
+        }
 
         // Always log the event
         if (event !== "snapshot") {
@@ -497,7 +512,7 @@ export function useSwarm() {
         // ignore parse errors
       }
     },
-    [addEvent, addToast],
+    [addEvent, addToast, voice],
   );
 
   const connect = useCallback(() => {
@@ -593,7 +608,8 @@ export function useSwarm() {
     // sessionId here would leave download URLs unable to point at the
     // backend until the next auth.status round-trip.
     setState(INITIAL_STATE);
-  }, []);
+    voice.reset();
+  }, [voice]);
 
   useEffect(() => {
     connect();
@@ -633,5 +649,7 @@ export function useSwarm() {
     authenticate,
     logout,
     sessionId,
+    getMouthAmplitude: voice.getMouthAmplitude,
+    speakingAgents: voice.speakingAgents,
   };
 }
