@@ -46,9 +46,11 @@ class AutonomaEngine:
         """Run the full autonomous pipeline with animation."""
         project = ProjectState(name=name, description=description)
 
-        self.renderer.attach(self.swarm, project)
-
         try:
+            # Attach renderer inside the try so the outer `finally` always
+            # runs `detach()` even if attach itself partially registers
+            # handlers before raising.
+            self.renderer.attach(self.swarm, project)
             # Phase 1: Director plans
             self.console.print(Panel(
                 f"[bold]{name}[/]: {description}",
