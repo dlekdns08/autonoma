@@ -167,3 +167,110 @@ def test_funeral_lines_assigns_distinct_templates_when_possible() -> None:
     lines = funeral_lines(deceased_name="Mira", survivors=survivors)
     texts = [text for _, text in lines]
     assert len(set(texts)) == 3
+
+
+# ── _hold_funeral (swarm-side) ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_hold_funeral_emits_world_event_and_survivor_speech() -> None:
+    """End-to-end: seed a swarm with three survivors with positive trust
+    toward a deceased name, then call ``_hold_funeral`` and check that
+    the world event fires first, followed by survivor speech events in
+    trust-desc order.
+    """
+    from autonoma.agents.swarm import AgentSwarm
+    from autonoma.event_bus import bus
+
+    swarm = AgentSwarm()
+    swarm.spawn_agent("Alpha", "coder", ["python"])
+    swarm.spawn_agent("Bravo", "coder", ["python"])
+    swarm.spawn_agent("Charlie", "coder", ["python"])
+
+    # Build positive bonds toward the deceased. We use record_interaction
+    # directly so the relationship shows as familiar (get_all_pairs skips
+    # pairs with zero familiarity).
+    for i in range(3):
+        swarm.relationships.record("Alpha", "Kit", "worked together", positive=True)
+    for i in range(1):
+        swarm.relationships.record("Bravo", "Kit", "worked together", positive=True)
+    for i in range(2):
+        swarm.relationships.record("Charlie", "Kit", "worked together", positive=True)
+
+    events: list[tuple[str, dict]] = []
+
+    async def _capture_world(**kw):
+        events.append(("world.event", kw))
+
+    async def _capture_speech(**kw):
+        events.append(("agent.speech", kw))
+
+    bus.on("world.event", _capture_world)
+    bus.on("agent.speech", _capture_speech)
+
+    await swarm._hold_funeral("Kit")
+
+    world_events = [e for e in events if e[0] == "world.event"]
+    speech_events = [e for e in events if e[0] == "agent.speech"]
+
+    assert len(world_events) == 1
+    assert "Kit" in world_events[0][1]["title"]
+    # All three survivors with positive trust should have spoken.
+    speakers = [e[1]["agent"] for e in speech_events]
+    assert set(speakers) == {"Alpha", "Bravo", "Charlie"}
+    # The world event must precede the first eulogy so the UI has time
+    # to dim before anyone speaks.
+    assert events[0][0] == "world.event"
+
+
+@pytest.mark.asyncio
+async def test_hold_funeral_silent_when_no_positive_bonds() -> None:
+    """A stranger's death should fire nothing — we don't want the UI
+    lighting up with an empty memorial for NPCs no one knew."""
+    from autonoma.agents.swarm import AgentSwarm
+    from autonoma.event_bus import bus
+
+    swarm = AgentSwarm()
+    swarm.spawn_agent("Loner", "coder", ["python"])
+
+    world_events: list[dict] = []
+
+    async def _capture(**kw):
+        world_events.append(kw)
+
+    bus.on("world.event", _capture)
+
+    await swarm._hold_funeral("Nobody")
+
+    assert world_events == []
+
+
+@pytest.mark.asyncio
+async def test_hold_funeral_skips_survivors_not_in_swarm() -> None:
+    """If the relationship graph still references a name that's no
+    longer an agent (e.g. the survivor already died too), we skip them
+    quietly rather than crashing on ``agents.get(...)``."""
+    from autonoma.agents.swarm import AgentSwarm
+    from autonoma.event_bus import bus
+
+    swarm = AgentSwarm()
+    swarm.spawn_agent("Alpha", "coder", ["python"])
+
+    # Alpha is in the swarm; Ghost isn't (never spawned).
+    swarm.relationships.record("Alpha", "Kit", "collab", positive=True)
+    swarm.relationships.record("Ghost", "Kit", "collab", positive=True)
+    swarm.relationships.record("Ghost", "Kit", "collab", positive=True)  # higher trust
+
+    speech_events: list[dict] = []
+
+    async def _capture(**kw):
+        speech_events.append(kw)
+
+    bus.on("agent.speech", _capture)
+
+    await swarm._hold_funeral("Kit")
+
+    # Only the surviving Alpha should speak — the Ghost candidate is
+    # dropped by _hold_funeral's membership check.
+    speakers = [e["agent"] for e in speech_events]
+    assert speakers == ["Alpha"]
