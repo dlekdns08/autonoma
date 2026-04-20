@@ -189,15 +189,16 @@ const GESTURES: Record<
   },
 };
 
-// Mood → gesture mapping. Moods with no entry simply don't trigger a
-// gesture; the mood blendshape alone carries the emotion in that case.
-const MOOD_GESTURES: Partial<Record<string, GestureName>> = {
-  excited: "hype",
-  proud: "wave",
-  worried: "think",
-  happy: "wave",
-  determined: "hype",
-  focused: "think",
+// Mood → gesture options. Multiple options = random pick so the same
+// mood doesn't always play the exact same clip.
+const MOOD_GESTURE_OPTIONS: Partial<Record<string, GestureName[]>> = {
+  excited:     ["hype", "wave"],
+  proud:       ["wave", "bow"],
+  worried:     ["think"],
+  happy:       ["wave", "bow"],
+  determined:  ["hype"],
+  focused:     ["think"],
+  celebrating: ["hype", "wave"],
 };
 
 // Deterministic blink phase from agent name — keeps the whole cast from

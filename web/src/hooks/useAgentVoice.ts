@@ -75,6 +75,8 @@ export interface UseAgentVoiceResult {
   speakingAgents: Set<string>;
   /** Tear down everything (call on unmount or hard reset). */
   reset: () => void;
+  /** Speak text directly via Web Speech API (browser built-in). Used when server TTS is not configured. */
+  speakText: (agentName: string, text: string) => void;
 }
 
 export function useAgentVoice(): UseAgentVoiceResult {
@@ -115,6 +117,18 @@ export function useAgentVoice(): UseAgentVoiceResult {
     };
     slotsRef.current.set(agent, slot);
     return slot;
+  }, []);
+
+  const pickWebSpeechVoice = useCallback((agentName: string): SpeechSynthesisVoice | null => {
+    if (typeof window === "undefined") return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) return null;
+    // Hash agent name to pick a consistent voice
+    let h = 5381;
+    for (let i = 0; i < agentName.length; i++) {
+      h = ((h << 5) + h + agentName.charCodeAt(i)) >>> 0;
+    }
+    return voices[h % voices.length];
   }, []);
 
   const connectAnalyser = useCallback(
@@ -280,6 +294,60 @@ export function useAgentVoice(): UseAgentVoiceResult {
     return slot.amp;
   }, []);
 
+  const speakText = useCallback((agentName: string, text: string) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    // Cancel any currently playing utterance for this agent (can't target per-agent in SpeechSynthesis, so cancel all)
+    window.speechSynthesis.cancel();
+
+    const slot = ensureSlot(agentName);
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    // Deterministic pitch/rate so each agent sounds slightly different
+    let h = 5381;
+    for (let i = 0; i < agentName.length; i++) {
+      h = ((h << 5) + h + agentName.charCodeAt(i)) >>> 0;
+    }
+    utterance.pitch = 0.85 + ((h % 30) / 100);  // 0.85 – 1.14
+    utterance.rate  = 0.95 + ((h % 15) / 100);  // 0.95 – 1.09
+    utterance.volume = 0.9;
+
+    const voice = pickWebSpeechVoice(agentName);
+    if (voice) utterance.voice = voice;
+
+    // Fake amplitude oscillation for lip-sync while speaking
+    let fakeAmpTimer: ReturnType<typeof setInterval> | null = null;
+
+    utterance.onstart = () => {
+      slot.speaking = true;
+      slot.amp = 0;
+      setSpeaking(agentName, true);
+      // Oscillate amp to drive mouth animation
+      fakeAmpTimer = setInterval(() => {
+        if (!slot.speaking) {
+          if (fakeAmpTimer) clearInterval(fakeAmpTimer);
+          return;
+        }
+        slot.amp = 0.15 + Math.random() * 0.55;
+      }, 80);
+    };
+
+    utterance.onend = () => {
+      if (fakeAmpTimer) clearInterval(fakeAmpTimer);
+      slot.speaking = false;
+      slot.amp = 0;
+      setSpeaking(agentName, false);
+    };
+
+    utterance.onerror = () => {
+      if (fakeAmpTimer) clearInterval(fakeAmpTimer);
+      slot.speaking = false;
+      slot.amp = 0;
+      setSpeaking(agentName, false);
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }, [ensureSlot, setSpeaking, pickWebSpeechVoice]);
+
   const reset = useCallback(() => {
     for (const slot of slotsRef.current.values()) {
       try {
@@ -310,7 +378,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
   // see a fresh reference on every render — which previously caused the
   // WebSocket to be torn down and re-created in a tight loop.
   return useMemo(
-    () => ({ pushAudioEvent, getMouthAmplitude, speakingAgents, reset }),
-    [pushAudioEvent, getMouthAmplitude, speakingAgents, reset],
+    () => ({ pushAudioEvent, getMouthAmplitude, speakingAgents, reset, speakText }),
+    [pushAudioEvent, getMouthAmplitude, speakingAgents, reset, speakText],
   );
 }
