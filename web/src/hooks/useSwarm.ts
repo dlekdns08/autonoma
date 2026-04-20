@@ -480,6 +480,9 @@ export function useSwarm() {
     ws.onopen = () => setConnected(true);
     ws.onclose = () => {
       setConnected(false);
+      // The old session id is dead on the backend the moment the socket
+      // drops — clear it so stale downloads can't hit the wrong session.
+      setSessionId(null);
       reconnectRef.current = setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();
