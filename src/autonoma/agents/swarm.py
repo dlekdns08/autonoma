@@ -1240,6 +1240,16 @@ class AgentSwarm:
             agent.name, species, emoji, cause, self._round, memories,
         )
         logger.info(f"[Ghost] {agent.name} became a ghost ({cause})")
+        # Schedule a small funeral so survivors who knew the deceased
+        # speak a brief eulogy. Fire-and-forget — we never want a death
+        # bookkeeping path to block on the bus.
+        try:
+            asyncio.create_task(self._hold_funeral(agent.name))
+        except RuntimeError:
+            # No running loop (e.g. unit-test path that calls
+            # _create_ghost outside an event loop). The caller can
+            # still test the eulogy logic via _hold_funeral directly.
+            pass
 
         # Record the death for the persistent graveyard. We capture the
         # agent's last-known private memory as their will so the character's
