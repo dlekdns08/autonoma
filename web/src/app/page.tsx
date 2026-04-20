@@ -76,6 +76,8 @@ export default function Home() {
             files={state.files}
             projectName={state.project_name}
             sessionId={sessionId}
+            completed={state.completed}
+            incompleteReason={state.incompleteReason}
             onReset={resetSwarm}
           />
         </main>
