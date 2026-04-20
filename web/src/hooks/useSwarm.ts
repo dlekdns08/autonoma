@@ -538,6 +538,15 @@ export function useSwarm() {
     }
   }, []);
 
+  const resetSwarm = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: "reset" }));
+    }
+    // Optimistically return the UI to idle; the server also broadcasts
+    // a fresh snapshot that will arrive shortly and confirm the state.
+    setState(INITIAL_STATE);
+  }, []);
+
   useEffect(() => {
     connect();
     return () => {
