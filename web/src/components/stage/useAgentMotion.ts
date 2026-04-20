@@ -348,6 +348,10 @@ export function useAgentMotion({
   // Animation loop.
   useEffect(() => {
     let raf = 0;
+    // Track every deferred cleanup timer so we can cancel them if the
+    // effect tears down (agent list changed, component unmounted, etc.)
+    // before the timer fires.
+    const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
     const tryStartDialogue = (
       m: MotionInternal,
@@ -424,10 +428,12 @@ export function useAgentMotion({
           });
         } else {
           // last line just played; schedule cleanup after it fades
-          setTimeout(() => {
+          const timerId = setTimeout(() => {
+            pendingTimers.delete(timerId);
             const s = internalRef.current.get(speakerName);
             if (s) endDialogue(s, performance.now());
           }, DIALOGUE_LINE_MS + 50);
+          pendingTimers.add(timerId);
         }
       });
 
@@ -656,7 +662,11 @@ export function useAgentMotion({
     };
 
     raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      pendingTimers.forEach(clearTimeout);
+      pendingTimers.clear();
+    };
   }, [agents, map]);
 
   const snapshot: Record<string, MotionState> = {};
