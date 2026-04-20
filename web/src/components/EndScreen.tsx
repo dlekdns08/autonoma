@@ -12,6 +12,7 @@ interface Props {
   graveyard: string;
   files: FileEntry[];
   projectName: string;
+  onReset: () => void;
 }
 
 type Tab = "final" | "epilogue" | "leaderboard" | "multiverse" | "graveyard";
@@ -24,6 +25,7 @@ export default function EndScreen({
   graveyard,
   files,
   projectName,
+  onReset,
 }: Props) {
   const [tab, setTab] = useState<Tab>("final");
 
@@ -51,6 +53,12 @@ export default function EndScreen({
         <p className="mt-2 text-white/50 text-sm">
           {projectName ? `'${projectName}' — ` : ""}모험이 막을 내렸습니다.
         </p>
+        <button
+          onClick={onReset}
+          className="mt-4 rounded-xl border border-fuchsia-500/40 bg-gradient-to-r from-fuchsia-600/30 to-cyan-600/30 px-6 py-2 text-xs font-bold font-mono text-fuchsia-100 hover:from-fuchsia-500/40 hover:to-cyan-500/40 hover:border-fuchsia-400/60 transition-all"
+        >
+          ♥ 처음으로 돌아가기
+        </button>
       </div>
 
       {/* Tab Selector */}
