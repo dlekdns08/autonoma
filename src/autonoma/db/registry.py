@@ -40,7 +40,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, desc, insert, select, update
@@ -135,7 +135,7 @@ class CharacterRegistry:
             return None
         await init_db()
         self._project_uuid = str(uuid.uuid4())
-        self._project_started_at = datetime.utcnow()
+        self._project_started_at = datetime.now(UTC)
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.execute(
@@ -193,7 +193,7 @@ class CharacterRegistry:
                     status=status,
                     exit_reason=exit_reason,
                     rounds_used=rounds_used,
-                    ended_at=datetime.utcnow(),
+                    ended_at=datetime.now(UTC),
                     final_answer=final_answer,
                 )
             )
@@ -222,7 +222,7 @@ class CharacterRegistry:
                         last_mood=live.last_mood,
                         voice_id=live.voice_id,
                         is_alive=1 if live.is_alive else 0,
-                        last_seen_at=datetime.utcnow(),
+                        last_seen_at=datetime.now(UTC),
                     )
                 )
 
@@ -237,7 +237,7 @@ class CharacterRegistry:
                         files_created=live.files_created_lifetime,
                         survived=1 if survived else 0,
                         death_cause=_find_death_cause(live.character_uuid, deaths),
-                        left_at=datetime.utcnow(),
+                        left_at=datetime.now(UTC),
                     )
                 )
 
@@ -272,7 +272,7 @@ class CharacterRegistry:
                         conflicts=rel.get("conflicts", 0),
                         sentiment=rel.get("sentiment", "neutral"),
                         last_interaction=rel.get("last_interaction", ""),
-                        updated_at=datetime.utcnow(),
+                        updated_at=datetime.now(UTC),
                     )
                 )
                 if result.rowcount == 0:
