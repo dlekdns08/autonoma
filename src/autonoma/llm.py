@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, AsyncIterator, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,30 @@ class BaseLLMClient(ABC):
         """Send a completion request and return a normalized response."""
         ...
 
+    async def stream(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        system: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        """Yield text delta chunks as they arrive from the provider.
+
+        The default implementation falls back to a single-chunk emit from
+        ``create()``, so subclasses only need to override when the underlying
+        SDK supports real streaming.
+        """
+        response = await self.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=messages,
+        )
+        yield response.text
+
 
 # ── Anthropic implementation ──────────────────────────────────────────────
 
@@ -198,6 +222,47 @@ class AnthropicLLMClient(BaseLLMClient):
             if isinstance(exc, anthropic.AuthenticationError):
                 raise LLMAuthError(str(exc)) from exc
             raise
+
+    async def stream(  # type: ignore[override]
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        system: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        import anthropic
+
+        send_temperature = model not in _ANTHROPIC_MODELS_NO_TEMPERATURE
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+        }
+        if send_temperature:
+            kwargs["temperature"] = temperature
+
+        try:
+            async with self._client.messages.stream(**kwargs) as stream_ctx:
+                async for text in stream_ctx.text_stream:
+                    yield text
+        except anthropic.BadRequestError as exc:
+            if send_temperature and _is_temperature_deprecation_error(exc):
+                _ANTHROPIC_MODELS_NO_TEMPERATURE.add(model)
+                kwargs.pop("temperature", None)
+                async with self._client.messages.stream(**kwargs) as stream_ctx:
+                    async for text in stream_ctx.text_stream:
+                        yield text
+            else:
+                raise LLMConnectionError(str(exc)) from exc
+        except anthropic.APIConnectionError as exc:
+            raise LLMConnectionError(str(exc)) from exc
+        except anthropic.RateLimitError as exc:
+            raise LLMRateLimitError(str(exc)) from exc
+        except anthropic.AuthenticationError as exc:
+            raise LLMAuthError(str(exc)) from exc
 
 
 # ── OpenAI / vLLM implementation ─────────────────────────────────────────
@@ -301,6 +366,47 @@ class OpenAILLMClient(BaseLLMClient):
                 raise LLMRateLimitError(str(exc)) from exc
             if isinstance(exc, AuthenticationError):
                 raise LLMAuthError(str(exc)) from exc
+            raise
+
+    async def stream(  # type: ignore[override]
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        system: str,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        full_messages = [{"role": "system", "content": system}] + list(messages)
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": full_messages,
+            "stream": True,
+        }
+        if _is_openai_reasoning_model(model):
+            create_kwargs["max_completion_tokens"] = max_tokens
+        else:
+            create_kwargs["max_tokens"] = max_tokens
+            create_kwargs["temperature"] = temperature
+
+        try:
+            from openai import APIConnectionError, RateLimitError, AuthenticationError
+            async with await self._client.chat.completions.create(**create_kwargs) as stream_ctx:
+                async for chunk in stream_ctx:
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
+                    if delta:
+                        yield delta
+        except Exception as exc:
+            try:
+                from openai import APIConnectionError, RateLimitError, AuthenticationError
+                if isinstance(exc, APIConnectionError):
+                    raise LLMConnectionError(str(exc)) from exc
+                if isinstance(exc, RateLimitError):
+                    raise LLMRateLimitError(str(exc)) from exc
+                if isinstance(exc, AuthenticationError):
+                    raise LLMAuthError(str(exc)) from exc
+            except ImportError:
+                pass
             raise
 
 
