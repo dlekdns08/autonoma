@@ -55,25 +55,37 @@ interface Props {
 }
 
 interface SkyStops {
-  top: string;
-  mid: string;
-  bottom: string;
+  s0: string;
+  s25: string;
+  s50: string;
+  s75: string;
+  s100: string;
 }
 
 const SKY: Record<SkyMode, SkyStops> = {
-  dawn: { top: "#ff9063", mid: "#ffb88c", bottom: "#f5d9b0" },
-  day: { top: "#4ba3e8", mid: "#7cc6f4", bottom: "#bce4f9" },
-  dusk: { top: "#3b1a5a", mid: "#c84a72", bottom: "#ffb088" },
-  night: { top: "#0a0e2a", mid: "#1a1f48", bottom: "#2a2f5a" },
+  dawn: {
+    s0: "#1a0a28", s25: "#4a1a3a", s50: "#b84422", s75: "#ff7733", s100: "#ffcc88",
+  },
+  day: {
+    // "day" maps to morning palette
+    s0: "#0d2240", s25: "#1a4a7a", s50: "#3388cc", s75: "#77bbee", s100: "#cceefc",
+  },
+  dusk: {
+    s0: "#0a0622", s25: "#280e42", s50: "#6a1f5a", s75: "#cc4466", s100: "#ff8855",
+  },
+  night: {
+    s0: "#030310", s25: "#07071e", s50: "#0c0d2e", s75: "#141548", s100: "#1c1e5a",
+  },
 };
 
-const NIGHT_TINT = "rgba(30, 22, 80, 0.28)";
-const DUSK_TINT = "rgba(180, 60, 90, 0.16)";
-const DAWN_TINT = "rgba(255, 160, 100, 0.12)";
+const NIGHT_TINT = "rgba(15, 10, 75, 0.38)";
+const DUSK_TINT = "rgba(160, 45, 80, 0.22)";
+const DAWN_TINT = "rgba(255, 120, 60, 0.16)";
+const MORNING_TINT = "rgba(120, 180, 255, 0.08)";
 
 // Warm ambient tint painted over interior scenes so they feel lit by lamps
 // rather than flat pixel blocks.
-const INTERIOR_TINT = "rgba(255, 214, 160, 0.06)";
+const INTERIOR_TINT = "rgba(255, 195, 120, 0.09)";
 
 function objectHeight(kind: SceneObject["kind"]): number {
   switch (kind) {
@@ -167,20 +179,66 @@ function paintSky(ctx: CanvasRenderingContext2D, sky: SkyMode): void {
   const stops = SKY[sky];
   const horizonPx = STAGE.horizonRow * STAGE.tile;
   const grad = ctx.createLinearGradient(0, 0, 0, horizonPx);
-  grad.addColorStop(0, stops.top);
-  grad.addColorStop(0.6, stops.mid);
-  grad.addColorStop(1, stops.bottom);
+  grad.addColorStop(0,    stops.s0);
+  grad.addColorStop(0.25, stops.s25);
+  grad.addColorStop(0.5,  stops.s50);
+  grad.addColorStop(0.75, stops.s75);
+  grad.addColorStop(1,    stops.s100);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, STAGE.width, horizonPx);
 
+  // --- Horizon haze: thin 2px gradient at the treeline ---
+  const hazeGrad = ctx.createLinearGradient(0, horizonPx - 2, 0, horizonPx);
+  hazeGrad.addColorStop(0, "rgba(0,0,0,0)");
+  hazeGrad.addColorStop(1, `${stops.s100}88`);
+  ctx.fillStyle = hazeGrad;
+  ctx.fillRect(0, horizonPx - 2, STAGE.width, 2);
+
   if (sky === "night") {
-    ctx.fillStyle = "#ffffff";
-    const stars = [
-      [10, 6], [28, 12], [44, 4], [66, 10], [82, 18], [104, 6],
-      [130, 14], [154, 4], [176, 10], [200, 18], [220, 6], [244, 12],
-      [268, 4], [290, 16], [306, 8],
+    // --- Large bright stars (2×2) ---
+    const largeBright: [number, number][] = [
+      [18, 5], [72, 9], [148, 4], [222, 13], [290, 7],
+      [44, 20], [106, 3], [196, 18], [260, 5], [316, 15],
     ];
-    for (const [x, y] of stars) ctx.fillRect(x, y, 1, 1);
+    for (const [x, y] of largeBright) {
+      ctx.fillStyle = (x + y) % 3 === 0
+        ? "rgba(200,220,255,0.9)"
+        : "rgba(255,255,255,0.95)";
+      ctx.fillRect(x, y, 2, 2);
+    }
+
+    // --- Medium stars (2×1 or 1×2) ---
+    const medium: [number, number, number, number][] = [
+      [10, 14, 2, 1], [38, 8, 1, 2], [60, 22, 2, 1], [88, 6, 1, 2],
+      [120, 17, 2, 1], [162, 12, 1, 2], [184, 24, 2, 1], [208, 4, 2, 1],
+      [238, 16, 1, 2], [268, 10, 2, 1], [296, 21, 1, 2], [308, 3, 2, 1],
+      [54, 28, 2, 1], [170, 28, 1, 2], [246, 25, 2, 1],
+    ];
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    for (const [x, y, w, h] of medium) ctx.fillRect(x, y, w, h);
+
+    // --- Small dim stars (1×1) ---
+    const small: [number, number][] = [
+      [5, 10], [24, 18], [35, 4], [50, 14], [65, 26], [80, 10],
+      [96, 20], [112, 8], [128, 22], [140, 14], [156, 6], [172, 20],
+      [188, 10], [202, 26], [216, 8], [230, 18], [244, 4], [254, 24],
+      [274, 14], [282, 28], [300, 12], [312, 22], [320, 6], [328, 18],
+      [334, 10], [144, 26], [26, 28], [116, 28], [276, 28], [192, 24],
+    ];
+    for (const [x, y] of small) {
+      const alpha = 0.4 + ((x * 7 + y * 13) % 20) / 100;
+      ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+
+    // --- Warm yellowish stars (1×1) ---
+    const warm: [number, number][] = [
+      [32, 16], [102, 12], [214, 22], [286, 8], [330, 20],
+    ];
+    ctx.fillStyle = "rgba(255,220,160,0.8)";
+    for (const [x, y] of warm) ctx.fillRect(x, y, 1, 1);
+
+    // --- Moon ---
     ctx.fillStyle = "#f5e9c0";
     ctx.fillRect(268, 20, 6, 6);
     ctx.fillRect(267, 22, 1, 2);
@@ -222,11 +280,26 @@ function tintGround(
     }
     return;
   }
-  if (sky === "day") return;
+
   const groundTop = STAGE.horizonRow * STAGE.tile;
-  ctx.fillStyle =
-    sky === "night" ? NIGHT_TINT : sky === "dusk" ? DUSK_TINT : DAWN_TINT;
-  ctx.fillRect(0, groundTop, STAGE.width, STAGE.height - groundTop);
+
+  // Sky-wide atmospheric tint
+  let skyTint: string | null = null;
+  if (sky === "night") skyTint = NIGHT_TINT;
+  else if (sky === "dusk") skyTint = DUSK_TINT;
+  else if (sky === "dawn") skyTint = DAWN_TINT;
+  else if (sky === "day") skyTint = MORNING_TINT; // morning (day) gets subtle cool wash
+
+  if (skyTint) {
+    ctx.fillStyle = skyTint;
+    ctx.fillRect(0, 0, STAGE.width, STAGE.height);
+  }
+  // afternoon ("day" = afternoon palette): very subtle blue, only over ground
+  // (sky already has the gradient; no full-canvas tint)
+  if (sky === "day") {
+    ctx.fillStyle = "rgba(100,160,255,0.04)";
+    ctx.fillRect(0, groundTop, STAGE.width, STAGE.height - groundTop);
+  }
 }
 
 export default function PixelMap({
