@@ -57,3 +57,19 @@ removal, please open an issue.
   - Redistribution: Allow
   - Alterations: Allow
   - Attribution: Not required
+
+## os01.vrm
+
+- **Character**: OS01 (from "LS01")
+- **Author**: 桜田とまこ
+- **Source**: https://hub.vroid.com/en/characters/4155066439525369707/models/7769484947925027526
+- **Uploaded**: 2026-03-06
+- **License**:
+  - Avatar Use: Allow
+  - Violent acts: Allow
+  - Sexual acts: Allow
+  - Corporate use: Allow
+  - Individual commercial use: Allow
+  - Redistribution: Allow
+  - Alterations: Allow
+  - Attribution: Not required
