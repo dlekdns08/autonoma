@@ -542,6 +542,24 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     _swarm_task.cancel()
                     await ws.send_text(json.dumps({"event": "swarm.stopped", "data": {}}))
 
+            # ── reset ─────────────────────────────────────────────────
+            # Bring the server back to the idle state so the user can
+            # start a brand-new project from the start screen.
+            elif cmd == "reset":
+                global _swarm, _project
+                if _swarm_task and not _swarm_task.done():
+                    _swarm_task.cancel()
+                    try:
+                        await _swarm_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                _swarm = None
+                _project = None
+                _swarm_task = None
+                logger.info(f"[WS:{ws_id}] Project reset — returning to idle")
+                await manager.broadcast("swarm.reset", {})
+                await manager.broadcast("snapshot", _get_snapshot())
+
             # ── message ───────────────────────────────────────────────
             elif cmd == "message":
                 text = msg.get("text", "")
