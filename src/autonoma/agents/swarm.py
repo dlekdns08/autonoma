@@ -474,6 +474,8 @@ class AgentSwarm:
             elif self._round >= max_rounds:
                 exit_reason = "max_rounds_reached"
 
+        # Stash exit_reason where run()'s finally-block persister can see it.
+        self._last_exit_reason = exit_reason
         self._running = False
 
         # Only treat the project as completed when ALL tasks are DONE. This
