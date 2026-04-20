@@ -22,7 +22,7 @@ import type { AgentData } from "@/lib/types";
 export default function Home() {
   const {
     state, connected, toasts, dismissToast,
-    sendMessage, sendToAgent, startSwarm, collectCookie,
+    sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
     authState, authenticate, logout,
   } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
