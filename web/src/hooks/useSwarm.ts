@@ -189,30 +189,48 @@ export function useSwarm() {
 
         // Generate toasts for important events
         switch (event) {
-          case "agent.level_up":
-            addToast("level_up", "LEVEL UP!", `${data.agent} reached Lv${data.level}!`, "★");
+          case "agent.level_up": {
+            const name = data.agent as string | undefined;
+            if (!name) break;
+            addToast("level_up", "LEVEL UP!", `${name} reached Lv${data.level}!`, "★");
             break;
-          case "boss.appeared":
-            addToast("boss", "BOSS APPEARED!", `${data.name} (Lv${data.level}) challenges the swarm!`, "☠");
+          }
+          case "boss.appeared": {
+            const name = data.name as string | undefined;
+            if (!name) break;
+            addToast("boss", "BOSS APPEARED!", `${name} (Lv${data.level}) challenges the swarm!`, "☠");
             break;
-          case "boss.defeated":
-            addToast("boss", "BOSS DEFEATED!", `${data.name} has been vanquished! +${data.xp_reward}XP`, "★");
+          }
+          case "boss.defeated": {
+            const name = data.name as string | undefined;
+            if (!name) break;
+            addToast("boss", "BOSS DEFEATED!", `${name} has been vanquished! +${data.xp_reward}XP`, "★");
             break;
-          case "guild.formed":
-            addToast("guild", "Guild Formed!", `${data.name}: ${(data.members as string[])?.join(", ")}`, "♥♥");
+          }
+          case "guild.formed": {
+            const name = data.name as string | undefined;
+            if (!name) break;
+            addToast("guild", "Guild Formed!", `${name}: ${(data.members as string[])?.join(", ")}`, "♥♥");
             break;
-          case "fortune.given":
-            addToast("fortune", "Fortune Cookie!", `${data.agent}: ${data.fortune}`, "🥠");
+          }
+          case "fortune.given": {
+            const name = data.agent as string | undefined;
+            if (!name) break;
+            addToast("fortune", "Fortune Cookie!", `${name}: ${data.fortune}`, "🥠");
             break;
+          }
           case "ghost.appears":
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
             break;
           case "project.completed":
             addToast("achievement", "PROJECT COMPLETE!", "The swarm has finished its work!", "★★★");
             break;
-          case "agent.spawned":
-            addToast("info", "Agent Spawned", `${data.emoji} ${data.name} (${data.role})`, `${data.emoji}`);
+          case "agent.spawned": {
+            const name = data.name as string | undefined;
+            if (!name) break;
+            addToast("info", "Agent Spawned", `${data.emoji} ${name} (${data.role})`, `${data.emoji}`);
             break;
+          }
           case "human.feedback":
             addToast(
               "info",
@@ -303,7 +321,8 @@ export function useSwarm() {
               return INITIAL_STATE;
 
             case "agent.spawned": {
-              const name = data.name as string;
+              const name = data.name as string | undefined;
+              if (!name) break;
               if (!prev.agents.find((a) => a.name === name)) {
                 next.agents = [
                   ...prev.agents,
@@ -325,7 +344,8 @@ export function useSwarm() {
             }
 
             case "agent.speech": {
-              const agentName = data.agent as string;
+              const agentName = data.agent as string | undefined;
+              if (!agentName) break;
               next.agents = prev.agents.map((a) =>
                 a.name === agentName ? { ...a, speech: data.text as string } : a,
               );
@@ -333,7 +353,8 @@ export function useSwarm() {
             }
 
             case "agent.state": {
-              const agentName = data.agent as string;
+              const agentName = data.agent as string | undefined;
+              if (!agentName) break;
               next.agents = prev.agents.map((a) =>
                 a.name === agentName
                   ? {
@@ -347,7 +368,8 @@ export function useSwarm() {
             }
 
             case "agent.level_up": {
-              const agentName = data.agent as string;
+              const agentName = data.agent as string | undefined;
+              if (!agentName) break;
               next.agents = prev.agents.map((a) =>
                 a.name === agentName ? { ...a, level: (data.level as number) || a.level } : a,
               );
@@ -356,7 +378,8 @@ export function useSwarm() {
 
             case "task.assigned":
             case "task.completed": {
-              const title = data.title as string;
+              const title = data.title as string | undefined;
+              if (!title) break;
               const existingIdx = prev.tasks.findIndex((t) => t.title === title);
               if (existingIdx >= 0) {
                 next.tasks = prev.tasks.map((t, i) =>
@@ -442,7 +465,7 @@ export function useSwarm() {
               break;
 
             case "fortune.given": {
-              const recipient = data.agent as string;
+              const recipient = data.agent as string | undefined;
               const fortune = (data.fortune as string) || "";
               if (recipient && !prev.cookies.find((c) => c.recipient === recipient)) {
                 const pos = pickCookieSpot(recipient);
@@ -452,7 +475,8 @@ export function useSwarm() {
             }
 
             case "fortune.fulfilled": {
-              const recipient = data.agent as string;
+              const recipient = data.agent as string | undefined;
+              if (!recipient) break;
               // Mark as opened so Stage can play the poof, then drop after a
               // short delay via an expiry check inside Stage itself.
               next.cookies = prev.cookies.map((c) =>
@@ -556,6 +580,13 @@ export function useSwarm() {
     }
     // Optimistically return the UI to idle; the server also broadcasts
     // a fresh snapshot that will arrive shortly and confirm the state.
+    //
+    // NOTE: we intentionally do NOT clear sessionId here. The backend's
+    // reset handler (autonoma/api.py) only clears session.swarm/project
+    // and keeps session.session_id intact — the ws connection is still
+    // live and the same session continues to own the workspace. Clearing
+    // sessionId here would leave download URLs unable to point at the
+    // backend until the next auth.status round-trip.
     setState(INITIAL_STATE);
   }, []);
 
