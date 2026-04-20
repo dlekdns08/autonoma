@@ -317,6 +317,9 @@ export function useSwarm() {
               if (data.leaderboard) next.leaderboard = data.leaderboard as string;
               if (data.multiverse) next.multiverse = data.multiverse as string;
               if (data.graveyard) next.graveyard = data.graveyard as string;
+              next.completed = data.completed === true;
+              next.incompleteReason =
+                typeof data.incomplete_reason === "string" ? data.incomplete_reason : "";
               break;
 
             case "swarm.reset":
