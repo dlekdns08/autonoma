@@ -802,6 +802,75 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         "room_code": room.short_code,
                     })
 
+            # ── join_room ─────────────────────────────────────────────
+            # Other viewers attach to an already-running swarm by short
+            # code. The host's `start` reply contains the code; the
+            # frontend either renders it as a sharable link
+            # (?room=ABCXYZ) or shows it for read-aloud copy.
+            elif cmd == "join_room":
+                code = (msg.get("code") or "").strip().upper()
+                if not code:
+                    await manager.send_to_ws(ws, "room.join_failed", {
+                        "message": "Room code required.",
+                    })
+                else:
+                    target_room_id = _short_codes.get(code)
+                    target_room = (
+                        _rooms.get(target_room_id) if target_room_id else None
+                    )
+                    if target_room is None:
+                        await manager.send_to_ws(ws, "room.join_failed", {
+                            "message": "Room not found or already ended.",
+                        })
+                    elif target_room_id == session.session_id:
+                        await manager.send_to_ws(ws, "room.join_failed", {
+                            "message": "You're already the host of this room.",
+                        })
+                    else:
+                        # Leave any prior room (and notify it) before
+                        # joining the new one. The "private" default room
+                        # has no other viewers so this is a no-op there.
+                        prev_room_id = session.room_id
+                        session.room_id = target_room_id
+                        await manager.send_to_ws(ws, "room.joined", {
+                            "code": code,
+                            "is_owner": False,
+                        })
+                        # Snapshot the live scene so the new viewer gets
+                        # the current state immediately, not on the next
+                        # frame.
+                        snap = _get_snapshot(target_room_id)
+                        await manager.send_to_ws(ws, "snapshot", snap)
+                        await _notify_room_membership(target_room_id)
+                        if prev_room_id != target_room_id:
+                            await _notify_room_membership(prev_room_id)
+
+            # ── set_name ──────────────────────────────────────────────
+            elif cmd == "set_name":
+                # Bound the length so a malicious viewer can't spam a
+                # huge name through the chat list.
+                name = (msg.get("name") or "").strip()[:24]
+                session.display_name = name
+                await _notify_room_membership(session.room_id)
+
+            # ── chat ──────────────────────────────────────────────────
+            # Spectator chat. Any viewer can send; the message fans out
+            # to every viewer in the room (and is also surfaced to the
+            # swarm as a `viewer.chat` event so agents can react to it).
+            elif cmd == "chat":
+                text = (msg.get("text") or "").strip()[:280]
+                if not text:
+                    pass
+                else:
+                    name = session.display_name or f"anon-{session.session_id % 1000}"
+                    payload = {
+                        "from": name,
+                        "text": text,
+                        "is_owner": session.session_id == session.room_id,
+                    }
+                    for v in _viewers_in_room(session.room_id):
+                        await manager.send_to_ws(v.ws, "viewer.chat", payload)
+
             # ── stop ──────────────────────────────────────────────────
             elif cmd == "stop":
                 if session.task is not None and not session.task.done():
