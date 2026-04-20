@@ -183,48 +183,54 @@ export default function VTuberStage({
             </div>
 
             {/* Camera controls — top-right. Stacked vertically so they
-             *  don't collide with the pinned chip or the LIVE badge. */}
-            <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
-              {pinned && (
-                <button
-                  type="button"
-                  onClick={() => setPinned(null)}
-                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/25"
-                >
-                  pinned · unpin
-                </button>
-              )}
-              <div className="flex gap-1 rounded-lg border border-white/10 bg-black/60 p-1 backdrop-blur-sm">
-                <button
-                  type="button"
-                  title="View agent details"
-                  onClick={() =>
-                    onSelectAgent && onSelectAgent(spotlightAgent.name)
-                  }
-                  className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
-                >
-                  ℹ︎
-                </button>
-                <button
-                  type="button"
-                  title="Reset camera"
-                  onClick={() => setResetNonce((n) => n + 1)}
-                  className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
-                >
-                  ⟲
-                </button>
+             *  don't collide with the pinned chip or the LIVE badge.
+             *  Hidden in OBS mode (streams don't need UI chrome). */}
+            {!obsMode && (
+              <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
+                {pinned && (
+                  <button
+                    type="button"
+                    onClick={() => setPinned(null)}
+                    className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/25"
+                  >
+                    pinned · unpin
+                  </button>
+                )}
+                <div className="flex gap-1 rounded-lg border border-white/10 bg-black/60 p-1 backdrop-blur-sm">
+                  <button
+                    type="button"
+                    title="View agent details"
+                    onClick={() =>
+                      onSelectAgent && onSelectAgent(spotlightAgent.name)
+                    }
+                    className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
+                  >
+                    ℹ︎
+                  </button>
+                  <button
+                    type="button"
+                    title="Reset camera"
+                    onClick={() => setResetNonce((n) => n + 1)}
+                    className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
+                  >
+                    ⟲
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Controls hint — auto-fades after 6s so it doesn't loiter
-             *  on screen once the host knows they can drag/scroll. */}
-            <div
-              className={`pointer-events-none absolute bottom-2 right-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[9px] text-white/55 backdrop-blur-sm transition-opacity duration-700 ${
-                showHint ? "opacity-100" : "opacity-0"
-              }`}
-            >
-              drag · scroll · ⟲ reset
-            </div>
+             *  on screen once the host knows they can drag/scroll.
+             *  Hidden in OBS mode. */}
+            {!obsMode && (
+              <div
+                className={`pointer-events-none absolute bottom-2 right-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[9px] text-white/55 backdrop-blur-sm transition-opacity duration-700 ${
+                  showHint ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                drag · scroll · ⟲ reset
+              </div>
+            )}
 
             {/* Speech line — bottom overlay near the character's feet. */}
             {spotlightAgent.speech && (
@@ -259,6 +265,10 @@ export default function VTuberStage({
       </div>
 
       {/* ── Gallery strip ─────────────────────────────────────────── */}
+      {/* OBS mode drops the gallery entirely — streams only want the
+       *  spotlight character, and every extra Canvas costs WebGL
+       *  context slots we don't need to spend. */}
+      {!obsMode && (
       <div className="flex shrink-0 gap-1.5 overflow-x-auto rounded-xl border border-cyan-500/15 bg-slate-950/70 p-1.5 scrollbar-thin">
         {agents.map((agent) => {
           const isSpeaking = speakingAgents.has(agent.name);
@@ -296,6 +306,7 @@ export default function VTuberStage({
           );
         })}
       </div>
+      )}
 
       <style jsx>{`
         @keyframes spotlight-in {
