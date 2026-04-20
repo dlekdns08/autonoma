@@ -33,14 +33,15 @@
  *     target Y is consistent across models of different heights).
  */
 
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { OrbitControls } from "@react-three/drei";
 import {
   VRM,
   VRMLoaderPlugin,
   VRMUtils,
 } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef, type ComponentRef } from "react";
 import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AgentData } from "@/lib/types";
@@ -50,10 +51,14 @@ interface Props {
   agent: AgentData;
   /** Same amplitude feed the SVG face used — 0..1, sampled per frame. */
   getMouthAmplitude?: (name: string) => number;
-  /** Spotlight = close-up head+shoulders; otherwise = wider full-body. */
+  /** Spotlight = full-body with orbit controls; otherwise = static thumb. */
   spotlight?: boolean;
   /** Outer-div click handler so the whole tile is interactive. */
   onClick?: () => void;
+  /** Bump this integer to snap the camera back to the default framing.
+   *  Used by the parent "reset view" button so the user can recover
+   *  after an accidental orbit. */
+  cameraResetNonce?: number;
 }
 
 // ── Mood → VRM standard emote ────────────────────────────────────────
@@ -109,6 +114,7 @@ interface ModelProps {
   mood: string;
   getMouthAmplitude?: (name: string) => number;
   spotlight: boolean;
+  cameraResetNonce?: number;
 }
 
 function VRMModel({
@@ -117,7 +123,10 @@ function VRMModel({
   mood,
   getMouthAmplitude,
   spotlight,
+  cameraResetNonce,
 }: ModelProps) {
+  const { camera } = useThree();
+  const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
   const gltf = useLoader(GLTFLoader, url, (loader) => {
     // r3f's cache keys on URL alone, so this factory is invoked once per
     // distinct VRM file — we register the VRM parser plugin here.
