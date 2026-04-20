@@ -8,7 +8,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from autonoma.agents.base import AutonomousAgent, _extract_json
+from autonoma.agents.base import (
+    AutonomousAgent,
+    TASKS_LOCK,
+    _atomic_claim_task,
+    _extract_json,
+)
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
@@ -315,29 +320,38 @@ Rules:
             await bus.emit("project.completed", agent="Director")
             return {"agent": "Director", "action": "project_complete"}
 
-        # Assign unassigned tasks to available agents (respecting dependencies)
-        open_tasks = [
-            t for t in project.tasks
-            if t.status == TaskStatus.OPEN
-            and all(
-                any(t2.id == dep and t2.status == TaskStatus.DONE for t2 in project.tasks)
-                for dep in t.depends_on
-            )
-        ]
+        # Assign unassigned tasks to available agents (respecting dependencies).
+        # Hold TASKS_LOCK across the read-select + write so agents running
+        # concurrently in _action_work can't race us into the same OPEN task.
+        pending_assignments: list[tuple[Task, str]] = []
+        async with TASKS_LOCK:
+            open_tasks = [
+                t for t in project.tasks
+                if t.status == TaskStatus.OPEN
+                and all(
+                    any(t2.id == dep and t2.status == TaskStatus.DONE for t2 in project.tasks)
+                    for dep in t.depends_on
+                )
+            ]
 
-        available_agents = [
-            a.name for a in project.agents
-            if a.name != "Director"
-            and not any(
-                t.assigned_to == a.name and t.status in (TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS)
-                for t in project.tasks
-            )
-        ]
+            available_agents = [
+                a.name for a in project.agents
+                if a.name != "Director"
+                and not any(
+                    t.assigned_to == a.name and t.status in (TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS)
+                    for t in project.tasks
+                )
+            ]
+
+            for task, agent_name in zip(open_tasks, available_agents):
+                # Dual-write, inside the lock, so status and assigned_to stay
+                # consistent and no other agent can steal this OPEN task.
+                task.assigned_to = agent_name
+                task.status = TaskStatus.ASSIGNED
+                pending_assignments.append((task, agent_name))
 
         assigned_count = 0
-        for task, agent_name in zip(open_tasks, available_agents):
-            task.assigned_to = agent_name
-            task.status = TaskStatus.ASSIGNED
+        for task, agent_name in pending_assignments:
             await self._say(f"{agent_name}, handle '{task.title}'!", style="bold")
 
             msg = AgentMessage(
@@ -363,34 +377,64 @@ Rules:
         total = len(project.tasks)
         in_progress = sum(1 for t in project.tasks if t.status == TaskStatus.IN_PROGRESS)
         blocked = sum(1 for t in project.tasks if t.status == TaskStatus.BLOCKED)
+        in_review = sum(1 for t in project.tasks if t.status == TaskStatus.REVIEW)
 
-        if assigned_count == 0 and in_progress == 0 and done < total:
+        # REVIEW→DONE transition: without a dedicated reviewer loop, tasks
+        # that reach REVIEW can stick forever. After the stall threshold we
+        # auto-approve any REVIEW tasks so the project can finish.
+        review_stuck = bool(in_review) and assigned_count == 0 and in_progress == 0
+
+        if (
+            assigned_count == 0
+            and in_progress == 0
+            and done < total
+        ) or review_stuck:
             self._stall_counter += 1
             logger.warning(
                 f"[Director] Stall detected (counter={self._stall_counter}/3): "
                 f"done={done}/{total}, in_progress=0, assigned_this_round=0, "
                 f"available_agents={len(available_agents)}, "
-                f"blocked={blocked}, "
+                f"blocked={blocked}, review={in_review}, "
                 f"open_ready={len(open_tasks)}"
             )
             if self._stall_counter >= 3:
-                stuck_tasks = [t for t in project.tasks if t.status == TaskStatus.OPEN]
-                if stuck_tasks and available_agents:
-                    cleared = list(stuck_tasks[0].depends_on)
-                    stuck_tasks[0].depends_on.clear()
-                    logger.warning(
-                        f"[Director] Forcibly unblocking '{stuck_tasks[0].title}' "
-                        f"by clearing its dependencies={cleared}"
+                # Priority 1: auto-approve stuck REVIEW tasks (no reviewer loop
+                # exists so REVIEW is a terminal trap for completion).
+                review_tasks = [t for t in project.tasks if t.status == TaskStatus.REVIEW]
+                if review_tasks:
+                    async with TASKS_LOCK:
+                        for rt in review_tasks:
+                            logger.warning(
+                                f"[Director] Auto-approving stalled REVIEW task "
+                                f"'{rt.title}' (assigned_to={rt.assigned_to or 'none'}) "
+                                f"-> DONE (no reviewer agent is consuming REVIEW queue)"
+                            )
+                            rt.status = TaskStatus.DONE
+                    await self._say("Auto-approving stuck reviews!", style="bold red")
+                    await bus.emit(
+                        "director.review_auto_approved",
+                        count=len(review_tasks),
                     )
-                    await self._say("Unblocking stuck task!", style="bold red")
                     self._stall_counter = 0
                 else:
-                    logger.error(
-                        f"[Director] Stalled 3 rounds but cannot unblock: "
-                        f"stuck_open_tasks={len(stuck_tasks)}, "
-                        f"available_agents={len(available_agents)} — "
-                        f"run will keep spinning until max_rounds unless agents recover"
-                    )
+                    stuck_tasks = [t for t in project.tasks if t.status == TaskStatus.OPEN]
+                    if stuck_tasks and available_agents:
+                        async with TASKS_LOCK:
+                            cleared = list(stuck_tasks[0].depends_on)
+                            stuck_tasks[0].depends_on.clear()
+                        logger.warning(
+                            f"[Director] Forcibly unblocking '{stuck_tasks[0].title}' "
+                            f"by clearing its dependencies={cleared}"
+                        )
+                        await self._say("Unblocking stuck task!", style="bold red")
+                        self._stall_counter = 0
+                    else:
+                        logger.error(
+                            f"[Director] Stalled 3 rounds but cannot unblock: "
+                            f"stuck_open_tasks={len(stuck_tasks)}, "
+                            f"available_agents={len(available_agents)} — "
+                            f"run will keep spinning until max_rounds unless agents recover"
+                        )
         else:
             self._stall_counter = 0
 
