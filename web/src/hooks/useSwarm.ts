@@ -143,6 +143,23 @@ export function useSwarm() {
           return;
         }
 
+        // Reaction icons fire often (one per moody _say). They live
+        // outside SwarmState because nothing else reads them — keeping
+        // them in their own slice avoids re-render cascades through
+        // the agent list every time someone sighs.
+        if (event === "agent.emote") {
+          const agent = data.agent as string | undefined;
+          const icon = data.icon as string | undefined;
+          const ttl = (data.ttl_ms as number | undefined) ?? 2000;
+          if (!agent || !icon) return;
+          const seq = ++emoteSeqRef.current;
+          setEmotes((prev) => ({
+            ...prev,
+            [agent]: { icon, expiresAt: Date.now() + ttl, seq },
+          }));
+          return;
+        }
+
         // Always log the event
         if (event !== "snapshot") {
           addEvent(event, data);
