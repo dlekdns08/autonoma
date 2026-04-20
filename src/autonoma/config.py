@@ -44,6 +44,32 @@ class Settings(BaseSettings):
     # across sessions). Useful for tests and CI.
     persistent_characters: bool = True
 
+    # ── TTS (agent voices) ──
+    # Master kill-switch. When False no TTS module runs; agents are silent.
+    tts_enabled: bool = False
+    # Which backend to use: "azure" | "openai" | "none"
+    # ``none`` is a stub that just emits audio-start/end events with no
+    # audio bytes — useful for UI development without provider credentials.
+    tts_provider: Literal["azure", "openai", "none"] = "none"
+    # Azure Neural TTS credentials (Region + subscription key). ``region``
+    # is e.g. "eastus", "koreacentral".
+    tts_azure_key: str = ""
+    tts_azure_region: str = ""
+    # OpenAI TTS: reuses openai_api_key if empty.
+    tts_openai_voice_default: str = "alloy"
+    # Budgets: soft caps per round / per session. When exceeded the
+    # worker drops the line and emits ``agent.speech_audio_dropped``.
+    tts_char_budget_per_round: int = 800
+    tts_char_budget_per_session: int = 20000
+    # Rate limit: max TTS requests launched per minute, across the room.
+    tts_rate_limit_per_minute: int = 40
+    # When True, only the room owner hears TTS (server-side gate; viewer
+    # audio is stripped). Used in Phase 4 once rooms exist — harmless now.
+    tts_require_owner: bool = False
+    # Language preference for voice selection pools. "ko" picks Korean
+    # voices by default; callers can override per-character.
+    tts_default_language: str = "ko"
+
     # ── Swarm ──
     max_agents: int = 8
     tick_rate: float = 0.15  # TUI animation tick in seconds
