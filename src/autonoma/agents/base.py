@@ -55,6 +55,26 @@ logger = logging.getLogger(__name__)
 MAX_INBOX_SIZE = 50
 LLM_TIMEOUT_SECONDS = 60
 
+# Mood → reaction-bubble icon. Drives the small EmoteBubble that the
+# frontend paints above the sprite when an agent speaks. Unlisted moods
+# emit nothing (the bubble simply stays empty); we'd rather miss a beat
+# than over-spam icons during a long run.
+MOOD_EMOTE: dict[str, str] = {
+    "happy": "♪",
+    "excited": "✦",
+    "frustrated": "💢",
+    "worried": "💧",
+    "tired": "💤",
+    "proud": "★",
+    "nostalgic": "✿",
+    "inspired": "💡",
+    "curious": "?",
+    "determined": "‼",
+    "relaxed": "～",
+    "focused": "•",
+    "mischievous": "✧",
+}
+
 # Shared async lock protecting the task list of the single running project.
 # Both the Director's assignment code and individual agents' self-assign path
 # must acquire this lock before mutating Task.status / Task.assigned_to to
@@ -666,6 +686,21 @@ Rules:
                 mood=self.mood.value if self.mood else "",
                 language=settings.tts_default_language,
             )
+        # Reaction icon — derived from mood. Stays cheap (one event per
+        # speech) and lets the frontend paint a small EmoteBubble above
+        # the sprite without needing per-mood event plumbing.
+        icon = MOOD_EMOTE.get(self.mood.value if self.mood else "", "")
+        if icon:
+            await self._emote(icon)
+
+    async def _emote(self, icon: str, ttl_ms: int = 2000) -> None:
+        """Show a short reaction icon above the agent. Cheap, fire-and-forget.
+
+        ``ttl_ms`` is advisory — the frontend uses it to time the fade-out.
+        We don't track the bubble server-side; nothing here pages on emote
+        state, so persistence would just be ceremony.
+        """
+        await bus.emit("agent.emote", agent=self.name, icon=icon, ttl_ms=ttl_ms)
 
     def _resolve_voice(self) -> str:
         """Return the voice id for this agent. Memoized on ``voice_id``
