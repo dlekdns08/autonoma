@@ -148,7 +148,9 @@ class ConnectionManager:
         """Fan out an event to every live connection (system-wide only)."""
         message = json.dumps({"event": event_type, "data": _serialize(data)})
         disconnected: list[WebSocket] = []
-        for ws in self.connections:
+        # Snapshot the connection list — a concurrent disconnect must not
+        # mutate the list we're iterating over (TOCTOU).
+        for ws in list(self.connections):
             try:
                 await ws.send_text(message)
             except Exception:
@@ -269,11 +271,15 @@ async def _run_swarm(
     max_rounds: int = 30,
     llm_config: LLMConfig | None = None,
 ) -> None:
-    """Run the swarm for a single session in the background."""
-    # Tag every awaitable spawned from this task with our session id so bus
-    # events get delivered only to this session's WebSocket.
-    _current_session_id.set(session_id)
+    """Run the swarm for a single session in the background.
 
+    Contract: the caller is responsible for setting ``_current_session_id``
+    on the context that runs this coroutine (see the ``start`` command
+    handler below, which uses ``contextvars.copy_context`` +
+    ``ctx.run(...set)`` + ``asyncio.create_task(..., context=ctx)``).
+    We intentionally do NOT call ``_current_session_id.set`` here so the
+    contract is explicit and there's a single source of truth.
+    """
     from autonoma.agents.swarm import AgentSwarm
     from autonoma.models import ProjectState
     from autonoma.workspace import WorkspaceManager
@@ -656,9 +662,20 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 text = msg.get("text", "")
                 target = msg.get("target")
                 if text.startswith("/cheer"):
-                    await bus.emit(
+                    # The ws command loop runs OUTSIDE the per-task ContextVar
+                    # context, so emitting through the bus would leak this
+                    # event to every connected user via the broadcast
+                    # fallback in ``_make_handler``. Send it straight to the
+                    # originating session's ws instead.
+                    await manager.send_to_ws(
+                        session.ws,
                         "world.event",
-                        title="The audience cheers wildly! Agents feel inspired!",
+                        {
+                            "title": (
+                                "The audience cheers wildly! "
+                                "Agents feel inspired!"
+                            ),
+                        },
                     )
                 elif text.startswith("/status") or text.startswith("/snapshot"):
                     await manager.send_to_ws(
@@ -677,14 +694,26 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         and session.task is not None
                         and not session.task.done()
                     ):
+                        # The guard above can pass and then the swarm may
+                        # become stale before the await resolves (the task
+                        # can finish or be torn down mid-flight). Catch the
+                        # attribute/runtime errors that result from touching
+                        # a half-cleaned-up swarm so the ws loop keeps
+                        # running for this client.
                         try:
                             await session.swarm.inject_human_message(
                                 text, target=target
                             )
+                        except (AttributeError, RuntimeError) as e:
+                            logger.warning(
+                                f"[WS:{session.session_id}] "
+                                f"inject_human_message race "
+                                f"(swarm stale): {e!r}"
+                            )
                         except Exception as e:
                             logger.error(
                                 f"[WS:{session.session_id}] "
-                                f"Failed to inject human message: {e}"
+                                f"Failed to inject human message: {e!r}"
                             )
 
     except WebSocketDisconnect:
