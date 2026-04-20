@@ -109,20 +109,21 @@ export default function Home() {
       />
 
       <main className="flex flex-1 overflow-hidden relative z-10">
-        {/* Left: VTuber spotlight (top) + pixel map (middle) + events (bottom) */}
-        <div className="flex flex-1 flex-col gap-2 p-2">
-          {/* VTuber panel — anime-style faces with lip-sync */}
-          <div className="flex-[3] min-h-0">
-            <VTuberStage
-              agents={state.agents}
-              getMouthAmplitude={getMouthAmplitude}
-              speakingAgents={speakingAgents}
-              onSelectAgent={handleSelectAgent}
-            />
-          </div>
+        {/* Left column — VTuber full-body stage. Wide enough for a
+            readable character plus speech bubble, narrow enough to
+            leave the pixel map room in the center. */}
+        <div className="flex w-[360px] shrink-0 flex-col gap-2 border-r border-fuchsia-500/10 p-2">
+          <VTuberStage
+            agents={state.agents}
+            getMouthAmplitude={getMouthAmplitude}
+            speakingAgents={speakingAgents}
+            onSelectAgent={handleSelectAgent}
+          />
+        </div>
 
-          {/* Pixel map — still shows movement/position */}
-          <div className="relative flex-[2] min-h-0">
+        {/* Center column — pixel map (top, 3/4) + event log (bottom). */}
+        <div className="flex flex-1 flex-col gap-2 p-2 min-w-0">
+          <div className="relative flex-[3] min-h-0">
             <Stage
               agents={state.agents}
               sky={state.sky}
