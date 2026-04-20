@@ -31,7 +31,11 @@ async def test_say_emits_emote_for_known_mood() -> None:
     agent.mood = Mood.EXCITED
 
     emotes: list[dict] = []
-    bus.on("agent.emote", lambda **kw: emotes.append(kw))
+
+    async def _capture(**kw):
+        emotes.append(kw)
+
+    bus.on("agent.emote", _capture)
 
     await agent._say("we did it!")
 
@@ -50,7 +54,11 @@ async def test_say_skips_emote_when_mood_has_no_icon(monkeypatch: pytest.MonkeyP
     agent.mood = Mood.EXCITED
 
     emotes: list[dict] = []
-    bus.on("agent.emote", lambda **kw: emotes.append(kw))
+
+    async def _capture(**kw):
+        emotes.append(kw)
+
+    bus.on("agent.emote", _capture)
 
     await agent._say("hi")
 
@@ -64,7 +72,11 @@ async def test_emote_helper_is_independent_of_say() -> None:
     standalone."""
     agent = _make_agent()
     received: list[dict] = []
-    bus.on("agent.emote", lambda **kw: received.append(kw))
+
+    async def _capture(**kw):
+        received.append(kw)
+
+    bus.on("agent.emote", _capture)
 
     await agent._emote("⭐", ttl_ms=1500)
 
