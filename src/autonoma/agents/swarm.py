@@ -144,10 +144,161 @@ class AgentSwarm:
         model_name = self._llm_config.model if self._llm_config else settings.model
         recorder = start_run(goal=project.description or project.name, model=model_name)
 
+        # Open a DB-persisted project row. Fire-and-forget failure: if the
+        # DB is unreachable we log and degrade to disabled-registry mode
+        # rather than crashing the swarm. (Important: never let persistence
+        # block the run.)
+        try:
+            await self.registry.begin_project(
+                name=project.name,
+                description=project.description or "",
+                goal=project.description or project.name,
+                max_rounds=max_rounds,
+            )
+            # Opportunistically hydrate the director, and anyone already
+            # spawned during initialize() before the registry was live.
+            for agent in list(self.agents.values()):
+                await self._hydrate_agent(agent)
+        except Exception as exc:  # pragma: no cover — persistence is non-critical
+            logger.warning("Registry begin_project failed, continuing without persistence: %s", exc)
+
         try:
             return await self._run_loop(project, max_rounds, recorder)
         finally:
             finish_run(recorder)
+            await self._finish_registry(project)
+
+    async def _hydrate_agent(self, agent: AutonomousAgent) -> None:
+        """Fetch persisted state for ``agent`` from the registry and apply it
+        to the in-memory instance. No-op when the registry is disabled."""
+        if not self.registry.enabled:
+            return
+        try:
+            live = await self.registry.hydrate(
+                role=agent.persona.role,
+                name=agent.name,
+                bones_species=agent.bones.species,
+                bones_species_emoji=agent.bones.species_emoji,
+                bones_catchphrase=agent.bones.catchphrase,
+                bones_rarity=agent.bones.rarity,
+                bones_stats=agent.bones.stats,
+                bones_traits=[t.value for t in agent.bones.traits],
+            )
+        except Exception as exc:  # pragma: no cover — non-critical
+            logger.warning("Registry hydrate failed for %s: %s", agent.name, exc)
+            return
+
+        # Attach uuid so death/relationship persistence can find the right row.
+        agent.character_uuid = live.character_uuid
+        # Apply persisted growth: level + total XP carry over, stats carry over
+        # (they hold lifetime averages). The per-run counters (tasks_completed
+        # etc. on AgentStats) intentionally restart at 0 — AgentStats tracks
+        # PER-RUN metrics; lifetime totals live on the DB row.
+        if not live.is_new:
+            agent.stats.level = live.level
+            # Preserve XP progress into the next level by re-applying earned XP
+            # relative to the new threshold.
+            agent.stats.xp = 0
+            # Seed memory with a short legacy note so the LLM knows they've
+            # been here before. Only meaningful if they actually have history.
+            legacy_bits: list[str] = []
+            if live.runs_survived or live.runs_died:
+                legacy_bits.append(
+                    f"Career: {live.runs_survived} runs survived, "
+                    f"{live.runs_died} runs died."
+                )
+            if live.past_wills:
+                legacy_bits.append(f"Past last words: {live.past_wills[0]}")
+            if live.past_epitaphs:
+                legacy_bits.append(f"Epitaph on file: {live.past_epitaphs[0]}")
+            if legacy_bits:
+                agent.memory.remember(
+                    " ".join(legacy_bits), memory_type="lesson", round_number=0,
+                )
+
+    async def _finish_registry(self, project: ProjectState) -> None:
+        """Persist every per-run mutation back to the DB at run end."""
+        if not self.registry.enabled or self.registry.project_uuid is None:
+            return
+        try:
+            # Sync every cached LiveCharacter with the latest in-memory stats.
+            for agent in self.agents.values():
+                uid = getattr(agent, "character_uuid", None)
+                if not uid:
+                    continue
+                live = next(
+                    (c for c in self.registry.cached() if c.character_uuid == uid),
+                    None,
+                )
+                if live is None:
+                    continue
+                live.level = agent.stats.level
+                live.total_xp_earned = agent.stats.total_xp_earned
+                live.tasks_completed_lifetime += agent.stats.tasks_completed
+                live.files_created_lifetime += agent.stats.files_created
+                live.last_mood = agent.mood.value if agent.mood else ""
+                live.stats = dict(agent.bones.stats)
+
+            # Build relationship list — only include edges with familiarity.
+            rel_payload: list[dict[str, Any]] = []
+            for (frm, to), rel in self.relationships._graph.items():
+                if rel.familiarity <= 0:
+                    continue
+                frm_uuid = self.registry.resolve_name(frm)
+                to_uuid = self.registry.resolve_name(to)
+                if not (frm_uuid and to_uuid):
+                    continue
+                rel_payload.append({
+                    "from_uuid": frm_uuid,
+                    "to_uuid": to_uuid,
+                    "trust": rel.trust,
+                    "familiarity": rel.familiarity,
+                    "shared_tasks": rel.shared_tasks,
+                    "conflicts": rel.conflicts,
+                    "sentiment": rel.sentiment,
+                    "last_interaction": rel.last_interaction[:500],
+                })
+
+            # Survivors: every hydrated character whose name wasn't marked dead.
+            dead_names = {d["name"] for d in self._deaths if "name" in d}
+            survivors = [
+                c.character_uuid for c in self.registry.cached()
+                if c.name not in dead_names
+            ]
+            # Map death payloads to the registry's uuids (names can die before
+            # their uuid is on the payload).
+            death_rows: list[dict[str, Any]] = []
+            for d in self._deaths:
+                uid = d.get("character_uuid") or self.registry.resolve_name(d.get("name", ""))
+                if uid:
+                    death_rows.append({
+                        "character_uuid": uid,
+                        "round": d.get("round", self._round),
+                        "cause": d.get("cause", "unknown"),
+                        "epitaph": d.get("epitaph", ""),
+                    })
+            will_rows: list[dict[str, str]] = []
+            for w in self._wills:
+                uid = w.get("character_uuid") or self.registry.resolve_name(w.get("name", ""))
+                if uid and w.get("text"):
+                    will_rows.append({"character_uuid": uid, "text": w["text"]})
+
+            exit_reason = getattr(project, "exit_reason", "") or "ended"
+            status = "completed" if getattr(project, "completed", False) else "incomplete"
+
+            await self.registry.finish_project(
+                status=status,
+                exit_reason=exit_reason,
+                rounds_used=self._round,
+                final_answer=getattr(project, "final_answer", "") or "",
+                survivors=survivors,
+                deaths=death_rows,
+                wills=will_rows,
+                relationships=rel_payload,
+                famous=[],  # Phase 5 will populate this
+            )
+        except Exception as exc:  # pragma: no cover — non-critical
+            logger.warning("Registry finish_project failed: %s", exc)
 
     async def _run_loop(
         self,
@@ -720,6 +871,9 @@ class AgentSwarm:
         )
 
         if agent:
+            # Hydrate persisted growth before announcing the spawn so
+            # listeners see the correct level in the first snapshot.
+            await self._hydrate_agent(agent)
             await bus.emit(
                 "agent.spawned",
                 name=name,
@@ -1066,6 +1220,31 @@ class AgentSwarm:
             agent.name, species, emoji, cause, self._round, memories,
         )
         logger.info(f"[Ghost] {agent.name} became a ghost ({cause})")
+
+        # Record the death for the persistent graveyard. We capture the
+        # agent's last-known private memory as their will so the character's
+        # final words travel into future runs (per design spec).
+        uid = getattr(agent, "character_uuid", None)
+        last_thought = agent.memory.private[-1].text if agent.memory.private else ""
+        epitaph = (
+            f"{agent.name} the {species} — fell at R{self._round} to {cause}. "
+            f"Last thought: {last_thought[:140]}"
+            if last_thought
+            else f"{agent.name} the {species} — fell at R{self._round} to {cause}."
+        )
+        self._deaths.append({
+            "character_uuid": uid,
+            "name": agent.name,
+            "round": self._round,
+            "cause": cause,
+            "epitaph": epitaph,
+        })
+        if last_thought:
+            self._wills.append({
+                "character_uuid": uid,
+                "name": agent.name,
+                "text": last_thought,
+            })
 
     async def _ghost_appearances(self) -> None:
         """Let ghosts appear and share wisdom."""
