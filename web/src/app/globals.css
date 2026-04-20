@@ -1,100 +1,258 @@
 @import "tailwindcss";
 
+/* ── Design Tokens ─────────────────────────────────────────────────────
+ *
+ * Unified palette: Violet (primary) + Cyan (secondary) + Rose (active).
+ * All components derive their colors from these vars so a single
+ * palette shift propagates everywhere.
+ * ─────────────────────────────────────────────────────────────────── */
 :root {
-  --background: #0a0a12;
-  --foreground: #ededed;
+  /* Surface layers (darkest → raised) */
+  --bg-void:    #07060f;
+  --bg-surf0:   #0c0b1d;
+  --bg-surf1:   #110e26;
+  --bg-surf2:   #18142f;
+
+  /* Borders */
+  --border-dim:    rgba(255,255,255,0.04);
+  --border-base:   rgba(255,255,255,0.08);
+  --border-accent: rgba(139,92,246,0.35);
+  --border-bright: rgba(139,92,246,0.7);
+
+  /* Primary — Violet */
+  --violet-300: #c4b5fd;
+  --violet-400: #a78bfa;
+  --violet-500: #8b5cf6;
+  --violet-600: #7c3aed;
+  --violet-dim:  rgba(139,92,246,0.15);
+
+  /* Secondary — Cyan */
+  --cyan-300: #67e8f9;
+  --cyan-400: #22d3ee;
+  --cyan-dim:  rgba(34,211,238,0.15);
+
+  /* Active / Speaking — Rose */
+  --rose-400: #fb7185;
+  --rose-500: #f43f5e;
+  --rose-dim:  rgba(251,113,133,0.2);
+
+  /* Status */
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-danger:  #ef4444;
+
+  /* Text */
+  --text-primary:   #ede9fe;
+  --text-secondary: #9d8ec4;
+  --text-dim:       #534a78;
+
+  /* Legacy compat */
+  --background: var(--bg-void);
+  --foreground:  var(--text-primary);
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-foreground:  var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
 }
 
-/* Custom scrollbar */
+/* ── Scrollbars ────────────────────────────────────────────────────── */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 4px;
+  width: 3px;
 }
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(139,92,246,0.2);
   border-radius: 9999px;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(139,92,246,0.4);
 }
 
-/* Slow spin for thinking state */
+/* ── Panel glass base ──────────────────────────────────────────────── */
+.panel-glass {
+  background: rgba(12,11,29,0.75);
+  border: 1px solid var(--border-base);
+  border-radius: 0.75rem; /* rounded-xl */
+}
+
+/* ── CRT scanline overlay ──────────────────────────────────────────── */
+/* Apply to the pixel-map stage wrapper for a subtle retro feel */
+.scanlines::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.06) 2px,
+    rgba(0,0,0,0.06) 4px
+  );
+  z-index: 2;
+  border-radius: inherit;
+}
+
+/* ── Animations ────────────────────────────────────────────────────── */
+
+/* Slow rotation — thinking indicator */
 @keyframes spin-slow {
   from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  to   { transform: rotate(360deg); }
 }
 .animate-spin-slow {
   animation: spin-slow 3s linear infinite;
 }
 
-/* Fade in for end screen */
+/* Fade-in slide — end screen, modals */
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in {
   animation: fade-in 0.8s ease-out;
 }
 
-/* Glowing border effect */
+/* Violet ambient glow pulse — focused borders */
 @keyframes glow {
-  0%, 100% { box-shadow: 0 0 5px rgba(236, 72, 153, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(236, 72, 153, 0.5); }
+  0%, 100% { box-shadow: 0 0 6px rgba(139,92,246,0.25); }
+  50%       { box-shadow: 0 0 18px rgba(139,92,246,0.5), 0 0 36px rgba(139,92,246,0.15); }
 }
 .animate-glow {
-  animation: glow 2s ease-in-out infinite;
+  animation: glow 2.4s ease-in-out infinite;
 }
 
-/* Screen shake for boss damage */
+/* Rose speaking-ring pulse — active/speaking state */
+@keyframes speaking-ring {
+  0%   { box-shadow: 0 0 0 0px rgba(251,113,133,0.7); }
+  70%  { box-shadow: 0 0 0 6px rgba(251,113,133,0); }
+  100% { box-shadow: 0 0 0 0px rgba(251,113,133,0); }
+}
+.animate-speaking {
+  animation: speaking-ring 1.2s ease-out infinite;
+}
+
+/* Screen shake — boss damage */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
-  10% { transform: translateX(-4px); }
-  20% { transform: translateX(4px); }
-  30% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  50% { transform: translateX(-2px); }
-  60% { transform: translateX(2px); }
-  70% { transform: translateX(-1px); }
-  80% { transform: translateX(1px); }
+  10%  { transform: translateX(-5px); }
+  30%  { transform: translateX(5px); }
+  50%  { transform: translateX(-3px); }
+  70%  { transform: translateX(3px); }
+  90%  { transform: translateX(-1px); }
 }
 .animate-shake {
-  animation: shake 0.5s ease-in-out;
+  animation: shake 0.45s ease-in-out;
 }
 
-/* Slide in from right for toasts */
+/* Slide in from right — toasts */
 @keyframes slide-in-right {
-  from { transform: translateX(100%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
 }
 .animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out;
+  animation: slide-in-right 0.28s cubic-bezier(0.16,1,0.3,1);
 }
 
-/* Float animation for particles */
+/* Float — particles, cookie bob */
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+  50%       { transform: translateY(-8px); }
 }
 .animate-float {
   animation: float 3s ease-in-out infinite;
 }
 
-/* Line clamp utility */
+/* Dialogue flow — animated SVG dash-offset */
+@keyframes dialogue-flow {
+  from { stroke-dashoffset: 14; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Typing cursor blink — LLM speech token preview */
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%,100% { opacity: 0; }
+}
+.animate-cursor {
+  animation: cursor-blink 0.9s step-end infinite;
+}
+
+/* Token appear — speech token typing effect */
+@keyframes token-appear {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-token {
+  animation: token-appear 0.08s ease-out;
+}
+
+/* Emote bubble pop */
+@keyframes emote-pop {
+  0%   { transform: scale(0.4) translateY(0); opacity: 0; }
+  15%  { transform: scale(1.2) translateY(-4px); opacity: 1; }
+  30%  { transform: scale(0.9) translateY(-2px); }
+  45%  { transform: scale(1.05) translateY(-6px); }
+  70%  { transform: scale(1) translateY(-10px); opacity: 1; }
+  100% { transform: scale(0.85) translateY(-18px); opacity: 0; }
+}
+
+/* Cookie animations */
+@keyframes cookieBob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50%       { transform: translateY(-4px) rotate(3deg); }
+}
+@keyframes cookiePop {
+  0%   { transform: scale(1); opacity: 1; }
+  40%  { transform: scale(1.6); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Boss shake */
+@keyframes bossShake {
+  0%,100% { transform: translateX(0); }
+  25%  { transform: translateX(-3px); }
+  75%  { transform: translateX(3px); }
+}
+
+/* Float up — XP/damage numbers */
+@keyframes floatUp {
+  0%   { transform: translateY(0) scale(1); opacity: 1; }
+  60%  { transform: translateY(-28px) scale(1.15); opacity: 1; }
+  100% { transform: translateY(-44px) scale(0.85); opacity: 0; }
+}
+
+/* Sakura petal fall */
+@keyframes sakura-fall {
+  0%   { transform: translateY(-24px) rotate(0deg) translateX(0); opacity: 0.9; }
+  25%  { transform: translateY(25vh) rotate(90deg) translateX(calc(var(--drift) * 0.4)); }
+  50%  { transform: translateY(50vh) rotate(180deg) translateX(var(--drift)); }
+  75%  { transform: translateY(75vh) rotate(270deg) translateX(calc(var(--drift) * 0.6)); }
+  100% { transform: translateY(105vh) rotate(360deg) translateX(calc(var(--drift) * 0.2)); opacity: 0; }
+}
+
+/* VTuber panel entry */
+@keyframes spotlight-in {
+  0%   { opacity: 0; transform: scale(0.97); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes bubble-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.94); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Utilities ─────────────────────────────────────────────────────── */
 .line-clamp-2 {
   overflow: hidden;
   display: -webkit-box;
