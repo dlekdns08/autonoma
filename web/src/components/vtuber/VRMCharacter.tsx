@@ -78,14 +78,15 @@ interface MoodTarget {
 }
 
 const MOOD_MAP: Record<string, MoodTarget> = {
-  happy: { happy: 0.75 },
-  excited: { happy: 0.9, surprised: 0.3 },
-  proud: { happy: 0.5, relaxed: 0.2 },
-  frustrated: { angry: 0.7 },
-  worried: { sad: 0.6, surprised: 0.15 },
-  relaxed: { relaxed: 0.6 },
-  determined: { angry: 0.3 },
-  focused: { relaxed: 0.2 },
+  idle:       { relaxed: 0.15 },
+  happy:      { happy: 0.8 },
+  excited:    { happy: 0.95, surprised: 0.4 },
+  proud:      { happy: 0.55, relaxed: 0.25 },
+  frustrated: { angry: 0.75 },
+  worried:    { sad: 0.5, surprised: 0.3 },
+  relaxed:    { relaxed: 0.7 },
+  determined: { angry: 0.45, relaxed: 0.1 },
+  focused:    { relaxed: 0.3 },
 };
 
 // Agent state → expression overlay, blended on top of mood blendshapes.
@@ -127,6 +128,8 @@ interface Bones {
   rightUpperArm: THREE.Object3D | null;
   leftLowerArm: THREE.Object3D | null;
   rightLowerArm: THREE.Object3D | null;
+  leftHand: THREE.Object3D | null;
+  rightHand: THREE.Object3D | null;
 }
 
 const GESTURES: Record<
@@ -279,6 +282,8 @@ function VRMModel({
       rightUpperArm: rightUpper,
       leftLowerArm: h?.getNormalizedBoneNode("leftLowerArm") ?? null,
       rightLowerArm: h?.getNormalizedBoneNode("rightLowerArm") ?? null,
+      leftHand: h?.getNormalizedBoneNode("leftHand") ?? null,
+      rightHand: h?.getNormalizedBoneNode("rightHand") ?? null,
     };
     // Gaze targeting: wire the VRM's lookAt system to track the camera
     // so eyes follow the viewer as they orbit. three-vrm reads the
@@ -335,6 +340,8 @@ function VRMModel({
     blinkNextAt: performance.now() / 1000 + blinkOffsetForName(agentName),
     blinking: false,
     blinkT: 0,
+    // Whether this blink is a double-blink (two rapid closes).
+    doubleBlink: false,
     smoothMood: { happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0 },
     lookBias: Math.random() * Math.PI * 2,
     // Rising-edge detector on the mouth amplitude feeds the speech nod.
@@ -361,6 +368,8 @@ function VRMModel({
     rightUpperArm: null,
     leftLowerArm: null,
     rightLowerArm: null,
+    leftHand: null,
+    rightHand: null,
   });
 
   useFrame((_, delta) => {
@@ -402,20 +411,39 @@ function VRMModel({
     }
 
     // ── Blink ────────────────────────────────────────────────────────
+    // Three blink varieties:
+    //   normal      — 15 BPM-ish, single close-open (speed 10).
+    //   double      — two rapid closes in quick succession (15% chance).
+    //   contemplative — slow, heavy blink when thinking (speed 4).
+    const isThinking = state === "thinking";
     if (!st.blinking && now >= st.blinkNextAt) {
       st.blinking = true;
       st.blinkT = 0;
+      st.doubleBlink = !isThinking && Math.random() < 0.15;
     }
     if (st.blinking && em) {
-      // Closed fraction is a triangle wave over 0..2 (close then open).
-      st.blinkT += delta * 10;
+      // Contemplative blink is slow and heavy; normal is crisp.
+      const blinkSpeed = isThinking ? 4 : 10;
+      st.blinkT += delta * blinkSpeed;
       const t = st.blinkT;
-      const v = t < 1 ? t : t < 2 ? 2 - t : 0;
+      let v: number;
+      if (st.doubleBlink) {
+        // Double blink: close→open→close→open over 0..4.
+        if (t < 1) v = t;
+        else if (t < 2) v = 2 - t;
+        else if (t < 2.4) v = 0;
+        else if (t < 3) v = t - 2.4;
+        else if (t < 4) v = 4 - t;
+        else v = 0;
+      } else {
+        v = t < 1 ? t : t < 2 ? 2 - t : 0;
+      }
       em.setValue("blink", Math.max(0, Math.min(1, v)));
-      if (t >= 2) {
+      const endT = st.doubleBlink ? 4 : 2;
+      if (t >= endT) {
         st.blinking = false;
-        // Next blink 2.5–5.5s out.
-        st.blinkNextAt = now + 2.5 + Math.random() * 3;
+        // Thinking: blinks less often (slow + heavy).
+        st.blinkNextAt = now + (isThinking ? 4 + Math.random() * 4 : 2.5 + Math.random() * 3);
       }
     }
 
@@ -481,6 +509,21 @@ function VRMModel({
       const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.022;
       bones.rightLowerArm.rotation.z = -Math.max(0, rLag + rSecondary * 0.6);
       bones.rightLowerArm.rotation.y = -Math.sin(now * 0.36 + phase + 3.2) * 0.016;
+    }
+
+    // Wrist subtle rotation — tiny roll so hands don't look locked flat.
+    if (bones.leftHand) {
+      bones.leftHand.rotation.z = Math.sin(now * 0.41 + phase + 0.7) * 0.025;
+      bones.leftHand.rotation.x = 0.05 + Math.sin(now * 0.29 + phase) * 0.012;
+    }
+    if (bones.rightHand) {
+      bones.rightHand.rotation.z = Math.sin(now * 0.38 + phase + 2.3) * 0.025;
+      bones.rightHand.rotation.x = 0.05 + Math.sin(now * 0.33 + phase + 1.4) * 0.012;
+    }
+
+    // Speaking lean — subtle chest push when actively talking (amplitude > 0.1).
+    if (amp > 0.1 && bones.chest) {
+      bones.chest.rotation.x += amp * 0.025;
     }
 
     // ── Speech-triggered head nod ────────────────────────────────────
@@ -601,14 +644,17 @@ function VRMModel({
     // Distance: tighter in spotlight (you're "looking at" the character),
     // wider for gallery tiles so everyone fits.
     const distance = spotlight ? 2.4 : 2.8;
-    camera.position.set(centerX, centerY + 0.05, centerZ + distance);
-    camera.lookAt(centerX, centerY - 0.05, centerZ);
+    // Slight downward camera position + upward look target creates a
+    // subtle "hero angle" — the viewer looks slightly up at the character,
+    // which reads as more impressive than a flat eye-level frame.
+    camera.position.set(centerX, centerY - 0.08, centerZ + distance);
+    camera.lookAt(centerX, centerY + 0.05, centerZ);
 
     // Tell OrbitControls where to pivot. Without this the controls would
     // orbit around the origin, which for VRoid models puts the pivot at
     // the character's feet and makes rotation feel wildly off.
     if (controlsRef.current) {
-      controlsRef.current.target.set(centerX, centerY - 0.05, centerZ);
+      controlsRef.current.target.set(centerX, centerY + 0.05, centerZ);
       controlsRef.current.update();
     }
   }, [vrm, spotlight, cameraResetNonce, camera]);
@@ -676,11 +722,13 @@ export default function VRMCharacter({
         flat
         camera={{ fov: spotlight ? 30 : 32, near: 0.1, far: 10 }}
       >
-        {/* Soft three-point: key, fill, rim. Matches the anime-ish flat
-            look most VRoid models are authored for. */}
-        <ambientLight intensity={0.75} />
-        <directionalLight position={[1.2, 2, 1.5]} intensity={1.2} />
-        <directionalLight position={[-1.5, 1.2, -1]} intensity={0.4} />
+        {/* Four-point lighting: ambient + key + fill + backlight rim.
+            The backlight (-z, slightly above) catches the hair and
+            shoulder silhouette, adding depth without needing PBR. */}
+        <ambientLight intensity={0.65} />
+        <directionalLight position={[1.2, 2, 1.5]} intensity={1.25} />
+        <directionalLight position={[-1.5, 1.2, -1]} intensity={0.35} />
+        <directionalLight position={[0, 1.8, -2.2]} intensity={0.55} color="#c4b5fd" />
         <Suspense fallback={null}>
           <VRMModel
             url={url}
