@@ -13,8 +13,15 @@ interface Props {
   files: FileEntry[];
   projectName: string;
   sessionId: number | null;
+  completed: boolean;
+  incompleteReason: string;
   onReset: () => void;
 }
+
+const INCOMPLETE_REASON_LABELS: Record<string, string> = {
+  max_rounds_reached: "최대 라운드에 도달했습니다",
+  stopped_externally: "중간에 중단되었습니다",
+};
 
 type Tab = "final" | "epilogue" | "leaderboard" | "multiverse" | "graveyard";
 
@@ -27,8 +34,13 @@ export default function EndScreen({
   files,
   projectName,
   sessionId,
+  completed,
+  incompleteReason,
   onReset,
 }: Props) {
+  const reasonLabel = incompleteReason
+    ? INCOMPLETE_REASON_LABELS[incompleteReason] ?? incompleteReason
+    : "";
   const [tab, setTab] = useState<Tab>("final");
 
   const allTabs: { id: Tab; label: string; icon: string; content: string }[] = [
