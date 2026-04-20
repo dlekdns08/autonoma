@@ -119,6 +119,8 @@ export function useSwarm() {
   const voice = useAgentVoice();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Exponential backoff state: attempt count resets on successful open.
+  const reconnectAttemptsRef = useRef(0);
 
   const addToast = useCallback((type: ToastItem["type"], title: string, message: string, icon: string) => {
     setToasts((prev) => [
@@ -636,13 +638,23 @@ export function useSwarm() {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      reconnectAttemptsRef.current = 0; // reset backoff on successful connect
+    };
     ws.onclose = () => {
       setConnected(false);
       // The old session id is dead on the backend the moment the socket
       // drops — clear it so stale downloads can't hit the wrong session.
       setSessionId(null);
-      reconnectRef.current = setTimeout(connect, 2000);
+      // Exponential backoff with jitter: 1s, 2s, 4s, 8s … capped at 30s.
+      // Jitter (±20%) prevents thundering-herd when many clients reconnect
+      // simultaneously after a server restart.
+      const attempt = reconnectAttemptsRef.current;
+      reconnectAttemptsRef.current = attempt + 1;
+      const base = Math.min(30_000, 1_000 * 2 ** attempt);
+      const jitter = base * 0.2 * (Math.random() * 2 - 1);
+      reconnectRef.current = setTimeout(connect, Math.round(base + jitter));
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (e) => handleMessage(e.data);
