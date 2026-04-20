@@ -162,6 +162,22 @@ export function useSwarm() {
           return;
         }
 
+        // Streaming speech tokens — show a typing bubble without flooding the
+        // event log.  `partial` carries the accumulated speech so far; `done`
+        // is true on the final token with the complete text.
+        if (event === "agent.speech_token") {
+          const agentName = data.agent as string | undefined;
+          const partial = (data.partial ?? data.text) as string | undefined;
+          if (!agentName || !partial) return;
+          setState((prev) => ({
+            ...prev,
+            agents: prev.agents.map((a) =>
+              a.name === agentName ? { ...a, speech: partial + (data.done ? "" : "…") } : a,
+            ),
+          }));
+          return;
+        }
+
         // Reaction icons fire often (one per moody _say). They live
         // outside SwarmState because nothing else reads them — keeping
         // them in their own slice avoids re-render cascades through
