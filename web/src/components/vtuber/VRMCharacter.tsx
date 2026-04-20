@@ -335,6 +335,21 @@ function VRMModel({
     return () => window.clearTimeout(timer);
   }, [mood]);
 
+  // Emote-triggered gestures — fires whenever a new emote arrives (seq bumps).
+  // This mirrors what the pixel character shows above their head so the VTuber
+  // body reacts in sync with the floating icon.
+  useEffect(() => {
+    if (!emote) return;
+    const gesture = gestureForEmote(emote.icon);
+    const delay = 80 + Math.random() * 120; // slight human lag
+    const timer = window.setTimeout(() => {
+      stateRef.current.gesture = gesture;
+      stateRef.current.gestureStart = performance.now() / 1000;
+    }, delay);
+    return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emote?.seq]);
+
   // State-triggered gestures. Celebrating always fires hype; talking
   // occasionally fires a wave to punctuate dialogue.
   useEffect(() => {
@@ -716,6 +731,7 @@ export default function VRMCharacter({
   onClick,
   cameraResetNonce,
   state,
+  emote,
 }: Props) {
   const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
   const url = `/vrm/${file}`;
