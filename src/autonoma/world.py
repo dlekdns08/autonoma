@@ -341,16 +341,25 @@ class AgentMemory:
         self.private: list[MemoryEntry] = []
         # Layer 2: Structured hindsight notes
         self.hindsight: list[HindsightNote] = []
+        # Guards `self.private` against concurrent mutation+iteration.
+        # `remember` is a sync method called from within async coroutines
+        # (agents/base.py, agents/swarm.py); readers like `get_summary`,
+        # `recall`, `to_dict` and the `entries` property also touch the
+        # same list from sync contexts. Using a threading.Lock is the
+        # conservative choice that covers both sync and any future cross-
+        # thread callers without forcing the API to become async.
+        self._private_lock = threading.Lock()
 
     def remember(self, text: str, memory_type: str = "observation", round_number: int = 0) -> None:
         """Add a private memory."""
         entry = MemoryEntry(text=text, memory_type=memory_type, round_number=round_number)
-        self.private.append(entry)
-        if len(self.private) > self.MAX_PRIVATE_MEMORIES:
-            self.private.sort(
-                key=lambda e: (e.memory_type in ("lesson", "failure"), e.round_number)
-            )
-            self.private = self.private[-self.MAX_PRIVATE_MEMORIES:]
+        with self._private_lock:
+            self.private.append(entry)
+            if len(self.private) > self.MAX_PRIVATE_MEMORIES:
+                self.private.sort(
+                    key=lambda e: (e.memory_type in ("lesson", "failure"), e.round_number)
+                )
+                self.private = self.private[-self.MAX_PRIVATE_MEMORIES:]
 
     def add_hindsight(
         self,
