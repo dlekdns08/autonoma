@@ -187,6 +187,28 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
   const popIdRef = useRef(0);
   const lastHitRef = useRef(0);
   const localFlashTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track any pending timers across renders so we can clear them on unmount.
+  // Each damage pop schedules a cleanup timer, and the flash interval spawns
+  // short "clear localFlash" timers — leaving them running after unmount
+  // would fire setState on a gone component.
+  const popTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const flashTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      popTimersRef.current.forEach(clearTimeout);
+      popTimersRef.current.clear();
+      flashTimersRef.current.forEach(clearTimeout);
+      flashTimersRef.current.clear();
+      if (localFlashTimerRef.current) {
+        clearInterval(localFlashTimerRef.current);
+        localFlashTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Backend hit: shake + damage number
   useEffect(() => {
@@ -198,9 +220,12 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
       const value = boss.lastDamage;
       const agent = boss.lastAttacker;
       setDamagePops((prev) => [...prev.slice(-3), { id, value, agent }]);
-      setTimeout(() => {
+      const timerId = setTimeout(() => {
+        popTimersRef.current.delete(timerId);
+        if (!mountedRef.current) return;
         setDamagePops((prev) => prev.filter((p) => p.id !== id));
       }, 1100);
+      popTimersRef.current.add(timerId);
     }
   }, [boss.hitSeq, boss.lastDamage, boss.lastAttacker]);
 
@@ -212,10 +237,20 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
     localFlashTimerRef.current = setInterval(() => {
       setShakeKey((k) => k + 1);
       setLocalFlash(true);
-      setTimeout(() => setLocalFlash(false), 120);
+      const resetId = setTimeout(() => {
+        flashTimersRef.current.delete(resetId);
+        if (!mountedRef.current) return;
+        setLocalFlash(false);
+      }, 120);
+      flashTimersRef.current.add(resetId);
     }, interval);
     return () => {
-      if (localFlashTimerRef.current) clearInterval(localFlashTimerRef.current);
+      if (localFlashTimerRef.current) {
+        clearInterval(localFlashTimerRef.current);
+        localFlashTimerRef.current = null;
+      }
+      flashTimersRef.current.forEach(clearTimeout);
+      flashTimersRef.current.clear();
     };
   }, [attackingAgents.length]);
 
