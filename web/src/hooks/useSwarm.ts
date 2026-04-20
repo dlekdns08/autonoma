@@ -628,6 +628,7 @@ export function useSwarm() {
     // sessionId here would leave download URLs unable to point at the
     // backend until the next auth.status round-trip.
     setState(INITIAL_STATE);
+    setEmotes({});
     voice.reset();
   }, [voice]);
 
