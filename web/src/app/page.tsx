@@ -75,6 +75,7 @@ export default function Home() {
             graveyard={state.graveyard}
             files={state.files}
             projectName={state.project_name}
+            onReset={resetSwarm}
           />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
