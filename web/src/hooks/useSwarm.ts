@@ -293,6 +293,9 @@ export function useSwarm() {
               if (data.graveyard) next.graveyard = data.graveyard as string;
               break;
 
+            case "swarm.reset":
+              return INITIAL_STATE;
+
             case "agent.spawned": {
               const name = data.name as string;
               if (!prev.agents.find((a) => a.name === name)) {
@@ -579,6 +582,7 @@ export function useSwarm() {
     sendMessage,
     sendToAgent,
     startSwarm,
+    resetSwarm,
     collectCookie,
     authState,
     authenticate,
