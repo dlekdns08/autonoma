@@ -95,13 +95,28 @@ class RunRecorder:
     # ── LLM call log ──────────────────────────────────────────────────
 
     async def log_llm_call(self, record: dict[str, Any]) -> None:
+        # The asyncio.Lock serializes writes from coroutines sharing this
+        # recorder. On top of that, we use os.open(O_APPEND | O_WRONLY |
+        # O_CREAT) + a single os.write() of the fully pre-formatted line so
+        # that even cross-recorder writers targeting the same path cannot
+        # interleave mid-line — POSIX guarantees that a single write() under
+        # O_APPEND is atomic for payloads up to PIPE_BUF and, in practice,
+        # for typical log line sizes to regular files.
         async with self._lock:
             self._call_seq += 1
             record = {"seq": self._call_seq, **record}
             try:
-                line = json.dumps(record, default=str, ensure_ascii=False)
-                with self._llm_path.open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
+                line = json.dumps(record, default=str, ensure_ascii=False) + "\n"
+                payload = line.encode("utf-8")
+                fd = os.open(
+                    str(self._llm_path),
+                    os.O_APPEND | os.O_WRONLY | os.O_CREAT,
+                    0o644,
+                )
+                try:
+                    os.write(fd, payload)
+                finally:
+                    os.close(fd)
             except Exception as e:
                 logger.warning(f"[tracing] llm log failed: {e}")
 
