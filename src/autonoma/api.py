@@ -956,9 +956,23 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     finally:
         # Tear down anything this session owned so no orphaned task keeps
         # burning tokens after the user disconnects.
-        await _cancel_session_task(session)
+        room_id = session.room_id
+        # Only cancel the swarm task when the *owner* leaves. Spectators
+        # disconnecting must not stop the show.
+        owned_room = _rooms.get(session.session_id)
+        if owned_room is not None:
+            await _cancel_session_task(session)
+            # Bid the room goodbye — drop the short code and the room
+            # registry entry. Any remaining viewers will see future
+            # events stop arriving and can choose to leave.
+            _short_codes.pop(owned_room.short_code, None)
+            _rooms.pop(session.session_id, None)
         manager.disconnect(ws)
         _cleanup_session(session.session_id)
+        # If this session was a *viewer* (not the owner), notify the
+        # remaining viewers so the audience count updates.
+        if owned_room is None and room_id != session.session_id:
+            await _notify_room_membership(room_id)
 
 
 def _require_session(session_id: int | None) -> SessionState:
