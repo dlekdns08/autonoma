@@ -18,6 +18,7 @@ import ChatInput from "@/components/ChatInput";
 import ChatPanel from "@/components/ChatPanel";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
+import VTuberStage from "@/components/vtuber/VTuberStage";
 import type { AgentData } from "@/lib/types";
 
 export default function Home() {
@@ -27,6 +28,7 @@ export default function Home() {
     authState, authenticate, logout, sessionId,
     emotes, getMouthAmplitude,
     room, chat, sendChat, setDisplayName, joinRoom,
+    speakingAgents,
   } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
 
@@ -107,9 +109,20 @@ export default function Home() {
       />
 
       <main className="flex flex-1 overflow-hidden relative z-10">
-        {/* Left: Stage + Events */}
+        {/* Left: VTuber spotlight (top) + pixel map (middle) + events (bottom) */}
         <div className="flex flex-1 flex-col gap-2 p-2">
-          <div className="relative flex-[3] min-h-0">
+          {/* VTuber panel — anime-style faces with lip-sync */}
+          <div className="flex-[3] min-h-0">
+            <VTuberStage
+              agents={state.agents}
+              getMouthAmplitude={getMouthAmplitude}
+              speakingAgents={speakingAgents}
+              onSelectAgent={handleSelectAgent}
+            />
+          </div>
+
+          {/* Pixel map — still shows movement/position */}
+          <div className="relative flex-[2] min-h-0">
             <Stage
               agents={state.agents}
               sky={state.sky}
@@ -127,6 +140,7 @@ export default function Home() {
               <Minimap agents={state.agents} onSelectAgent={handleSelectAgent} />
             </div>
           </div>
+
           <div className="flex-[1] min-h-0">
             <EventLog events={state.events} />
           </div>
