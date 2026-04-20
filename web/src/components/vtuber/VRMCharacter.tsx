@@ -772,6 +772,7 @@ export default function VRMCharacter({
             getMouthAmplitude={getMouthAmplitude}
             spotlight={spotlight}
             cameraResetNonce={cameraResetNonce}
+            emote={emote}
           />
         </Suspense>
       </Canvas>
