@@ -22,7 +22,7 @@
  * until the next utterance from someone else takes over.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentData } from "@/lib/types";
 import VRMCharacter from "./VRMCharacter";
 import { creditForAgent } from "./vrmCredits";
@@ -313,7 +313,12 @@ export default function VTuberStage({
       {/* ── Gallery strip ─────────────────────────────────────────── */}
       {/* OBS mode drops the gallery entirely — streams only want the
        *  spotlight character, and every extra Canvas costs WebGL
-       *  context slots we don't need to spend. */}
+       *  context slots we don't need to spend.
+       *
+       *  Each tile is a lightweight 2D card (no WebGL) so we don't blow
+       *  through the browser's 16-context limit with 8+ agents. The
+       *  spotlight holds the only Canvas; gallery tiles show emoji +
+       *  mood tint + state badge + speaking indicator. */}
       {!obsMode && (
       <div className="flex shrink-0 gap-1.5 overflow-x-auto rounded-xl border border-cyan-500/15 bg-slate-950/70 p-1.5 scrollbar-thin">
         {agents.map((agent) => {
@@ -326,25 +331,15 @@ export default function VTuberStage({
               onClick={() => setPinned(agent.name)}
               className={`group relative flex shrink-0 flex-col items-stretch overflow-hidden rounded-lg border transition-all ${
                 isFocus
-                  ? "border-fuchsia-400/70 bg-fuchsia-500/10 shadow-[0_0_12px_rgba(244,114,182,0.35)]"
+                  ? "border-fuchsia-400/70 shadow-[0_0_12px_rgba(244,114,182,0.35)]"
                   : isSpeaking
-                    ? "border-red-400/40 bg-red-500/5"
-                    : "border-white/10 bg-white/[0.02] hover:border-white/30"
+                    ? "border-red-400/40"
+                    : "border-white/10 hover:border-white/30"
               }`}
               style={{ width: 78, height: 108 }}
               title={`${agent.name} · Lv${agent.level} · ${agent.role}`}
             >
-              <div className="flex-1 min-h-0">
-                <VRMCharacter agent={agent} getMouthAmplitude={getMouthAmplitude} state={agent.state ?? "idle"} />
-              </div>
-              <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-1 py-0.5">
-                <span className="truncate font-mono text-[8px] font-bold text-white/80">
-                  {agent.name.slice(0, 7)}
-                </span>
-                <span className="font-mono text-[7px] text-yellow-400/90">
-                  L{agent.level}
-                </span>
-              </div>
+              <GalleryTile agent={agent} isSpeaking={isSpeaking} isFocus={isFocus} />
               {isSpeaking && (
                 <span className="absolute right-1 top-1 h-2 w-2 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.9)]" />
               )}
@@ -376,6 +371,99 @@ export default function VTuberStage({
           }
         }
       `}</style>
+    </div>
+  );
+}
+
+// ── GalleryTile ───────────────────────────────────────────────────────
+//
+// Lightweight 2D replacement for the per-agent VRMCharacter tiles in
+// the gallery strip. Renders emoji + mood tint + state badge + XP bar
+// with zero WebGL cost. The spotlight holds the only Three.js canvas;
+// all gallery entries are plain DOM so we stay well under the browser's
+// 16-context limit even with 8+ agents loaded.
+
+const STATE_ICONS: Record<string, string> = {
+  thinking: "💭",
+  working: "⚙️",
+  talking: "💬",
+  celebrating: "🎉",
+  idle: "",
+};
+
+function GalleryTile({
+  agent,
+  isSpeaking,
+  isFocus,
+}: {
+  agent: AgentData;
+  isSpeaking: boolean;
+  isFocus: boolean;
+}) {
+  const stateIcon = STATE_ICONS[agent.state] ?? "";
+  // Derive a subtle background from the agent's color field (hex/css).
+  // We layer it as a very-low-opacity fill so tiles are visually distinct
+  // without shouting over the spotlight.
+  const bgStyle: React.CSSProperties = agent.color
+    ? { background: `color-mix(in srgb, ${agent.color} 18%, transparent)` }
+    : {};
+
+  const xpPct =
+    agent.xp_to_next > 0
+      ? Math.round((agent.xp / agent.xp_to_next) * 100)
+      : 0;
+
+  return (
+    <div className="flex h-full flex-col" style={bgStyle}>
+      {/* Emoji avatar area */}
+      <div
+        className={`relative flex flex-1 items-center justify-center transition-all ${
+          isSpeaking ? "scale-110" : "scale-100"
+        }`}
+      >
+        {/* Speaking ring */}
+        {isSpeaking && (
+          <span className="absolute inset-1 animate-ping rounded-full border border-red-400/50" />
+        )}
+        {/* Focus ring */}
+        {isFocus && !isSpeaking && (
+          <span className="absolute inset-1 rounded-full border border-fuchsia-400/40" />
+        )}
+        <span
+          className="select-none"
+          style={{ fontSize: 28, lineHeight: 1, filter: isSpeaking ? "drop-shadow(0 0 6px rgba(248,113,113,0.7))" : undefined }}
+          aria-label={agent.name}
+        >
+          {agent.emoji}
+        </span>
+        {/* State icon overlay */}
+        {stateIcon && (
+          <span
+            className="absolute bottom-0 right-0 text-[10px] leading-none"
+            title={agent.state}
+          >
+            {stateIcon}
+          </span>
+        )}
+      </div>
+
+      {/* Name + level bar */}
+      <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-1 py-0.5">
+        <span className="truncate font-mono text-[8px] font-bold text-white/80">
+          {agent.name.slice(0, 7)}
+        </span>
+        <span className="font-mono text-[7px] text-yellow-400/90">
+          L{agent.level}
+        </span>
+      </div>
+
+      {/* XP progress bar — 1px tall, full width */}
+      <div className="h-[2px] w-full bg-white/10">
+        <div
+          className="h-full bg-fuchsia-400/70 transition-all duration-500"
+          style={{ width: `${xpPct}%` }}
+        />
+      </div>
     </div>
   );
 }
