@@ -131,6 +131,9 @@ export function useSwarm() {
         // ── Auth events ──────────────────────────────────────────────
         if (event === "auth.status") {
           const hasAdmin = !!(data.has_admin);
+          if (typeof data.session_id === "number") {
+            setSessionId(data.session_id);
+          }
           setAuthState((prev) => ({
             ...prev,
             status: "required",
@@ -590,5 +593,6 @@ export function useSwarm() {
     authState,
     authenticate,
     logout,
+    sessionId,
   };
 }
