@@ -61,6 +61,8 @@ interface Props {
   cameraResetNonce?: number;
   /** Agent behavioral state: "idle" | "working" | "talking" | "thinking" | "celebrating" etc. */
   state?: string;
+  /** Current reaction emote from the pixel stage — triggers a matching gesture. */
+  emote?: AgentEmote | null;
 }
 
 // ── Mood → VRM standard emote ────────────────────────────────────────
