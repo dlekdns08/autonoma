@@ -125,7 +125,6 @@ class AutonomaEngine:
 
     async def _run_headless(self, project: ProjectState, max_rounds: int) -> None:
         """Run without TUI, just console output."""
-        _headless_handlers: list[tuple[str, Any]] = []
 
         async def on_speech(agent: str = "", text: str = "", **_: Any) -> None:
             self.console.print(f"  [{agent}] {text}")
@@ -133,17 +132,30 @@ class AutonomaEngine:
         async def on_file(agent: str = "", path: str = "", **_: Any) -> None:
             self.console.print(f"  [{agent}] created {path}")
 
-        bus.on("agent.speech", on_speech)
-        bus.on("file.created", on_file)
-        _headless_handlers.append(("agent.speech", on_speech))
-        _headless_handlers.append(("file.created", on_file))
-
+        # Register each handler inside try/finally so that even if a later
+        # bus.on(...) raises we still unregister the ones that succeeded,
+        # and swarm.run() errors always release our subscriptions.
+        _headless_handlers: list[tuple[str, Any]] = []
         try:
+            bus.on("agent.speech", on_speech)
+            _headless_handlers.append(("agent.speech", on_speech))
+            bus.on("file.created", on_file)
+            _headless_handlers.append(("file.created", on_file))
+
             await self.swarm.run(project, max_rounds=max_rounds)
         finally:
-            # Unsubscribe headless handlers to prevent leaks
+            # Unsubscribe every successfully-registered handler, ignoring
+            # any secondary failures so we never mask the original error.
             for event, handler in _headless_handlers:
-                bus.off(event, handler)
+                try:
+                    bus.off(event, handler)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Failed to unregister headless handler %s for %s: %r",
+                        handler,
+                        event,
+                        exc,
+                    )
 
     def _print_summary(self, project: ProjectState) -> None:
         table = Table(title="🌟 Build Summary")
