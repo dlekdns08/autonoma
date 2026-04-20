@@ -44,7 +44,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { Suspense, useEffect, useMemo, useRef, type ComponentRef } from "react";
 import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { AgentData } from "@/lib/types";
+import type { AgentData, AgentEmote } from "@/lib/types";
 import { vrmFileForAgent } from "./vrmCredits";
 
 interface Props {
