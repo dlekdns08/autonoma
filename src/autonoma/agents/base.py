@@ -55,6 +55,21 @@ logger = logging.getLogger(__name__)
 MAX_INBOX_SIZE = 50
 LLM_TIMEOUT_SECONDS = 60
 
+# Message priority: lower number = higher priority (processed/kept first).
+# Critical coordination messages are never crowded out by chat.
+_MSG_PRIORITY: dict[str, int] = {
+    "task_assignment": 0,
+    "help_request":    1,
+    "help_response":   2,
+    "review_request":  3,
+    "review_response": 3,
+    "chat":            9,
+}
+
+def _msg_priority(msg: "AgentMessage") -> int:
+    mt = msg.msg_type
+    return _MSG_PRIORITY.get(mt.value if hasattr(mt, "value") else str(mt), 5)
+
 # Mood → reaction-bubble icon. Drives the small EmoteBubble that the
 # frontend paints above the sprite when an agent speaks. Unlisted moods
 # emit nothing (the bubble simply stays empty); we'd rather miss a beat
@@ -266,7 +281,17 @@ class AutonomousAgent:
     def receive_message(self, msg: AgentMessage) -> None:
         self.inbox.append(msg)
         if len(self.inbox) > MAX_INBOX_SIZE:
-            self.inbox = self.inbox[-MAX_INBOX_SIZE:]
+            # Evict lowest-priority (highest priority number) messages first.
+            # Among equal-priority messages, evict the oldest so recent context
+            # is preserved.  Two-key sort: (priority ASC, insertion-index DESC)
+            # puts the MAX_INBOX_SIZE messages we want to keep at the front,
+            # then we restore arrival order so callers see a time-ordered inbox.
+            pairs = list(enumerate(self.inbox))
+            pairs.sort(key=lambda p: (_msg_priority(p[1]), -p[0]))
+            self.inbox = sorted(
+                (m for _, m in pairs[:MAX_INBOX_SIZE]),
+                key=lambda m: m.timestamp,
+            )
 
     # ── Decision Engine (Harness-Aware) ───────────────────────────────
 
@@ -335,6 +360,73 @@ RECENT MESSAGES:
 
         return situation
 
+    # Matches the start of the JSON "speech" value so we can begin emitting
+    # typing tokens before the full response is assembled.
+    _SPEECH_KEY_RE = re.compile(r'"speech"\s*:\s*"')
+
+    async def _stream_decide(self, system: str, situation: str) -> str:
+        """Stream the LLM decision, emitting agent.speech_token events as the
+        'speech' field value arrives.  Returns the full raw text for JSON parse.
+
+        State machine:
+          SCAN  — accumulating buffer, haven't found the "speech": " key yet
+          EMIT  — inside the speech value, forwarding chars as tokens
+          DONE  — closed speech string, just draining the rest
+        """
+        chunks: list[str] = []
+        buf = ""
+        state: str = "SCAN"   # SCAN | EMIT | DONE
+        speech_buf: list[str] = []
+
+        async for chunk in self.client.stream(
+            model=self._model,
+            max_tokens=4096,
+            temperature=self._temperature,
+            system=system,
+            messages=[{"role": "user", "content": situation}],
+        ):
+            chunks.append(chunk)
+
+            if state == "DONE":
+                continue
+
+            # Process each character for speech extraction
+            for ch in chunk:
+                if state == "SCAN":
+                    buf += ch
+                    # Keep buffer small: only need the tail where the key could start
+                    if len(buf) > 200:
+                        buf = buf[-200:]
+                    if self._SPEECH_KEY_RE.search(buf):
+                        state = "EMIT"
+                        buf = ""
+
+                elif state == "EMIT":
+                    if ch == '"' and (not speech_buf or speech_buf[-1] != "\\"):
+                        # Closing quote — speech value complete
+                        state = "DONE"
+                        speech_text = "".join(speech_buf)
+                        if speech_text:
+                            await bus.emit(
+                                "agent.speech_token",
+                                agent=self.name,
+                                text=speech_text,
+                                done=True,
+                            )
+                    else:
+                        speech_buf.append(ch)
+                        # Emit every ~4 chars to keep WS fan-out costs low
+                        if len(speech_buf) % 4 == 0:
+                            await bus.emit(
+                                "agent.speech_token",
+                                agent=self.name,
+                                token=ch,
+                                partial="".join(speech_buf),
+                                done=False,
+                            )
+
+        return "".join(chunks)
+
     async def _decide(self, situation: str) -> dict[str, Any]:
         """Ask LLM to decide the next action, using harness-aware system prompt."""
 
@@ -372,18 +464,8 @@ Rules:
 - Keep speech SHORT and in-character (1 sentence max)"""
 
         try:
-            response = await traced_messages_create(
-                self.client,
-                agent=self.name,
-                phase="decide",
-                model=self._model,
-                max_tokens=4096,
-                temperature=self._temperature,
-                system=system,
-                messages=[{"role": "user", "content": situation}],
-            )
-            self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
-            return _extract_json(response.content[0].text)
+            full_text = await self._stream_decide(system, situation)
+            return _extract_json(full_text)
 
         except LLMConnectionError as e:
             logger.warning(f"[{self.name}] API connection error: {e}")
