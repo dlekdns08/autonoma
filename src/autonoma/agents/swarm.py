@@ -252,12 +252,19 @@ class AgentSwarm:
                 live.stats = dict(agent.bones.stats)
 
             # Build relationship list — only include edges with familiarity.
+            # Build a name→uuid index once (O(n)) instead of calling
+            # resolve_name inside the loop (which was O(n) per edge → O(n×m)).
+            name_to_uuid: dict[str, str] = {}
+            for c in self.registry.cached():
+                if c.name and c.character_uuid:
+                    name_to_uuid[c.name] = c.character_uuid
+
             rel_payload: list[dict[str, Any]] = []
             for (frm, to), rel in self.relationships._graph.items():
                 if rel.familiarity <= 0:
                     continue
-                frm_uuid = self.registry.resolve_name(frm)
-                to_uuid = self.registry.resolve_name(to)
+                frm_uuid = name_to_uuid.get(frm)
+                to_uuid = name_to_uuid.get(to)
                 if not (frm_uuid and to_uuid):
                     continue
                 rel_payload.append({
