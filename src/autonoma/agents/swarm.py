@@ -309,6 +309,23 @@ class AgentSwarm:
 
         self._running = False
 
+        # Only treat the project as completed when ALL tasks are DONE. This
+        # prevents the UI's "프로젝트 완료!" banner from firing after a
+        # timeout or external stop where tasks remain unfinished.
+        all_tasks_done = bool(project.tasks) and all(
+            t.status == TaskStatus.DONE for t in project.tasks
+        )
+        if not all_tasks_done and project.completed:
+            logger.warning(
+                f"[Swarm] Clearing stale project.completed=True flag "
+                f"(exit_reason={exit_reason}, tasks_done="
+                f"{sum(1 for t in project.tasks if t.status == TaskStatus.DONE)}/"
+                f"{len(project.tasks)})"
+            )
+            project.completed = False
+        elif all_tasks_done:
+            project.completed = True
+
         # ── Terminal-state diagnostic ──────────────────────────────────────
         # Captures exactly why the run ended and what state the tasks were in.
         # Critical for debugging runs that finish with incomplete tasks.
@@ -376,10 +393,16 @@ class AgentSwarm:
         multiverse_report = self.multiverse.get_what_if_report()
         graveyard = self.ghost_realm.get_graveyard()
 
+        # Distinguish real completion from timeout / external stop so the
+        # frontend can render an appropriate banner. ``incomplete_reason`` is
+        # only populated when completed=False and mirrors the exit_reason the
+        # loop produced (max_rounds_reached, stopped_externally, etc.).
+        incomplete_reason = "" if project.completed else exit_reason
         await bus.emit(
             "swarm.finished",
             rounds=self._round,
             completed=project.completed,
+            incomplete_reason=incomplete_reason,
             files=len(project.files),
             total_tokens=total_tokens,
             final_answer=final_answer,
@@ -407,6 +430,16 @@ class AgentSwarm:
 
         Returns True if the message was delivered.
         """
+        # Guard: don't queue feedback into an inbox no one will read.
+        # Without this, messages sent before run() / after stop() pile up in
+        # the recipient's inbox and are silently dropped on next run init.
+        if not self._running:
+            logger.warning(
+                f"[Swarm] inject_human_message dropped: swarm is not running "
+                f"(target={target or 'Director'}, text_preview={text[:60]!r})"
+            )
+            return False
+
         recipient_name = target or "Director"
         recipient = self.agents.get(recipient_name)
         if recipient is None:
