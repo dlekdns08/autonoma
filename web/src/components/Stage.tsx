@@ -11,7 +11,6 @@ import { buildMap } from "./stage/pixel/mapData";
 import {
   useAgentMotion,
   type MotionState,
-  type DialogueBubble,
   type DialoguePair,
 } from "./stage/useAgentMotion";
 
@@ -528,15 +527,6 @@ function AgentOnMap({
         transition: "top 120ms linear",
       }}
     >
-      {speech && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 max-w-[220px] whitespace-nowrap">
-          <div className="relative rounded-md border border-slate-700 bg-white/95 px-2 py-0.5 text-[10px] text-slate-900 shadow-lg">
-            <div className="truncate font-medium">{speech}</div>
-            <div className="absolute -bottom-[4px] left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-b border-r border-slate-700 bg-white/95" />
-          </div>
-        </div>
-      )}
-
       {emote && (
         // `key` includes seq so a re-emote on the same agent restarts
         // the animation instead of being silently merged.
