@@ -1,0 +1,276 @@
+"""SQLAlchemy Core table definitions for the persistent character DB.
+
+We use Core (not the ORM) because character state is a small, bounded
+record and we don't want Session/lazy-loading complexity. Everything is
+accessed via ``sqlalchemy.insert/select/update`` with explicit binds.
+
+Design notes
+────────────
+- Every character has a stable ``character_uuid`` (string) independent of
+  its display name. Names can collide across sessions; the uuid can't.
+- ``seed_hash`` — md5 of ``f"{role}:{name}:autonoma-world-v1"`` — is the
+  deterministic key the swarm already uses in ``AgentBones.from_role``.
+  We index it to enable "give me the same character as last time for this
+  role+name combination".
+- ``rarity`` is persisted on the character row and drives the revival
+  policy: legendary → always revived, everything else → per-run decision.
+- Graveyard rows are immutable; once an agent dies they stay dead forever
+  in the sense that the DB still holds their tombstone.
+- Wills are short messages an agent leaves when they die. Loaded into the
+  opening narrator/spawn context of future runs that rehire the same
+  character (if they somehow come back) or into the graveyard UI for
+  everyone else.
+- Keep nullable columns minimal; use explicit defaults at insert time so
+  schema evolution stays predictable.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    Index,
+    func,
+)
+
+metadata = MetaData()
+
+
+# ── characters ─────────────────────────────────────────────────────────
+# One row per distinct character ever spawned. Re-visiting a role+name
+# seed returns this exact row; the registry owns that lookup.
+characters = Table(
+    "characters",
+    metadata,
+    Column("character_uuid", String(36), primary_key=True),
+    Column("seed_hash", String(32), nullable=False, index=True),
+    Column("name", String(64), nullable=False),
+    Column("role", String(128), nullable=False),
+    Column("species", String(32), nullable=False),
+    Column("species_emoji", String(8), nullable=False),
+    Column("catchphrase", String(128), nullable=False, default=""),
+    Column("rarity", String(16), nullable=False, default="common"),
+    # cumulative, across every run the character has lived through
+    Column("level", Integer, nullable=False, default=1),
+    Column("total_xp_earned", Integer, nullable=False, default=0),
+    Column("runs_survived", Integer, nullable=False, default=0),
+    Column("runs_died", Integer, nullable=False, default=0),
+    Column("tasks_completed_lifetime", Integer, nullable=False, default=0),
+    Column("files_created_lifetime", Integer, nullable=False, default=0),
+    # json blob; keeps ``stats`` (debugging/patience/chaos/wisdom/speed)
+    # and any trait list without forcing more tables. Access via json1.
+    Column("traits_json", Text, nullable=False, default="[]"),
+    Column("stats_json", Text, nullable=False, default="{}"),
+    # Last known mood/title flavor; purely cosmetic
+    Column("last_mood", String(32), nullable=False, default=""),
+    Column("voice_id", String(64), nullable=False, default=""),
+    Column("is_alive", Integer, nullable=False, default=1),  # 0/1
+    Column("first_seen_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("last_seen_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    # No unique constraint on (seed_hash, name): when a non-legendary
+    # character dies, the next run with the same seed spawns a *new* row
+    # (fresh uuid) so the graveyard row stays intact. The registry picks
+    # the right row at lookup time (alive > dead legendary > create new).
+)
+
+Index("ix_characters_seed", characters.c.seed_hash)
+
+
+# ── projects ──────────────────────────────────────────────────────────
+# One row per swarm run. A "project" here means: a single AgentSwarm.run()
+# invocation that was persisted. Tracks outcome so we can tell the story
+# of a character's arc across the runs they were in.
+projects = Table(
+    "projects",
+    metadata,
+    Column("project_uuid", String(36), primary_key=True),
+    Column("name", String(128), nullable=False, default=""),
+    Column("description", Text, nullable=False, default=""),
+    Column("goal", Text, nullable=False, default=""),
+    Column("status", String(16), nullable=False, default="running"),
+    Column("rounds_used", Integer, nullable=False, default=0),
+    Column("max_rounds", Integer, nullable=False, default=30),
+    Column("started_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("ended_at", DateTime, nullable=True),
+    Column("exit_reason", String(32), nullable=False, default=""),
+    Column("final_answer", Text, nullable=False, default=""),
+)
+
+
+# ── project_participants ──────────────────────────────────────────────
+# Many-to-many between projects and characters. Holds per-run outcomes
+# for each character: did they survive, how much XP did they earn, etc.
+project_participants = Table(
+    "project_participants",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("role_in_run", String(128), nullable=False, default=""),
+    Column("xp_earned", Integer, nullable=False, default=0),
+    Column("tasks_completed", Integer, nullable=False, default=0),
+    Column("files_created", Integer, nullable=False, default=0),
+    Column("survived", Integer, nullable=False, default=1),  # 0/1
+    Column("death_cause", String(64), nullable=False, default=""),
+    Column("joined_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("left_at", DateTime, nullable=True),
+    UniqueConstraint("project_uuid", "character_uuid", name="uq_pp_project_char"),
+)
+
+
+# ── character_stats_history ───────────────────────────────────────────
+# Append-only snapshots taken at project end, so we can draw a graph of
+# a character's stat growth across their career.
+character_stats_history = Table(
+    "character_stats_history",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("level", Integer, nullable=False, default=1),
+    Column("total_xp_earned", Integer, nullable=False, default=0),
+    Column("stats_json", Text, nullable=False, default="{}"),
+    Column("recorded_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+
+# ── relationships ─────────────────────────────────────────────────────
+# Directional. (from_uuid -> to_uuid) persisted at project end. On the
+# next run where both characters are present, trust is seeded from here.
+relationships = Table(
+    "relationships",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "from_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "to_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("trust", Float, nullable=False, default=0.5),
+    Column("familiarity", Integer, nullable=False, default=0),
+    Column("shared_tasks", Integer, nullable=False, default=0),
+    Column("conflicts", Integer, nullable=False, default=0),
+    Column("sentiment", String(16), nullable=False, default="neutral"),
+    Column("last_interaction", Text, nullable=False, default=""),
+    Column("updated_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    UniqueConstraint("from_uuid", "to_uuid", name="uq_relationship_directed"),
+)
+
+Index("ix_rel_from", relationships.c.from_uuid)
+Index("ix_rel_to", relationships.c.to_uuid)
+
+
+# ── graveyard ─────────────────────────────────────────────────────────
+# One row per death. A character CAN die multiple times if they're
+# revived in later runs — each death gets its own tombstone so the
+# visual graveyard tells the full story.
+graveyard = Table(
+    "graveyard",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("died_at_round", Integer, nullable=False, default=0),
+    Column("cause", String(64), nullable=False, default="unknown"),
+    Column("epitaph", Text, nullable=False, default=""),
+    Column("died_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+
+# ── wills ─────────────────────────────────────────────────────────────
+# A character's final message at the moment of death. The display layer
+# pulls these for graveyard rendering + eulogy context.
+wills = Table(
+    "wills",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("text", Text, nullable=False, default=""),
+    Column("written_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+
+# ── famous_quotes ─────────────────────────────────────────────────────
+# Memorable one-liners a character said. Curated by the narrator at the
+# end of each run (top 1-2 quotes per project). Shown in the character's
+# profile / the hall of fame overlay.
+famous_quotes = Table(
+    "famous_quotes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("text", Text, nullable=False, default=""),
+    Column("round_number", Integer, nullable=False, default=0),
+    Column("saved_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
