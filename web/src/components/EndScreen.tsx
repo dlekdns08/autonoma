@@ -66,12 +66,22 @@ export default function EndScreen({
     <div className="flex flex-col items-center justify-start h-full gap-5 p-6 overflow-y-auto scrollbar-thin">
       {/* Celebration Header */}
       <div className="text-center animate-fade-in">
-        <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-cyan-400 to-yellow-400 font-mono">
-          ~*~ 프로젝트 완료! ~*~
+        <h1
+          className={`text-3xl font-bold text-transparent bg-clip-text font-mono ${
+            completed
+              ? "bg-gradient-to-r from-fuchsia-400 via-cyan-400 to-yellow-400"
+              : "bg-gradient-to-r from-amber-300 via-orange-300 to-rose-300"
+          }`}
+        >
+          {completed ? "~*~ 프로젝트 완료! ~*~" : "~*~ 여정이 끝났습니다 ~*~"}
         </h1>
         <p className="mt-2 text-white/50 text-sm">
-          {projectName ? `'${projectName}' — ` : ""}모험이 막을 내렸습니다.
+          {projectName ? `'${projectName}' — ` : ""}
+          {completed ? "모험이 막을 내렸습니다." : "일부 작업이 끝나지 않았습니다."}
         </p>
+        {!completed && reasonLabel && (
+          <p className="mt-1 text-xs font-mono text-amber-300/70">⚠ {reasonLabel}</p>
+        )}
         <button
           onClick={onReset}
           className="mt-4 rounded-xl border border-fuchsia-500/40 bg-gradient-to-r from-fuchsia-600/30 to-cyan-600/30 px-6 py-2 text-xs font-bold font-mono text-fuchsia-100 hover:from-fuchsia-500/40 hover:to-cyan-500/40 hover:border-fuchsia-400/60 transition-all"
