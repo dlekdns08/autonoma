@@ -6,7 +6,7 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; icon: string }> 
   open: { bg: "bg-white/5", text: "text-white/40", icon: "☆" },
   assigned: { bg: "bg-yellow-500/10", text: "text-yellow-400", icon: "♫" },
   in_progress: { bg: "bg-cyan-500/10", text: "text-cyan-400", icon: "♪" },
-  review: { bg: "bg-fuchsia-500/10", text: "text-fuchsia-400", icon: "♦" },
+  review: { bg: "bg-violet-500/10", text: "text-violet-400", icon: "♦" },
   done: { bg: "bg-green-500/10", text: "text-green-400", icon: "★" },
   blocked: { bg: "bg-red-500/10", text: "text-red-400", icon: "✖" },
 };
@@ -21,8 +21,8 @@ export default function TaskPanel({ tasks }: Props) {
   const pct = total > 0 ? (done / total) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-yellow-500/20 bg-slate-900/50 p-3">
-      <h3 className="text-xs font-bold text-yellow-300 font-mono">★ Tasks ★</h3>
+    <div className="flex flex-col gap-2 rounded-xl p-3" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(12,11,29,0.7)" }}>
+      <h3 className="text-[10px] font-bold font-mono tracking-widest uppercase" style={{ color: "#a78bfa" }}>◈ Tasks</h3>
 
       {tasks.length === 0 ? (
         <p className="text-xs text-white/30 font-mono">(?.?) No tasks yet...</p>
