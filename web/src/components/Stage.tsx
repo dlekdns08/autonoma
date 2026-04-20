@@ -122,12 +122,15 @@ export default function Stage({
           const motion = motions[agent.name];
           if (!motion) return null;
           const bubble = bubbles.find((b) => b.speaker === agent.name);
+          const emote = emotes?.[agent.name] ?? null;
           return (
             <AgentOnMap
               key={agent.name}
               agent={agent}
               motion={motion}
               dialogue={bubble ?? null}
+              emote={emote}
+              getMouthAmplitude={getMouthAmplitude}
               onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
             />
           );
