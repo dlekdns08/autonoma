@@ -6,9 +6,11 @@ import type {
   AgentEmote,
   AuthState,
   BossData,
+  ChatMessage,
   CookieData,
   FileEntry,
   RelationshipData,
+  RoomState,
   SwarmState,
   TaskData,
   UserCredentials,
@@ -99,6 +101,21 @@ export function useSwarm() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [emotes, setEmotes] = useState<Record<string, AgentEmote>>({});
   const emoteSeqRef = useRef(0);
+  // Multi-viewer state — defaults to a private room of one. The host
+  // gets `code` filled in on `swarm.starting`; viewers get it from the
+  // ?room= query param on first connect.
+  const [room, setRoom] = useState<RoomState>({
+    code: null,
+    isOwner: true,
+    viewerCount: 1,
+    viewers: [],
+  });
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const chatSeqRef = useRef(0);
+  // Set once at mount — the room param is attempt-to-join-as-spectator.
+  // Stays in a ref so reconnects can re-attempt without surviving page
+  // navigation that wipes the URL (which is the right behavior).
+  const pendingJoinCodeRef = useRef<string | null>(null);
   const voice = useAgentVoice();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
