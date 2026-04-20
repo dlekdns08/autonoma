@@ -503,6 +503,46 @@ function VRMModel({
       }
     }
 
+    // ── State-driven pose overlays ────────────────────────────────────
+    // Applied after gestures so state never fights an active gesture.
+    if (!st.gesture) {
+      switch (state) {
+        case "working":
+          // Lean slightly forward, arms closer in — like typing
+          if (bones.chest) bones.chest.rotation.x += 0.04;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 0.08;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 0.08;
+          break;
+        case "talking": {
+          // Arms drift slightly outward — open posture for dialogue
+          const talkSway = Math.sin(now * 1.1 + phase) * 0.04;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z += 0.06 + talkSway;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z -= 0.06 - talkSway;
+          if (bones.leftLowerArm) bones.leftLowerArm.rotation.z += 0.05;
+          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z -= 0.05;
+          break;
+        }
+        case "thinking":
+          // Right hand slightly raised toward chin — contemplative
+          if (bones.rightUpperArm) {
+            bones.rightUpperArm.rotation.z += 0.22;
+            bones.rightUpperArm.rotation.x -= 0.15;
+          }
+          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.3;
+          if (bones.head) bones.head.rotation.z -= 0.04;
+          break;
+        case "celebrating": {
+          // Both arms up — victory pose with oscillation
+          const celebAmp = Math.sin(now * 2.5 + phase) * 0.12;
+          if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 1.0 + celebAmp;
+          if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 1.0 - celebAmp;
+          if (bones.leftLowerArm) bones.leftLowerArm.rotation.z -= 0.3;
+          if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.3;
+          break;
+        }
+      }
+    }
+
     vrm.update(delta);
   });
 
@@ -580,6 +620,7 @@ export default function VRMCharacter({
   spotlight = false,
   onClick,
   cameraResetNonce,
+  state,
 }: Props) {
   const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
   const url = `/vrm/${file}`;
@@ -614,6 +655,7 @@ export default function VRMCharacter({
             url={url}
             agentName={agent.name}
             mood={agent.mood}
+            state={state ?? agent.state ?? "idle"}
             getMouthAmplitude={getMouthAmplitude}
             spotlight={spotlight}
             cameraResetNonce={cameraResetNonce}
