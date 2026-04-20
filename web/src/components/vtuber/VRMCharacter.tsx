@@ -94,6 +94,102 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
   "surprised",
 ];
 
+// ── Procedural gesture system ────────────────────────────────────────
+//
+// Each gesture is a duration + a function that ADDS rotations on top of
+// the idle pose. Because the idle loop rewrites every tracked bone each
+// frame, gestures only need to be additive — when the clip ends we just
+// drop the reference and the next frame's idle pose takes over cleanly,
+// no "return to rest" interpolation required.
+//
+// `env` is a 0 → 1 → 0 envelope the caller feeds in, so gestures start
+// and end gently instead of snapping. All rotation magnitudes are tuned
+// against the VRoid-style rigs in `public/vrm/`; different rigs may
+// need a second pass.
+
+type GestureName = "wave" | "hype" | "think" | "bow";
+
+interface Bones {
+  head: THREE.Object3D | null;
+  hips: THREE.Object3D | null;
+  chest: THREE.Object3D | null;
+  leftUpperArm: THREE.Object3D | null;
+  rightUpperArm: THREE.Object3D | null;
+  leftLowerArm: THREE.Object3D | null;
+  rightLowerArm: THREE.Object3D | null;
+}
+
+const GESTURES: Record<
+  GestureName,
+  { duration: number; apply: (t: number, b: Bones, env: number) => void }
+> = {
+  wave: {
+    duration: 1.4,
+    apply: (t, b, env) => {
+      // Right arm raises; forearm oscillates — classic greeting.
+      // rightUpperArm base is -1.15 (arm at side), so adding positive
+      // z brings the hand up and away from the torso.
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 1.5;
+        b.rightUpperArm.rotation.x -= env * 0.35;
+      }
+      if (b.rightLowerArm) {
+        b.rightLowerArm.rotation.y +=
+          env * Math.sin(t * Math.PI * 5) * 0.45;
+      }
+    },
+  },
+  hype: {
+    duration: 0.95,
+    apply: (_t, b, env) => {
+      // Both arms up briefly — the "YES!!" moment.
+      if (b.leftUpperArm) {
+        b.leftUpperArm.rotation.z -= env * 1.55;
+        b.leftUpperArm.rotation.x -= env * 0.2;
+      }
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 1.55;
+        b.rightUpperArm.rotation.x -= env * 0.2;
+      }
+    },
+  },
+  think: {
+    duration: 1.8,
+    apply: (_t, b, env) => {
+      // Right hand to chin with a small head tilt — reads as "hmm".
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 0.85;
+        b.rightUpperArm.rotation.x -= env * 0.55;
+      }
+      if (b.rightLowerArm) {
+        b.rightLowerArm.rotation.z += env * 1.0;
+      }
+      if (b.head) {
+        b.head.rotation.z -= env * 0.08;
+      }
+    },
+  },
+  bow: {
+    duration: 1.4,
+    apply: (_t, b, env) => {
+      // Forward spine flex with matching head dip.
+      if (b.chest) b.chest.rotation.x += env * 0.28;
+      if (b.head) b.head.rotation.x += env * 0.12;
+    },
+  },
+};
+
+// Mood → gesture mapping. Moods with no entry simply don't trigger a
+// gesture; the mood blendshape alone carries the emotion in that case.
+const MOOD_GESTURES: Partial<Record<string, GestureName>> = {
+  excited: "hype",
+  proud: "wave",
+  worried: "think",
+  happy: "wave",
+  determined: "hype",
+  focused: "think",
+};
+
 // Deterministic blink phase from agent name — keeps the whole cast from
 // blinking together. djb2, same family as `vrmFileForAgent` so debugging
 // in the devtools matches.
@@ -156,6 +252,8 @@ function VRMModel({
     // Cache every bone the render loop touches. `chest` isn't guaranteed
     // on every VRM (some rigs only define upperChest or spine), so fall
     // through those in priority order rather than skipping breathing.
+    // Lower arms drive gesture forearm flex (wave, think) — optional
+    // since some minimalist rigs omit them.
     bonesRef.current = {
       head: h?.getNormalizedBoneNode("head") ?? null,
       hips: h?.getNormalizedBoneNode("hips") ?? null,
@@ -166,7 +264,16 @@ function VRMModel({
         null,
       leftUpperArm: leftUpper,
       rightUpperArm: rightUpper,
+      leftLowerArm: h?.getNormalizedBoneNode("leftLowerArm") ?? null,
+      rightLowerArm: h?.getNormalizedBoneNode("rightLowerArm") ?? null,
     };
+    // Gaze targeting: wire the VRM's lookAt system to track the camera
+    // so eyes follow the viewer as they orbit. three-vrm reads the
+    // target's world position each `vrm.update(delta)` call, so there's
+    // nothing to do in the render loop.
+    if (vrm.lookAt) {
+      vrm.lookAt.target = camera;
+    }
     // Disable any leftover frustum culling weirdness on morphed meshes.
     vrm.scene.traverse((o) => {
       o.frustumCulled = false;
@@ -176,7 +283,23 @@ function VRMModel({
       // the same VRM may be reused by another mount. VRMUtils.deepDispose
       // would run only on full app teardown.
     };
-  }, [vrm]);
+  }, [vrm, camera]);
+
+  // Mood-triggered gestures. When `mood` changes we schedule the
+  // matching gesture (wave, hype, think, bow) after a small random
+  // delay so a whole cast flipping to the same mood doesn't gesture in
+  // lockstep. The cleanup cancels a pending fire if the component
+  // unmounts mid-delay.
+  useEffect(() => {
+    const next = MOOD_GESTURES[mood];
+    if (!next) return;
+    const delay = Math.random() * 400;
+    const timer = window.setTimeout(() => {
+      stateRef.current.gesture = next;
+      stateRef.current.gestureStart = performance.now() / 1000;
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [mood]);
 
   // Blink + mood + mouth state lives in refs so we don't re-render each
   // frame — the changes are all inside the WebGL scene.
@@ -191,23 +314,24 @@ function VRMModel({
     // the nod began at so the render loop can compute a decay curve.
     prevAmp: 0,
     nodStart: -1,
+    // Currently-playing gesture. `null` when idle; otherwise the render
+    // loop applies the gesture's additive transform until its duration
+    // elapses.
+    gesture: null as GestureName | null,
+    gestureStart: 0,
   });
 
   // Bone lookups are cheap but non-zero — humanoid.getNormalizedBoneNode
   // walks a map on every call. Cache the handful we touch each frame so
   // the idle loop stays allocation-free.
-  const bonesRef = useRef<{
-    head: THREE.Object3D | null;
-    hips: THREE.Object3D | null;
-    chest: THREE.Object3D | null;
-    leftUpperArm: THREE.Object3D | null;
-    rightUpperArm: THREE.Object3D | null;
-  }>({
+  const bonesRef = useRef<Bones>({
     head: null,
     hips: null,
     chest: null,
     leftUpperArm: null,
     rightUpperArm: null,
+    leftLowerArm: null,
+    rightLowerArm: null,
   });
 
   useFrame((_, delta) => {
@@ -311,6 +435,24 @@ function VRMModel({
       bones.head.rotation.y = Math.sin(now * 0.6 + phase) * 0.06;
       bones.head.rotation.x =
         Math.sin(now * 0.4 + phase) * 0.03 + nodX;
+    }
+
+    // ── Gesture playback ─────────────────────────────────────────────
+    // Additive on top of the idle pose: breathing/sway/nod stay active,
+    // the gesture just layers the arm-raise (wave / hype), hand-to-chin
+    // (think), or spine flex (bow) for the gesture's duration.
+    if (st.gesture) {
+      const g = GESTURES[st.gesture];
+      const nt = now - st.gestureStart;
+      if (nt >= g.duration) {
+        st.gesture = null;
+      } else {
+        const t = nt / g.duration;
+        // Soft 0 → 1 → 0 envelope so the clip ramps in and out rather
+        // than snapping a bone straight to its target.
+        const env = Math.sin(t * Math.PI);
+        g.apply(t, bones, env);
+      }
     }
 
     vrm.update(delta);

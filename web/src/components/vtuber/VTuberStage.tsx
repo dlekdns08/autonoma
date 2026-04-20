@@ -22,19 +22,30 @@
  * until the next utterance from someone else takes over.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentData } from "@/lib/types";
 import VRMCharacter from "./VRMCharacter";
 import { creditForAgent } from "./vrmCredits";
 
 /** Which backdrop preset paints behind the spotlighted character.
  *
- *   - `default`  — the original cyber / game-HUD look (fuchsia grid + pink floor).
- *   - `studio`   — soft photo-studio cyclorama (warm key, cool fill, neutral wall).
- *   - `none`     — renders nothing, so OBS chromakey / transparent mode works.
+ *   - `default`     — original cyber / game-HUD look (fuchsia grid + pink floor).
+ *   - `studio`      — soft photo-studio cyclorama (warm key, cool fill).
+ *   - `sunset`      — warm horizon gradient with a low sun glow.
+ *   - `night-city`  — navy night sky, distant skyline, window lights.
+ *   - `sakura`      — pink gradient with falling petal animation.
+ *   - `cyber`       — neon magenta/cyan with a perspective grid floor.
+ *   - `none`        — renders nothing, so OBS chromakey / transparent mode works.
  *
  * Exported so the /obs route can type-check its query-param mapping. */
-export type BackdropPreset = "default" | "studio" | "none";
+export type BackdropPreset =
+  | "default"
+  | "studio"
+  | "sunset"
+  | "night-city"
+  | "sakura"
+  | "cyber"
+  | "none";
 
 interface Props {
   agents: AgentData[];
@@ -52,6 +63,10 @@ interface Props {
   /** Backdrop preset. Defaults to `default` — callers (e.g. the OBS
    *  route) can override per-session. */
   backdrop?: BackdropPreset;
+  /** Show a TV-style CC caption bar at the bottom of the spotlight
+   *  instead of the in-scene speech bubble. `undefined` → follow
+   *  `obsMode` (subtitles are the clip-friendly default for streams). */
+  subtitles?: boolean;
 }
 
 const MOOD_COLORS: Record<string, string> = {
@@ -72,7 +87,12 @@ export default function VTuberStage({
   onSelectAgent,
   obsMode = false,
   backdrop = "default",
+  subtitles,
 }: Props) {
+  // Subtitles default: on in OBS (clip-friendly), off on the main
+  // dashboard (the in-scene speech bubble is part of the aesthetic
+  // there). Explicit `subtitles={false}` on /obs still wins.
+  const useSubtitles = subtitles ?? obsMode;
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
   const lastSpeakerRef = useRef<string | null>(null);
@@ -230,13 +250,40 @@ export default function VTuberStage({
               </div>
             )}
 
-            {/* Speech line — bottom overlay near the character's feet. */}
-            {spotlightAgent.speech && (
+            {/* Speech — two presentations depending on `useSubtitles`:
+             *   false → in-scene bubble near the character's feet (keeps
+             *           the speech visually tied to the speaker).
+             *   true  → TV-style CC bar pinned to the bottom edge so
+             *           recorded clips/screenshots read like a caption
+             *           track. We switch rather than stack so the two
+             *           renderings never overlap. */}
+            {spotlightAgent.speech && !useSubtitles && (
               <div className="pointer-events-none absolute inset-x-3 bottom-10 flex justify-center">
                 <div
                   key={`speech-${spotlightAgent.speech}`}
                   className="max-w-full rounded-xl border border-fuchsia-500/40 bg-black/80 px-3 py-2 text-center font-mono text-sm text-fuchsia-100 shadow-[0_4px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm animate-[bubble-in_280ms_ease-out]"
                 >
+                  {spotlightAgent.speech}
+                </div>
+              </div>
+            )}
+            {spotlightAgent.speech && useSubtitles && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-6 pb-4">
+                <div
+                  key={`subs-${spotlightAgent.speech}`}
+                  className="max-w-[min(720px,92%)] rounded-md bg-black/85 px-5 py-2.5 text-center font-mono text-[15px] leading-snug text-white shadow-[0_4px_24px_rgba(0,0,0,0.6)] backdrop-blur-sm animate-[bubble-in_240ms_ease-out]"
+                  style={{
+                    // Slight text outline so white captions stay legible
+                    // against any backdrop — especially the sakura/sunset
+                    // presets where the character may stand against a
+                    // near-white area.
+                    textShadow:
+                      "0 1px 2px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.9)",
+                  }}
+                >
+                  <span className="mr-2 font-bold text-fuchsia-300">
+                    {spotlightAgent.name}:
+                  </span>
                   {spotlightAgent.speech}
                 </div>
               </div>
@@ -346,6 +393,175 @@ export default function VTuberStage({
 function Backdrop({ preset }: { preset: BackdropPreset }) {
   if (preset === "none") return null;
 
+  if (preset === "sunset") {
+    return (
+      <>
+        {/* Deep-purple zenith → warm horizon. The stop-heavy gradient
+            mimics actual dusk skies better than a two-color ramp. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, #2a0a3e 0%, #5a1a55 20%, #c4395a 45%, #f16f5c 65%, #f4b06b 80%, #3a1a3d 100%)",
+          }}
+        />
+        {/* Low sun glow — sits just below the visual horizon. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 55% 30% at 50% 80%, rgba(255, 200, 130, 0.45), transparent 65%)",
+          }}
+        />
+        {/* Thin horizon haze line — sells the atmosphere layering. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-[72%] h-px bg-white/25"
+        />
+        {/* Warm floor spill to echo the sun color on the ground. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-40"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 100%, rgba(255, 170, 120, 0.22) 0%, transparent 65%)",
+          }}
+        />
+      </>
+    );
+  }
+
+  if (preset === "night-city") {
+    return (
+      <>
+        {/* Night sky — darker near zenith, faint atmospheric glow near
+            the horizon to sell distance. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, #060812 0%, #0a1228 50%, #15203d 100%)",
+          }}
+        />
+        {/* Neon atmospheric haze — purple pollution at the horizon. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-1/2 h-32"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 0%, rgba(180, 80, 255, 0.18), transparent 70%)",
+          }}
+        />
+        {/* Skyline silhouette — dark gradient mass at the bottom. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3"
+          style={{
+            background:
+              "linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.88) 100%)",
+          }}
+        />
+        {/* Scattered window lights — procedural "buildings" via a stack
+            of radial-gradient dots so we don't need a texture asset. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3"
+          style={{
+            backgroundImage: [
+              "radial-gradient(circle at 10% 42%, rgba(255,210,120,0.75) 0, transparent 2px)",
+              "radial-gradient(circle at 22% 55%, rgba(255,230,160,0.8) 0, transparent 1.8px)",
+              "radial-gradient(circle at 28% 32%, rgba(200,230,255,0.6) 0, transparent 2px)",
+              "radial-gradient(circle at 45% 62%, rgba(255,220,140,0.8) 0, transparent 2px)",
+              "radial-gradient(circle at 58% 40%, rgba(180,220,255,0.55) 0, transparent 1.6px)",
+              "radial-gradient(circle at 72% 50%, rgba(255,200,100,0.7) 0, transparent 2px)",
+              "radial-gradient(circle at 85% 65%, rgba(255,230,170,0.8) 0, transparent 1.6px)",
+              "radial-gradient(circle at 92% 32%, rgba(200,230,255,0.55) 0, transparent 2px)",
+              "radial-gradient(circle at 15% 80%, rgba(255,230,160,0.65) 0, transparent 1.6px)",
+              "radial-gradient(circle at 50% 85%, rgba(255,220,140,0.75) 0, transparent 2px)",
+              "radial-gradient(circle at 65% 78%, rgba(180,230,255,0.5) 0, transparent 1.5px)",
+            ].join(","),
+          }}
+        />
+      </>
+    );
+  }
+
+  if (preset === "sakura") {
+    return (
+      <>
+        {/* Soft pink wash — deeper at the top, nearly bleached at the
+            bottom so the character has contrast against the floor. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, #3d1a3d 0%, #6b2e4e 30%, #c67a89 60%, #f4c2c8 100%)",
+          }}
+        />
+        {/* Warm cyclorama glow so the character doesn't float on a
+            flat wash. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 60% 45% at 50% 40%, rgba(255, 200, 210, 0.3), transparent 70%)",
+          }}
+        />
+        {/* Floor petal carpet hint — faint pink glow at the base. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-36"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 100%, rgba(255, 180, 200, 0.28) 0%, transparent 60%)",
+          }}
+        />
+        <SakuraPetals />
+      </>
+    );
+  }
+
+  if (preset === "cyber") {
+    return (
+      <>
+        {/* Deep purple base. Saturated enough to read as "neon-lit"
+            even before the accent lines are drawn on top. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, #0a0220 0%, #1a0530 50%, #2d084d 100%)",
+          }}
+        />
+        {/* Horizon scan line — the single brightest magenta accent. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-[68%] h-[2px]"
+          style={{
+            background: "#f472b6",
+            boxShadow:
+              "0 0 12px 2px rgba(244,114,182,0.9), 0 0 32px 6px rgba(244,114,182,0.35)",
+          }}
+        />
+        {/* Perspective floor — repeating bands that fade toward the
+            horizon line. Fakes ground recession without needing 3D. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-[32%]"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(180deg, transparent 0 5.8%, rgba(244,114,182,0.35) 5.8% 6.2%)",
+            backgroundSize: "100% 100%",
+            maskImage:
+              "linear-gradient(180deg, transparent 0%, black 15%, black 100%)",
+            WebkitMaskImage:
+              "linear-gradient(180deg, transparent 0%, black 15%, black 100%)",
+          }}
+        />
+        {/* Cyan edge bloom — adds the classic synthwave rim. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 90% 70% at 50% 50%, transparent 45%, rgba(34, 211, 238, 0.15) 85%)",
+          }}
+        />
+      </>
+    );
+  }
+
   if (preset === "studio") {
     return (
       <>
@@ -430,5 +646,68 @@ function Backdrop({ preset }: { preset: BackdropPreset }) {
         }}
       />
     </>
+  );
+}
+
+// ── Sakura petal particles ────────────────────────────────────────────
+//
+// Pre-computed positions and timings (seeded from each petal's index,
+// not Math.random) so the SSR and client render match and hydration
+// doesn't yank the petals' starting positions on first paint. 14 petals
+// is enough density without piling up paint cost — each is a single
+// span, GPU-compositing via the transform animation.
+
+function SakuraPetals() {
+  const petals = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, i) => ({
+        left: (i * 73) % 100,
+        delay: (i * 1.7) % 10,
+        duration: 9 + (i % 5),
+        size: 6 + (i % 3),
+        drift: 20 + ((i * 17) % 40),
+        tint: i % 2 === 0 ? "#ffc6d0" : "#ffb0c0",
+      })),
+    [],
+  );
+
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {petals.map((p, i) => (
+        <span
+          key={i}
+          className="absolute rounded-full"
+          style={{
+            left: `${p.left}%`,
+            top: `-${p.size * 2}px`,
+            width: p.size,
+            height: p.size,
+            backgroundColor: p.tint,
+            opacity: 0.85,
+            // Expose drift as a CSS custom property so the shared
+            // keyframe can read it and each petal follows a slightly
+            // different arc without needing N distinct keyframe blocks.
+            // `as React.CSSProperties` cast — TypeScript's default CSS
+            // types don't know about CSS custom properties.
+            ["--drift" as string]: `${p.drift}px`,
+            animation: `sakura-fall ${p.duration}s linear ${p.delay}s infinite`,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes sakura-fall {
+          0% {
+            transform: translate(0, 0) rotate(0deg);
+            opacity: 0;
+          }
+          8% { opacity: 0.85; }
+          92% { opacity: 0.85; }
+          100% {
+            transform: translate(var(--drift, 30px), 110vh) rotate(720deg);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
   );
 }

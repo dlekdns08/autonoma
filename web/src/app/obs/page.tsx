@@ -34,6 +34,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
 import VTuberStage, { type BackdropPreset } from "@/components/vtuber/VTuberStage";
+import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import AuthModal from "@/components/AuthModal";
 
 // Next 15 requires `useSearchParams` consumers to be inside a Suspense
@@ -72,9 +73,11 @@ function ObsContent() {
     authenticate,
     getMouthAmplitude,
     speakingAgents,
+    chat,
   } = useSwarm();
 
   const needsAuth = authState.status !== "authenticated";
+  const showChat = params.get("chat") !== "0";
 
   // Override the root layout's body background for transparent/chroma
   // modes. We do this via a one-shot effect rather than a route-level
@@ -120,6 +123,8 @@ function ObsContent() {
           Awaiting cast…
         </div>
       )}
+
+      {showChat && <ChatOverlay messages={chat} />}
 
       {showUi && <RecordButton />}
 
