@@ -58,6 +58,12 @@ export interface SwarmState {
   graveyard: string;
   relationships: RelationshipData[];
   final_answer: string;
+  /** True only when every task finished DONE. False when the run hit
+   *  max_rounds or was stopped externally while tasks were still open. */
+  completed: boolean;
+  /** Empty on clean completion. Otherwise the backend's exit reason
+   *  (e.g. "max_rounds_reached", "stopped_externally"). */
+  incompleteReason: string;
 }
 
 export interface BossData {
