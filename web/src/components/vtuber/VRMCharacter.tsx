@@ -59,6 +59,8 @@ interface Props {
    *  Used by the parent "reset view" button so the user can recover
    *  after an accidental orbit. */
   cameraResetNonce?: number;
+  /** Agent behavioral state: "idle" | "working" | "talking" | "thinking" | "celebrating" etc. */
+  state?: string;
 }
 
 // ── Mood → VRM standard emote ────────────────────────────────────────
@@ -84,6 +86,14 @@ const MOOD_MAP: Record<string, MoodTarget> = {
   relaxed: { relaxed: 0.6 },
   determined: { angry: 0.3 },
   focused: { relaxed: 0.2 },
+};
+
+// Agent state → expression overlay, blended on top of mood blendshapes.
+const STATE_EXPRESSION_BOOST: Record<string, Partial<MoodTarget>> = {
+  celebrating: { happy: 0.25, surprised: 0.2 },
+  working:     { relaxed: 0.1 },
+  talking:     { happy: 0.1 },
+  thinking:    { relaxed: 0.15 },
 };
 
 const EMOTE_KEYS: (keyof MoodTarget)[] = [
