@@ -145,13 +145,28 @@ function VRMModel({
   useEffect(() => {
     if (!vrm) return;
     VRMUtils.rotateVRM0(vrm);
+    const h = vrm.humanoid;
     // Drop the default T-pose arms a little so the idle frame doesn't
-    // look like a crucifixion. We nudge upper arms inward via humanoid
-    // bones when available.
-    const leftUpper = vrm.humanoid?.getNormalizedBoneNode("leftUpperArm");
-    const rightUpper = vrm.humanoid?.getNormalizedBoneNode("rightUpperArm");
+    // look like a crucifixion. The idle loop adds a small oscillation
+    // around these base angles.
+    const leftUpper = h?.getNormalizedBoneNode("leftUpperArm") ?? null;
+    const rightUpper = h?.getNormalizedBoneNode("rightUpperArm") ?? null;
     if (leftUpper) leftUpper.rotation.z = 1.15;
     if (rightUpper) rightUpper.rotation.z = -1.15;
+    // Cache every bone the render loop touches. `chest` isn't guaranteed
+    // on every VRM (some rigs only define upperChest or spine), so fall
+    // through those in priority order rather than skipping breathing.
+    bonesRef.current = {
+      head: h?.getNormalizedBoneNode("head") ?? null,
+      hips: h?.getNormalizedBoneNode("hips") ?? null,
+      chest:
+        h?.getNormalizedBoneNode("chest") ??
+        h?.getNormalizedBoneNode("upperChest") ??
+        h?.getNormalizedBoneNode("spine") ??
+        null,
+      leftUpperArm: leftUpper,
+      rightUpperArm: rightUpper,
+    };
     // Disable any leftover frustum culling weirdness on morphed meshes.
     vrm.scene.traverse((o) => {
       o.frustumCulled = false;
@@ -171,6 +186,28 @@ function VRMModel({
     blinkT: 0,
     smoothMood: { happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0 },
     lookBias: Math.random() * Math.PI * 2,
+    // Rising-edge detector on the mouth amplitude feeds the speech nod —
+    // nodStart < 0 means inactive, otherwise it's the seconds-timestamp
+    // the nod began at so the render loop can compute a decay curve.
+    prevAmp: 0,
+    nodStart: -1,
+  });
+
+  // Bone lookups are cheap but non-zero — humanoid.getNormalizedBoneNode
+  // walks a map on every call. Cache the handful we touch each frame so
+  // the idle loop stays allocation-free.
+  const bonesRef = useRef<{
+    head: THREE.Object3D | null;
+    hips: THREE.Object3D | null;
+    chest: THREE.Object3D | null;
+    leftUpperArm: THREE.Object3D | null;
+    rightUpperArm: THREE.Object3D | null;
+  }>({
+    head: null,
+    hips: null,
+    chest: null,
+    leftUpperArm: null,
+    rightUpperArm: null,
   });
 
   useFrame((_, delta) => {
