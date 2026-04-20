@@ -1,9 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-const TITLES = ["~* Autonoma *~", "~♪ Autonoma ♪~", "~★ Autonoma ★~", "~♥ Autonoma ♥~"];
-
 interface Props {
   projectName: string;
   round: number;
@@ -12,38 +8,84 @@ interface Props {
   connected: boolean;
 }
 
-export default function Header({ projectName, round, maxRounds, sky, connected }: Props) {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setFrame((f) => f + 1), 800);
-    return () => clearInterval(t);
-  }, []);
+const SKY_COLOR: Record<string, string> = {
+  dawn: "bg-amber-400",
+  morning: "bg-sky-400",
+  afternoon: "bg-blue-400",
+  evening: "bg-orange-400",
+  dusk: "bg-rose-400",
+  night: "bg-indigo-500",
+};
 
-  const title = TITLES[frame % TITLES.length];
+function skyDotClass(sky: string): string {
+  const key = sky.toLowerCase().split(" ")[0];
+  return SKY_COLOR[key] ?? "bg-violet-500";
+}
+
+export default function Header({ projectName, round, maxRounds, sky, connected }: Props) {
+  const progressPct = maxRounds > 0 ? Math.min(100, (round / maxRounds) * 100) : 0;
 
   return (
-    <header className="border-b-2 border-fuchsia-500/30 bg-gradient-to-r from-fuchsia-950/40 via-purple-950/40 to-fuchsia-950/40 px-4 py-3 backdrop-blur-sm">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-xl font-bold text-fuchsia-300 tracking-wide font-mono">
-            {title}
-          </span>
-          <span className="text-sm text-white/60">Self-Organizing Agent Swarm</span>
+    <header className="border-b border-[rgba(255,255,255,0.06)] bg-transparent px-4 py-2">
+      <div className="flex items-center justify-between gap-4">
+
+        {/* Left — logo mark */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-mono text-violet-400 text-base leading-none select-none">⬡</span>
+          <span className="font-mono font-bold text-sm text-violet-200">autonoma</span>
           {projectName && (
-            <span className="rounded-full bg-cyan-500/20 px-3 py-0.5 text-xs text-cyan-300">
-              {projectName}
-            </span>
+            <>
+              <span className="font-mono text-violet-800 text-sm select-none">|</span>
+              <span className="font-mono text-xs text-violet-300/70 truncate max-w-[200px]">
+                {projectName}
+              </span>
+            </>
           )}
         </div>
-        <div className="flex items-center gap-4 text-sm">
-          {sky && <span className="text-white/50 font-mono text-xs">{sky}</span>}
-          {round > 0 && (
-            <span className="text-yellow-300 font-mono">
-              ★ Round {round}/{maxRounds} ★
+
+        {/* Center — progress (only when round > 0) */}
+        {round > 0 && (
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <span className="font-mono text-xs text-violet-300">
+              R{round}/{maxRounds}
             </span>
-          )}
-          <span className={`h-2 w-2 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-red-500"}`} />
+            <div className="h-0.5 w-24 rounded-full bg-violet-900/50 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-violet-600 to-cyan-500 transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            {sky && (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${skyDotClass(sky)}`}
+                />
+                <span className="font-mono text-[10px] text-violet-400/60 lowercase">
+                  {sky}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Right — WS status */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              connected
+                ? "bg-violet-500"
+                : "bg-rose-500 animate-pulse"
+            }`}
+          />
+          <span
+            className={`font-mono text-[9px] ${
+              connected ? "text-violet-500/50" : "text-rose-400"
+            }`}
+          >
+            WS
+          </span>
         </div>
+
       </div>
     </header>
   );
