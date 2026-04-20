@@ -457,6 +457,29 @@ export function useAgentMotion({
           return;
         }
 
+        // Cookie interrupt: if a fresh cookie appears for this agent at any
+        // time (not just during the nextActionAt reroll), immediately redirect.
+        // This fires every frame but is cheap — just two ref reads + a find.
+        {
+          const freshCookie = cookiesRef.current.find(
+            (c) => c.recipient === m.name && c.openedAt === undefined,
+          );
+          if (freshCookie && !bossRef.current) {
+            const cx = freshCookie.x;
+            const cy = freshCookie.y;
+            // Only interrupt if we aren't already heading there.
+            if (Math.hypot(m.targetX - cx, m.targetY - cy) > 3) {
+              if (canStand(map, cx, cy)) {
+                m.targetX = cx;
+                m.targetY = cy;
+              } else {
+                [m.targetX, m.targetY] = pickWalkableTarget(map, cx, cy, m.room);
+              }
+              m.nextActionAt = now + rand(1500, 2500);
+            }
+          }
+        }
+
         // Pick a new action when the current one expires.
         if (now >= m.nextActionAt) {
           const room = m.room;
