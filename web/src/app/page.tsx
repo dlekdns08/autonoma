@@ -26,6 +26,7 @@ export default function Home() {
     sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
     authState, authenticate, logout, sessionId,
     emotes, getMouthAmplitude,
+    room, chat, sendChat, setDisplayName, joinRoom,
   } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
 
