@@ -5,6 +5,7 @@ import { API_BASE_URL } from "@/hooks/useSwarm";
 
 interface Props {
   files: FileEntry[];
+  sessionId: number | null;
 }
 
 function formatBytes(n: number): string {
@@ -13,10 +14,12 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function FileTree({ files }: Props) {
+export default function FileTree({ files, sessionId }: Props) {
+  const sessionQuery = sessionId !== null ? `&session=${sessionId}` : "";
+  const zipSessionQuery = sessionId !== null ? `?session=${sessionId}` : "";
   const fileDownloadUrl = (path: string) =>
-    `${API_BASE_URL}/api/files/download?path=${encodeURIComponent(path)}`;
-  const zipUrl = `${API_BASE_URL}/api/files/zip`;
+    `${API_BASE_URL}/api/files/download?path=${encodeURIComponent(path)}${sessionQuery}`;
+  const zipUrl = `${API_BASE_URL}/api/files/zip${zipSessionQuery}`;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-fuchsia-500/20 bg-slate-900/50 p-3">
