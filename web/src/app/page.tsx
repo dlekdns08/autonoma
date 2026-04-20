@@ -15,6 +15,7 @@ import ToastContainer from "@/components/Toast";
 import AgentModal from "@/components/AgentModal";
 import RelationshipWeb from "@/components/RelationshipWeb";
 import ChatInput from "@/components/ChatInput";
+import ChatPanel from "@/components/ChatPanel";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import type { AgentData } from "@/lib/types";
