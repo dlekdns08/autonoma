@@ -206,6 +206,20 @@ const MOOD_GESTURE_OPTIONS: Partial<Record<string, GestureName[]>> = {
   celebrating: ["hype", "wave"],
 };
 
+// Emote icon → gesture. Icons come from the backend `agent.emote` events
+// whose icon field is set based on the agent's mood at speech time.
+// Unrecognised icons fall through to `wave` as a safe default.
+const EMOTE_GESTURE_MAP: Record<string, GestureName> = {
+  "🎉": "hype", "🥳": "hype", "💪": "hype", "⭐": "hype", "🌟": "hype",
+  "🤔": "think", "💭": "think", "😤": "think", "🧐": "think",
+  "👋": "wave", "😊": "wave", "❤️": "wave", "💕": "wave", "🙌": "wave",
+  "🙇": "bow", "🙏": "bow",
+};
+
+function gestureForEmote(icon: string): GestureName {
+  return EMOTE_GESTURE_MAP[icon] ?? "wave";
+}
+
 // Deterministic blink phase from agent name — keeps the whole cast from
 // blinking together. djb2, same family as `vrmFileForAgent` so debugging
 // in the devtools matches.
@@ -228,6 +242,7 @@ interface ModelProps {
   getMouthAmplitude?: (name: string) => number;
   spotlight: boolean;
   cameraResetNonce?: number;
+  emote?: AgentEmote | null;
 }
 
 function VRMModel({
@@ -238,6 +253,7 @@ function VRMModel({
   getMouthAmplitude,
   spotlight,
   cameraResetNonce,
+  emote,
 }: ModelProps) {
   const { camera } = useThree();
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
