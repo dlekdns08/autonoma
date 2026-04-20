@@ -75,6 +75,7 @@ export default function Home() {
             graveyard={state.graveyard}
             files={state.files}
             projectName={state.project_name}
+            sessionId={sessionId}
             onReset={resetSwarm}
           />
         </main>
