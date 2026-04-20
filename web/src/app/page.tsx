@@ -142,6 +142,7 @@ export default function Home() {
             onSelectAgent={handleSelectAgent}
             backdrop="studio"
             forcePinnedAgent={vtPinned}
+            emotes={emotes}
           />
         </div>
 
