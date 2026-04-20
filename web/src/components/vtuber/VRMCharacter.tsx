@@ -12,11 +12,12 @@
  * Lip-sync:
  *   - The caller passes `getMouthAmplitude(name)` — the same 0..1 envelope
  *     the procedural SVG face used. Inside the r3f render loop we pull it
- *     every frame and push it into the "aa" expression, which is the VRM
- *     standard mouth-open blendshape. We deliberately don't try to
- *     distinguish vowels (ih / ou / ee / oh): the audio is arbitrary TTS
- *     output and running a formant analyzer per-agent would cost more
- *     than the added realism is worth.
+ *     every frame, apply a concave curve so quiet speech reads as more
+ *     motion, and distribute the curved amplitude across the five VRM
+ *     vowel blendshapes (aa/ih/ou/ee/oh) with a slowly-drifting bias and
+ *     a small bleed into the neighbour vowel. We're not doing real
+ *     formant analysis — just enough vowel variety to keep the mouth
+ *     from looking like a single open-close shutter.
  *
  * Blink + mood:
  *   - Blink is a tiny state machine driven from the render loop, with a
@@ -80,15 +81,21 @@ interface MoodTarget {
 }
 
 const MOOD_MAP: Record<string, MoodTarget> = {
-  idle:       { relaxed: 0.15 },
-  happy:      { happy: 0.8 },
-  excited:    { happy: 0.95, surprised: 0.4 },
-  proud:      { happy: 0.55, relaxed: 0.25 },
-  frustrated: { angry: 0.75 },
-  worried:    { sad: 0.5, surprised: 0.3 },
-  relaxed:    { relaxed: 0.7 },
-  determined: { angry: 0.45, relaxed: 0.1 },
-  focused:    { relaxed: 0.3 },
+  idle:        { relaxed: 0.3 },
+  happy:       { happy: 0.8 },
+  excited:     { happy: 0.95, surprised: 0.4 },
+  proud:       { happy: 0.6, relaxed: 0.3 },
+  frustrated:  { angry: 0.8 },
+  worried:     { sad: 0.55, surprised: 0.35 },
+  relaxed:     { relaxed: 0.7 },
+  determined:  { angry: 0.5, relaxed: 0.15 },
+  focused:     { relaxed: 0.4 },
+  curious:     { surprised: 0.25, happy: 0.15 },
+  tired:       { sad: 0.3, relaxed: 0.4 },
+  nostalgic:   { sad: 0.35, relaxed: 0.35 },
+  inspired:    { surprised: 0.4, happy: 0.55 },
+  mischievous: { happy: 0.6, angry: 0.1 },
+  friendly:    { happy: 0.6, relaxed: 0.2 },
 };
 
 // Agent state → expression overlay, blended on top of mood blendshapes.
@@ -204,19 +211,73 @@ const MOOD_GESTURE_OPTIONS: Partial<Record<string, GestureName[]>> = {
   determined:  ["hype"],
   focused:     ["think"],
   celebrating: ["hype", "wave"],
+  curious:     ["think", "wave"],
+  tired:       ["think", "bow"],
+  nostalgic:   ["bow", "think"],
+  inspired:    ["hype", "wave"],
+  mischievous: ["wave", "hype"],
+  friendly:    ["wave", "bow"],
+  frustrated:  ["wave", "hype"],
+  relaxed:     ["bow", "wave"],
 };
 
-// Emote icon → gesture. Icons come from the backend `agent.emote` events
-// whose icon field is set based on the agent's mood at speech time.
-// Unrecognised icons fall through to `wave` as a safe default.
+// Emote icon → gesture (or gesture list). Icons come from the backend
+// `agent.emote` events whose icon field is set based on the agent's mood
+// at speech time (see MOOD_EMOTE in src/autonoma/agents/base.py). Unknown
+// icons fall through to `wave` as a safe default.
 const EMOTE_GESTURE_MAP: Record<string, GestureName> = {
-  "🎉": "hype", "🥳": "hype", "💪": "hype", "⭐": "hype", "🌟": "hype",
-  "🤔": "think", "💭": "think", "😤": "think", "🧐": "think",
-  "👋": "wave", "😊": "wave", "❤️": "wave", "💕": "wave", "🙌": "wave",
-  "🙇": "bow", "🙏": "bow",
+  // Hype/wave mix — excited, proud, determined, inspired, happy
+  "✦": "hype",   // excited
+  "★": "hype",   // proud
+  "‼": "hype",   // determined
+  "💡": "hype",  // inspired
+  "♪": "wave",   // happy
+  // Think — curious, focused, worried, tired
+  "?": "think",
+  "•": "think",
+  "💧": "think", // worried
+  "💤": "think", // tired
+  // Brisk wave-type — frustrated, mischievous
+  "💢": "wave",  // frustrated
+  "✧": "wave",  // mischievous
+  // Soft/bow — relaxed, nostalgic
+  "～": "bow",    // relaxed
+  "✿": "bow",    // nostalgic
 };
 
-function gestureForEmote(icon: string): GestureName {
+// Alternative gesture picks used by gestureForEmote() so re-emotes don't
+// always play the identical clip. Deterministic per-agent variation is
+// driven by a hash of the agent name combined with the emote sequence.
+const EMOTE_GESTURE_ALTERNATIVES: Record<string, GestureName[]> = {
+  "✦": ["hype", "wave"],
+  "★": ["hype", "wave", "bow"],
+  "‼": ["hype", "wave"],
+  "💡": ["hype", "wave"],
+  "♪": ["wave", "hype"],
+  "?": ["think"],
+  "•": ["think"],
+  "💧": ["think", "bow"],
+  "💤": ["think", "bow"],
+  "💢": ["wave", "hype"],
+  "✧": ["wave", "hype"],
+  "～": ["bow", "wave"],
+  "✿": ["bow", "wave"],
+};
+
+function hashString(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
+function gestureForEmote(icon: string, agentName: string = "", seq: number = 0): GestureName {
+  const alts = EMOTE_GESTURE_ALTERNATIVES[icon];
+  if (alts && alts.length > 0) {
+    const idx = (hashString(agentName) + seq) % alts.length;
+    return alts[idx];
+  }
   return EMOTE_GESTURE_MAP[icon] ?? "wave";
 }
 
@@ -340,7 +401,7 @@ function VRMModel({
   // body reacts in sync with the floating icon.
   useEffect(() => {
     if (!emote) return;
-    const gesture = gestureForEmote(emote.icon);
+    const gesture = gestureForEmote(emote.icon, agentName, emote.seq ?? 0);
     const delay = 80 + Math.random() * 120; // slight human lag
     const timer = window.setTimeout(() => {
       stateRef.current.gesture = gesture;
@@ -418,11 +479,27 @@ function VRMModel({
     // sample it once per frame.
     const amp = getMouthAmplitude ? getMouthAmplitude(agentName) : 0;
 
-    // ── Mouth (aa) ───────────────────────────────────────────────────
+    // ── Mouth (aa / ih / ou / ee / oh) ───────────────────────────────
+    // Distribute amplitude across the five VRM vowel blendshapes with a
+    // slowly-drifting bias, so the mouth shapes change while speaking
+    // instead of only opening-and-closing on "aa". A concave curve
+    // (pow 0.7) lifts quiet→medium amplitudes so the motion reads more
+    // naturally on soft speech.
     if (em && getMouthAmplitude) {
-      // Clamp to 0..1; the audio analyzer already smooths so we don't
-      // double-smooth here.
-      em.setValue("aa", Math.min(1, amp * 1.2));
+      const curved = Math.pow(Math.min(1, amp * 1.4), 0.7);
+      // Vowel bias changes every ~180ms during speech. Math.floor(now * 5.5)
+      // gives ~5.5 steps/sec; phase offsets per-agent so two characters
+      // speaking simultaneously don't share the same mouth shape.
+      const vowels: ("aa" | "ih" | "ou" | "ee" | "oh")[] = ["aa", "ih", "ou", "ee", "oh"];
+      const vowelIdx = Math.floor(now * 5.5 + phase) % vowels.length;
+      const nbrIdx = (vowelIdx + 1) % vowels.length;
+      for (let i = 0; i < vowels.length; i++) {
+        em.setValue(vowels[i], 0);
+      }
+      if (curved >= 0.04) {
+        em.setValue(vowels[vowelIdx], curved);
+        em.setValue(vowels[nbrIdx], curved * 0.3);
+      }
     }
 
     // ── Mood emotes + state boost ────────────────────────────────────
@@ -430,8 +507,11 @@ function VRMModel({
       const base = MOOD_MAP[mood] ?? {};
       const boost = STATE_EXPRESSION_BOOST[state] ?? {};
       const target: MoodTarget = {};
+      let targetSum = 0;
       for (const key of EMOTE_KEYS) {
-        target[key] = Math.min(1, (base[key] ?? 0) + (boost[key] ?? 0));
+        const v = Math.min(1, (base[key] ?? 0) + (boost[key] ?? 0));
+        target[key] = v;
+        targetSum += v;
       }
       const s = st.smoothMood;
       // Ease at ~4/sec so a mood flip takes ~250ms to settle.
@@ -441,6 +521,37 @@ function VRMModel({
         s[key] += (t - s[key]) * k;
         em.setValue(key, s[key]);
       }
+      // Neutral fallback — if all mood blendshape targets combined fall
+      // below a threshold (unknown mood, or a very subtle one), fill in
+      // `neutral` so the face still reads as alive instead of blank.
+      // Wrapped in a null-guard because some rigs don't ship `neutral`.
+      if (em.getExpression?.("neutral")) {
+        const neutralTarget = targetSum < 0.15 ? 0.25 : 0;
+        em.setValue("neutral", neutralTarget);
+      }
+      // ── Subtle eye-glance micro-motion ─────────────────────────────
+      // vrm.lookAt.target still points at the camera, but these
+      // blendshapes offset the baseline so the eyes drift naturally on
+      // a slow cycle. Amplitudes kept modest (0.15-0.3) to read as gaze
+      // rather than spasm. `thinking` biases upward ("looking away to
+      // think"), `talking` biases slightly down-toward-camera.
+      const glanceX = Math.sin(now * (2 * Math.PI) / 5.3 + phase) * 0.25;       // period ~5.3s
+      const glanceY = Math.sin(now * (2 * Math.PI) / 7.1 + phase * 1.3) * 0.2;  // period ~7.1s
+      let lookL = 0, lookR = 0, lookU = 0, lookD = 0;
+      if (glanceX >= 0) lookR = glanceX; else lookL = -glanceX;
+      if (glanceY >= 0) lookU = glanceY; else lookD = -glanceY;
+      if (state === "thinking") {
+        lookU = Math.min(1, lookU + 0.35);
+        lookD = Math.max(0, lookD - 0.2);
+      } else if (state === "talking") {
+        lookD = Math.min(1, lookD + 0.1);
+        lookU = Math.max(0, lookU - 0.1);
+      }
+      // Null-guard each one — minimalist rigs may not define look* slots.
+      if (em.getExpression?.("lookLeft")) em.setValue("lookLeft", lookL);
+      if (em.getExpression?.("lookRight")) em.setValue("lookRight", lookR);
+      if (em.getExpression?.("lookUp")) em.setValue("lookUp", lookU);
+      if (em.getExpression?.("lookDown")) em.setValue("lookDown", lookD);
     }
 
     // ── Blink ────────────────────────────────────────────────────────
