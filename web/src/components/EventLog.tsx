@@ -12,7 +12,7 @@ const EVENT_STYLES: Record<string, { icon: string; color: string }> = {
   "task.assigned": { icon: "♫", color: "text-yellow-300" },
   "task.completed": { icon: "★", color: "text-green-400" },
   "file.created": { icon: "♪", color: "text-cyan-400" },
-  "world.event": { icon: "~*~", color: "text-fuchsia-400" },
+  "world.event": { icon: "~*~", color: "text-violet-400" },
   "world.clock": { icon: "🕐", color: "text-white/40" },
   "guild.formed": { icon: "♥♥", color: "text-cyan-300" },
   "campfire.complete": { icon: "🔥", color: "text-amber-400" },
@@ -84,8 +84,8 @@ export default function EventLog({ events }: Props) {
   const filtered = events.filter((e) => e.event !== "world.clock");
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-green-500/20 bg-slate-900/50 p-3">
-      <h3 className="text-xs font-bold text-green-300 font-mono">♪ Activity ♪</h3>
+    <div className="flex flex-col gap-2 rounded-xl p-3 h-full" style={{ border: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,11,29,0.7)" }}>
+      <h3 className="text-[10px] font-bold font-mono tracking-widest uppercase" style={{ color: "#a78bfa" }}>◈ Activity</h3>
 
       <div ref={scrollRef} className="flex flex-col gap-0.5 max-h-52 overflow-y-auto scrollbar-thin">
         {filtered.length === 0 ? (
