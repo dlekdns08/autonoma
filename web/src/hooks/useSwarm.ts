@@ -689,6 +689,7 @@ export function useSwarm() {
     authenticate,
     logout,
     sessionId,
+    emotes,
     getMouthAmplitude: voice.getMouthAmplitude,
     speakingAgents: voice.speakingAgents,
   };
