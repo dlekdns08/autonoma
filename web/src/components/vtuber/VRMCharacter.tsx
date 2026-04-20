@@ -214,19 +214,26 @@ function VRMModel({
     if (!vrm) return;
 
     const em = vrm.expressionManager;
+    const now = performance.now() / 1000;
+    const st = stateRef.current;
+    const bones = bonesRef.current;
+    const phase = st.lookBias;
+
+    // Amplitude drives both the mouth and the speech-nod trigger, so
+    // sample it once per frame.
+    const amp = getMouthAmplitude ? getMouthAmplitude(agentName) : 0;
 
     // ── Mouth (aa) ───────────────────────────────────────────────────
     if (em && getMouthAmplitude) {
-      const raw = getMouthAmplitude(agentName);
       // Clamp to 0..1; the audio analyzer already smooths so we don't
       // double-smooth here.
-      em.setValue("aa", Math.min(1, raw * 1.2));
+      em.setValue("aa", Math.min(1, amp * 1.2));
     }
 
     // ── Mood emotes ──────────────────────────────────────────────────
     if (em) {
       const target = MOOD_MAP[mood] ?? {};
-      const s = stateRef.current.smoothMood;
+      const s = st.smoothMood;
       // Ease at ~4/sec so a mood flip takes ~250ms to settle.
       const k = 1 - Math.exp(-delta * 4);
       for (const key of EMOTE_KEYS) {
@@ -237,8 +244,6 @@ function VRMModel({
     }
 
     // ── Blink ────────────────────────────────────────────────────────
-    const now = performance.now() / 1000;
-    const st = stateRef.current;
     if (!st.blinking && now >= st.blinkNextAt) {
       st.blinking = true;
       st.blinkT = 0;
@@ -256,11 +261,56 @@ function VRMModel({
       }
     }
 
-    // ── Subtle head sway so the pose isn't frozen ────────────────────
-    const head = vrm.humanoid?.getNormalizedBoneNode("head");
-    if (head) {
-      head.rotation.y = Math.sin(now * 0.6 + st.lookBias) * 0.06;
-      head.rotation.x = Math.sin(now * 0.4 + st.lookBias) * 0.03;
+    // ── Procedural idle — breathing, weight shift, arm sway ──────────
+    // Driven by sin waves keyed on `phase` (per-agent) so the whole
+    // cast doesn't inhale in unison. No external clip assets required
+    // — keeps bundle size flat and avoids Mixamo/VRMA retarget edge
+    // cases across rigs.
+    if (bones.chest) {
+      // ~14 BPM breathing as a gentle forward-back chest tilt.
+      bones.chest.rotation.x = Math.sin(now * 1.5 + phase) * 0.015;
+    }
+    if (bones.hips) {
+      // Slow lateral weight shift — reads like a standing idle.
+      bones.hips.rotation.z = Math.sin(now * 0.3 + phase) * 0.022;
+      bones.hips.rotation.y = Math.sin(now * 0.23 + phase * 1.3) * 0.015;
+    }
+    if (bones.leftUpperArm) {
+      // Additive around the 1.15 base set at mount — arms drift rather
+      // than snap, which is what makes the pose feel "alive".
+      bones.leftUpperArm.rotation.z =
+        1.15 + Math.sin(now * 0.8 + phase) * 0.03;
+    }
+    if (bones.rightUpperArm) {
+      bones.rightUpperArm.rotation.z =
+        -1.15 + Math.sin(now * 0.8 + phase + Math.PI) * 0.03;
+    }
+
+    // ── Speech-triggered head nod ────────────────────────────────────
+    // When the mouth opens sharply, fire a small damped bow so the
+    // character "punctuates" its sentence. Rising-edge detect keeps us
+    // from retriggering every frame of a sustained loud phrase.
+    if (amp > 0.18 && st.prevAmp <= 0.18 && st.nodStart < 0) {
+      st.nodStart = now;
+    }
+    st.prevAmp = amp;
+    let nodX = 0;
+    if (st.nodStart >= 0) {
+      const nt = now - st.nodStart;
+      if (nt > 0.6) {
+        st.nodStart = -1;
+      } else {
+        // Damped sine: peaks ~0.17s in, settles by ~0.6s. Negative
+        // because forward-chin (downward) is the natural bow axis.
+        nodX = -Math.sin(nt * Math.PI * 2) * Math.exp(-nt * 3.5) * 0.12;
+      }
+    }
+
+    // ── Head sway + nod (combined) ───────────────────────────────────
+    if (bones.head) {
+      bones.head.rotation.y = Math.sin(now * 0.6 + phase) * 0.06;
+      bones.head.rotation.x =
+        Math.sin(now * 0.4 + phase) * 0.03 + nodX;
     }
 
     vrm.update(delta);
