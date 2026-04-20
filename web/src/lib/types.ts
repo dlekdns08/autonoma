@@ -108,6 +108,29 @@ export interface AgentEmote {
   seq: number;
 }
 
+/** Multi-viewer room metadata. The host's swarm is shared with anyone
+ *  who joins via the short code. */
+export interface RoomState {
+  /** Short code shareable with friends — `null` until the host starts. */
+  code: string | null;
+  /** True when this client is the room host (the only one who can
+   *  start/stop/reset). */
+  isOwner: boolean;
+  /** Number of currently-connected viewers, including the host. */
+  viewerCount: number;
+  /** Display names of all viewers, in join order. */
+  viewers: string[];
+}
+
+/** A single line of spectator chat. */
+export interface ChatMessage {
+  id: number;
+  from: string;
+  text: string;
+  isOwner: boolean;
+  timestamp: number;
+}
+
 export interface RelationshipData {
   from: string;
   to: string;
