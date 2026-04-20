@@ -63,6 +63,8 @@ export default function Stage({
   theme = "hq",
   boss = null,
   cookies = [],
+  emotes,
+  getMouthAmplitude,
   onSelectAgent,
   onCookieCollected,
 }: Props) {
