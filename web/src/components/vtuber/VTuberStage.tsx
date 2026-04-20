@@ -171,6 +171,7 @@ export default function VTuberStage({
                 agent={spotlightAgent}
                 getMouthAmplitude={getMouthAmplitude}
                 spotlight
+                state={spotlightAgent.state ?? "idle"}
                 cameraResetNonce={resetNonce}
                 onClick={
                   onSelectAgent
@@ -334,7 +335,7 @@ export default function VTuberStage({
               title={`${agent.name} · Lv${agent.level} · ${agent.role}`}
             >
               <div className="flex-1 min-h-0">
-                <VRMCharacter agent={agent} getMouthAmplitude={getMouthAmplitude} />
+                <VRMCharacter agent={agent} getMouthAmplitude={getMouthAmplitude} state={agent.state ?? "idle"} />
               </div>
               <div className="flex items-center justify-between border-t border-white/10 bg-black/60 px-1 py-0.5">
                 <span className="truncate font-mono text-[8px] font-bold text-white/80">
