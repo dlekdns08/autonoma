@@ -53,15 +53,87 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SessionState:
+    """A single WebSocket subscriber.
+
+    A session is a *viewer*. The actual swarm state — the agents, the
+    map, the project — lives on the ``RoomState`` referenced by
+    ``room_id``. ``llm_config`` is per-viewer because providers/keys are
+    a viewer-level concern (each viewer may bring their own).
+
+    The ``swarm`` / ``project`` / ``task`` attributes below are kept for
+    backwards-compat with code that still references them; they're
+    proxied to the room when one exists.
+    """
     ws: WebSocket
     session_id: int
     llm_config: LLMConfig | None = None
-    swarm: Any = None          # AgentSwarm instance
-    project: Any = None        # ProjectState instance
-    task: asyncio.Task | None = None  # background swarm runner
+    # Defaults to a "private room of one" with id == session_id; updated
+    # when the session creates a real room (via ``start``) or joins one
+    # via short code. Always non-None so handlers can rely on it.
+    room_id: int = 0
+    # Display name for chat. Defaults to a friendly anonymous handle until
+    # the viewer sets one via the ``set_name`` command.
+    display_name: str = ""
+    # ── Compatibility shims (read-through to the room) ──
+    @property
+    def swarm(self) -> Any:
+        room = _rooms.get(self.room_id)
+        return room.swarm if room else None
+
+    @swarm.setter
+    def swarm(self, value: Any) -> None:
+        room = _rooms.get(self.room_id)
+        if room is not None:
+            room.swarm = value
+
+    @property
+    def project(self) -> Any:
+        room = _rooms.get(self.room_id)
+        return room.project if room else None
+
+    @project.setter
+    def project(self, value: Any) -> None:
+        room = _rooms.get(self.room_id)
+        if room is not None:
+            room.project = value
+
+    @property
+    def task(self) -> asyncio.Task | None:
+        room = _rooms.get(self.room_id)
+        return room.task if room else None
+
+    @task.setter
+    def task(self, value: asyncio.Task | None) -> None:
+        room = _rooms.get(self.room_id)
+        if room is not None:
+            room.task = value
+
+
+@dataclass
+class RoomState:
+    """A live swarm scene shared by one or more viewers (sessions).
+
+    A room is created when a session calls ``start``. The creator is the
+    *owner* — only they can stop / reset the run. Other viewers join via
+    short code; they can chat and watch but can't drive the swarm.
+
+    The room id mirrors the owner's session id for the room's lifetime.
+    Reusing the int avoids a parallel id space and means existing
+    bus-routing code continues to work unchanged.
+    """
+    room_id: int
+    owner_session_id: int
+    short_code: str
+    swarm: Any = None
+    project: Any = None
+    task: asyncio.Task | None = None
 
 
 _sessions: dict[int, SessionState] = {}
+_rooms: dict[int, RoomState] = {}
+# Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
+# misreads when someone reads it aloud).
+_short_codes: dict[str, int] = {}
 
 # Carries the current session id down through every awaitable that runs
 # inside a swarm task, so that bus handlers can send events only to the
@@ -221,6 +293,10 @@ FORWARDED_EVENTS = [
     "quest.assigned",
     "human.feedback",
     "swarm.diagnostic",
+    # Multi-viewer (Phase 4)
+    "viewer.chat",
+    "viewer.cheer",
+    "room.viewers",
 ]
 
 
@@ -240,13 +316,21 @@ def _make_handler(event_type: str):
             # broadcast semantics for backward compatibility.
             await manager.broadcast(event_type, kwargs)
             return
-        session = _sessions.get(sid)
-        if session is None:
+        owner = _sessions.get(sid)
+        if owner is None:
             return
-        ok = await manager.send_to_ws(session.ws, event_type, kwargs)
-        if not ok:
-            # ws is gone — drop this session so we stop trying to send.
-            _sessions.pop(sid, None)
+        # Fan out to every viewer who has joined this owner's room. The
+        # owner's session id is the room id (see _create_room_for) so we
+        # can route by room without an extra lookup. Sessions with a dead
+        # ws are dropped lazily on send failure.
+        room_id = owner.room_id
+        dead: list[int] = []
+        for viewer in _viewers_in_room(room_id):
+            ok = await manager.send_to_ws(viewer.ws, event_type, kwargs)
+            if not ok:
+                dead.append(viewer.session_id)
+        for vsid in dead:
+            _sessions.pop(vsid, None)
 
     return handler
 
@@ -496,9 +580,67 @@ def _session_project(session_id: int | None) -> Any | None:
     return session.project if session else None
 
 
+def _generate_short_code() -> str:
+    """Generate a 6-char alphanumeric short code unique among live rooms.
+
+    Avoids 0/1/I/O so a viewer reading the code aloud doesn't get
+    misheard. Falls through with secrets.choice (cryptographic RNG) so
+    the codes can't be guessed from a sequence.
+    """
+    import secrets
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    for _ in range(20):
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        if code not in _short_codes:
+            return code
+    # Vanishingly unlikely under normal load — but if it ever fires we
+    # want to know rather than spin forever.
+    raise RuntimeError("could not allocate a unique short code")
+
+
+def _create_room_for(session: SessionState) -> RoomState:
+    """Create a new room owned by ``session`` and reroute the session
+    into it. Returns the room (also stored in ``_rooms``)."""
+    code = _generate_short_code()
+    room = RoomState(
+        room_id=session.session_id,
+        owner_session_id=session.session_id,
+        short_code=code,
+    )
+    _rooms[room.room_id] = room
+    _short_codes[code] = room.room_id
+    session.room_id = room.room_id
+    return room
+
+
+def _viewers_in_room(room_id: int) -> list[SessionState]:
+    return [s for s in _sessions.values() if s.room_id == room_id]
+
+
+async def _notify_room_membership(room_id: int) -> None:
+    """Broadcast the current viewer count + names to everyone in the room.
+
+    Cheap: rooms are small (single-digit viewers in normal use) and this
+    only fires on join / leave, not per-event.
+    """
+    viewers = _viewers_in_room(room_id)
+    payload = {
+        "room_id": room_id,
+        "viewer_count": len(viewers),
+        "viewers": [v.display_name or f"anon-{v.session_id % 1000}" for v in viewers],
+    }
+    for v in viewers:
+        await manager.send_to_ws(v.ws, "room.viewers", payload)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     session = SessionState(ws=ws, session_id=id(ws))
+    # A fresh connection is its own private room until it either starts
+    # a swarm (creating a real room) or joins one via short code. The
+    # default room id == session id keeps the bus-routing invariant
+    # (always send to a non-zero room id).
+    session.room_id = session.session_id
     _sessions[session.session_id] = session
 
     await manager.connect(ws)
