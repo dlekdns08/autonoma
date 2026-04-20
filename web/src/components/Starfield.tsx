@@ -66,16 +66,29 @@ export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Cap DPR so 4K displays don't quadruple the fill-rate cost while a
+    // fleet of VRM WebGL contexts is already competing for GPU time. The
+    // starfield is purely atmospheric — 1.5x is more than enough.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+
     const resize = () => {
-      canvas.width = canvas.offsetWidth * window.devicePixelRatio;
-      canvas.height = canvas.offsetHeight * window.devicePixelRatio;
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      canvas.width = canvas.offsetWidth * dpr;
+      canvas.height = canvas.offsetHeight * dpr;
+      // Reset transform first — repeated resizes would compound scale().
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
     };
     resize();
     window.addEventListener("resize", resize);
 
-    // Initialize stars
-    const numStars = Math.floor(60 + intensity * 120);
+    // Honour prefers-reduced-motion: render once, then stop animating.
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Density dropped ~40% — we don't need 180 stars to sell the mood,
+    // and the old count was a measurable frame-budget hog on laptop GPUs.
+    const numStars = Math.floor(35 + intensity * 75);
     const theme = getTheme(sky);
 
     starsRef.current = Array.from({ length: numStars }, () => ({
@@ -88,40 +101,41 @@ export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
       color: theme.starColors[Math.floor(Math.random() * theme.starColors.length)],
     }));
 
+    // Target ~30fps — twinkle/drift look identical, half the GPU work.
+    const frameInterval = 1000 / 30;
+    let lastFrameAt = 0;
     let frame = 0;
+    let running = true;
 
-    const animate = () => {
+    const draw = () => {
       const w = canvas.offsetWidth;
       const h = canvas.offsetHeight;
 
       ctx.clearRect(0, 0, w, h);
-
       frame++;
       const stars = starsRef.current;
 
       for (const star of stars) {
-        // Twinkle
         star.twinklePhase += 0.02 + Math.random() * 0.01;
         const twinkle = 0.5 + 0.5 * Math.sin(star.twinklePhase);
         const alpha = star.brightness * twinkle * (0.4 + intensity * 0.6);
 
-        // Slow drift
         star.y += star.speed;
         star.x += Math.sin(frame * 0.005 + star.twinklePhase) * 0.1;
 
-        // Wrap around
-        if (star.y > h) { star.y = 0; star.x = Math.random() * w; }
+        if (star.y > h) {
+          star.y = 0;
+          star.x = Math.random() * w;
+        }
         if (star.x < 0) star.x = w;
         if (star.x > w) star.x = 0;
 
-        // Draw
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fillStyle = star.color;
         ctx.globalAlpha = alpha;
         ctx.fill();
 
-        // Glow for larger stars
         if (star.size > 1.5) {
           ctx.beginPath();
           ctx.arc(star.x, star.y, star.size * 3, 0, Math.PI * 2);
@@ -131,7 +145,6 @@ export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
         }
       }
 
-      // Occasional shooting star
       if (Math.random() < 0.003 * intensity) {
         const sx = Math.random() * w;
         const sy = Math.random() * h * 0.5;
@@ -145,14 +158,41 @@ export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
       }
 
       ctx.globalAlpha = 1;
-      animRef.current = requestAnimationFrame(animate);
     };
 
-    animRef.current = requestAnimationFrame(animate);
+    const tick = (now: number) => {
+      if (!running) return;
+      if (now - lastFrameAt >= frameInterval) {
+        lastFrameAt = now;
+        draw();
+      }
+      animRef.current = requestAnimationFrame(tick);
+    };
+
+    // Pause while the tab is hidden so we don't keep burning battery.
+    const onVisibility = () => {
+      if (document.hidden) {
+        running = false;
+        cancelAnimationFrame(animRef.current);
+      } else if (!reduceMotion) {
+        running = true;
+        lastFrameAt = 0;
+        animRef.current = requestAnimationFrame(tick);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    if (reduceMotion) {
+      draw(); // single static frame
+    } else {
+      animRef.current = requestAnimationFrame(tick);
+    }
 
     return () => {
+      running = false;
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [intensity, sky]);
 
