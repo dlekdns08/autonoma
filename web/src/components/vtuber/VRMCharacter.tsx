@@ -459,6 +459,20 @@ function VRMModel({
     // Currently-playing gesture.
     gesture: null as GestureName | null,
     gestureStart: 0,
+    // State cross-fade — when `state` changes we record the previous
+    // value and ease stateBlend 0→1 over ~350ms, blending the old
+    // overlay out and the new one in instead of snapping poses.
+    prevState: null as string | null,
+    stateBlend: 1,
+    // Speech-beat nod tracker — fires small secondary nods during
+    // sustained speech (distinct from the rising-edge bow above).
+    speechOnsetStart: -1,
+    beatNodStart: -1,
+    beatNodNextAt: 0,
+    // Chest-pump beat (talking-state amplitude rising edge).
+    chestPumpStart: -1,
+    chestPumpCooldownUntil: 0,
+    prevAmpForPump: 0,
   });
 
   // Bone lookups are cheap but non-zero — humanoid.getNormalizedBoneNode
