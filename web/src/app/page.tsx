@@ -42,7 +42,7 @@ export default function Home() {
     [state.agents],
   );
 
-  // Idle state
+  // ── Idle ────────────────────────────────────────────────────────────
   if (state.status === "idle") {
     return (
       <div className="flex h-screen flex-col relative">
@@ -59,7 +59,7 @@ export default function Home() {
     );
   }
 
-  // Finished state
+  // ── Finished ────────────────────────────────────────────────────────
   if (state.status === "finished") {
     return (
       <div className="flex h-screen flex-col relative">
@@ -94,10 +94,9 @@ export default function Home() {
     );
   }
 
-  // Running state — full dashboard
+  // ── Running — full dashboard ─────────────────────────────────────────
   return (
-    <div className="flex h-screen flex-col relative">
-      {/* Animated starfield background */}
+    <div className="flex h-screen flex-col relative overflow-hidden">
       <Starfield intensity={state.boss ? 0.9 : 0.5} sky={state.sky} />
 
       <Header
@@ -108,11 +107,17 @@ export default function Home() {
         connected={connected}
       />
 
-      <main className="flex flex-1 overflow-hidden relative z-10">
-        {/* Left column — VTuber full-body stage. Wide enough for a
-            readable character plus speech bubble, narrow enough to
-            leave the pixel map room in the center. */}
-        <div className="flex w-[360px] shrink-0 flex-col gap-2 border-r border-fuchsia-500/10 p-2">
+      <main className="flex flex-1 overflow-hidden relative z-10 gap-0">
+
+        {/* ── Left: VTuber stage ──────────────────────────────────────── */}
+        <div
+          className="flex shrink-0 flex-col"
+          style={{
+            width: 356,
+            borderRight: "1px solid rgba(139,92,246,0.1)",
+            padding: "6px",
+          }}
+        >
           <VTuberStage
             agents={state.agents}
             getMouthAmplitude={getMouthAmplitude}
@@ -122,9 +127,20 @@ export default function Home() {
           />
         </div>
 
-        {/* Center column — pixel map (top, 3/4) + event log (bottom). */}
-        <div className="flex flex-1 flex-col gap-2 p-2 min-w-0">
-          <div className="relative flex-[3] min-h-0">
+        {/* ── Center: pixel map + event log ───────────────────────────── */}
+        <div className="flex flex-1 flex-col min-w-0" style={{ padding: "6px", gap: "6px" }}>
+
+          {/* Pixel map — terminal frame aesthetic */}
+          <div
+            className="relative flex-[3] min-h-0 rounded-xl overflow-hidden scanlines"
+            style={{
+              border: "1px solid rgba(139,92,246,0.18)",
+              boxShadow: "0 0 0 1px rgba(0,0,0,0.6) inset, 0 0 32px rgba(139,92,246,0.06)",
+            }}
+          >
+            {/* Corner bracket marks — cyber terminal aesthetic */}
+            <CornerMarks />
+
             <Stage
               agents={state.agents}
               sky={state.sky}
@@ -137,29 +153,39 @@ export default function Home() {
             />
             {state.boss && <BossOverlay boss={state.boss} />}
 
-            {/* Minimap overlay */}
-            <div className="absolute bottom-2 right-2 w-32">
+            <div className="absolute bottom-2 right-2 w-28 z-10">
               <Minimap agents={state.agents} onSelectAgent={handleSelectAgent} />
             </div>
           </div>
 
-          <div className="flex-[1] min-h-0">
+          {/* Event log */}
+          <div
+            className="flex-[1] min-h-0 rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(255,255,255,0.06)" }}
+          >
             <EventLog events={state.events} />
           </div>
         </div>
 
-        {/* Right: Sidebar */}
-        <div className="flex w-80 flex-col gap-2 overflow-y-auto p-2 border-l border-white/5 scrollbar-thin">
+        {/* ── Right: sidebar panels ────────────────────────────────────── */}
+        <div
+          className="flex flex-col overflow-y-auto scrollbar-thin"
+          style={{
+            width: 308,
+            borderLeft: "1px solid rgba(255,255,255,0.05)",
+            padding: "6px",
+            gap: "6px",
+          }}
+        >
           <TaskPanel tasks={state.tasks} />
 
-          {/* Relationship Web */}
           <RelationshipWeb
             agents={state.agents}
             relationships={state.relationships}
             onSelectAgent={handleSelectAgent}
           />
 
-          <div className="h-72">
+          <div style={{ height: 272 }}>
             <ChatPanel
               room={room}
               messages={chat}
@@ -172,9 +198,33 @@ export default function Home() {
           <FileTree files={state.files} sessionId={sessionId} />
 
           {/* Agent Cards */}
-          <div className="flex flex-col gap-2 rounded-xl border border-purple-500/20 bg-slate-900/50 p-3">
-            <h3 className="text-xs font-bold text-purple-300 font-mono">♥ Agents ♥</h3>
-            <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto scrollbar-thin">
+          <div
+            className="flex flex-col rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(139,92,246,0.15)" }}
+          >
+            <div
+              className="flex items-center gap-2 px-3 py-2"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+            >
+              <span className="text-violet-400 text-[11px]">◈</span>
+              <h3 className="text-[11px] font-bold text-violet-300 font-mono tracking-widest uppercase">
+                Agents
+              </h3>
+              <span
+                className="ml-auto font-mono text-[9px] rounded-full px-2 py-0.5"
+                style={{
+                  background: "rgba(139,92,246,0.15)",
+                  color: "#a78bfa",
+                  border: "1px solid rgba(139,92,246,0.25)",
+                }}
+              >
+                {state.agents.length}
+              </span>
+            </div>
+            <div
+              className="flex flex-col overflow-y-auto scrollbar-thin"
+              style={{ maxHeight: 240, gap: "4px", padding: "6px" }}
+            >
               {state.agents.map((agent) => (
                 <AgentCard
                   key={agent.name}
@@ -190,34 +240,41 @@ export default function Home() {
       {/* Chat Input */}
       <ChatInput onSend={sendMessage} connected={connected} />
 
-      {/* Footer */}
-      <footer className="flex items-center justify-between gap-4 border-t border-fuchsia-500/10 bg-slate-950/50 px-4 py-2 text-[10px] font-mono text-white/30 relative z-10">
+      {/* Status bar */}
+      <footer
+        className="flex items-center justify-between gap-4 px-4 py-1.5 font-mono text-[9px] relative z-10"
+        style={{
+          borderTop: "1px solid rgba(255,255,255,0.04)",
+          background: "rgba(7,6,15,0.9)",
+          color: "#534a78",
+        }}
+      >
         <div className="flex items-center gap-4">
-          <span>♥ Autonoma v0.1.0</span>
-          <span>Agents: {state.agents.length}</span>
-          <span>Files: {state.files.length}</span>
-          <span>Events: {state.events.length}</span>
-          {state.boss && <span className="text-red-400">BOSS: {state.boss.name}</span>}
+          <span className="text-violet-800">⬡ autonoma</span>
+          <span>agents:{state.agents.length}</span>
+          <span>files:{state.files.length}</span>
+          <span>events:{state.events.length}</span>
+          {state.boss && (
+            <span style={{ color: "#fb7185" }}>BOSS:{state.boss.name}</span>
+          )}
         </div>
         {authState.status === "authenticated" && (
           <div className="flex items-center gap-3">
-            <span className="text-white/20">
-              {authState.isAdmin ? "👑 admin" : `${authState.provider} / ${authState.model}`}
+            <span>
+              {authState.isAdmin ? "admin" : `${authState.provider}/${authState.model}`}
             </span>
             <button
               onClick={logout}
-              className="text-white/20 hover:text-white/50 transition-colors underline underline-offset-2"
+              className="hover:text-violet-400 transition-colors underline underline-offset-2"
             >
-              로그아웃
+              logout
             </button>
           </div>
         )}
       </footer>
 
-      {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {/* Agent Modal */}
       {selectedAgent && (
         <AgentModal
           agent={selectedAgent}
@@ -226,7 +283,6 @@ export default function Home() {
         />
       )}
 
-      {/* Auth Modal */}
       {needsAuth && authState.status !== "unknown" && (
         <AuthModal authState={authState} onAuthenticate={authenticate} />
       )}
@@ -234,77 +290,154 @@ export default function Home() {
   );
 }
 
+// ── Corner bracket marks ──────────────────────────────────────────────
+// Decorative corner marks around the pixel-map stage panel.
+// Pure CSS, zero runtime cost.
+function CornerMarks() {
+  const corner =
+    "absolute w-3 h-3 pointer-events-none z-10";
+  const lineStyle = "absolute bg-violet-500/50";
+  return (
+    <>
+      {/* top-left */}
+      <span className={`${corner} top-1.5 left-1.5`}>
+        <span className={`${lineStyle} top-0 left-0 h-px w-full`} />
+        <span className={`${lineStyle} top-0 left-0 w-px h-full`} />
+      </span>
+      {/* top-right */}
+      <span className={`${corner} top-1.5 right-1.5`}>
+        <span className={`${lineStyle} top-0 right-0 h-px w-full`} />
+        <span className={`${lineStyle} top-0 right-0 w-px h-full`} />
+      </span>
+      {/* bottom-left */}
+      <span className={`${corner} bottom-1.5 left-1.5`}>
+        <span className={`${lineStyle} bottom-0 left-0 h-px w-full`} />
+        <span className={`${lineStyle} bottom-0 left-0 w-px h-full`} />
+      </span>
+      {/* bottom-right */}
+      <span className={`${corner} bottom-1.5 right-1.5`}>
+        <span className={`${lineStyle} bottom-0 right-0 h-px w-full`} />
+        <span className={`${lineStyle} bottom-0 right-0 w-px h-full`} />
+      </span>
+    </>
+  );
+}
+
+// ── Agent Card ────────────────────────────────────────────────────────
+const MOOD_STYLES: Record<string, { bg: string; color: string }> = {
+  happy:      { bg: "rgba(16,185,129,0.15)",  color: "#6ee7b7" },
+  excited:    { bg: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
+  frustrated: { bg: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
+  proud:      { bg: "rgba(139,92,246,0.15)",  color: "#c4b5fd" },
+  worried:    { bg: "rgba(249,115,22,0.15)",  color: "#fdba74" },
+  relaxed:    { bg: "rgba(34,211,238,0.15)",  color: "#67e8f9" },
+  determined: { bg: "rgba(251,191,36,0.15)",  color: "#fde68a" },
+  focused:    { bg: "rgba(99,102,241,0.15)",  color: "#a5b4fc" },
+};
+
 function AgentCard({ agent, onClick }: { agent: AgentData; onClick: () => void }) {
   const xpPct = agent.xp_to_next > 0 ? (agent.xp / agent.xp_to_next) * 100 : 0;
-
-  const moodColors: Record<string, string> = {
-    happy: "bg-green-500/20 text-green-400",
-    excited: "bg-yellow-500/20 text-yellow-400",
-    frustrated: "bg-red-500/20 text-red-400",
-    proud: "bg-fuchsia-500/20 text-fuchsia-400",
-    worried: "bg-orange-500/20 text-orange-400",
-    relaxed: "bg-cyan-500/20 text-cyan-400",
-    determined: "bg-amber-500/20 text-amber-400",
-    focused: "bg-blue-500/20 text-blue-400",
-  };
-
-  const moodStyle = moodColors[agent.mood] || "bg-white/10 text-white/50";
+  const mood = MOOD_STYLES[agent.mood] ?? { bg: "rgba(255,255,255,0.06)", color: "#9d8ec4" };
 
   return (
-    <div
-      className="rounded-lg bg-white/[0.03] p-2 border border-white/5 hover:border-purple-500/20 transition-colors cursor-pointer"
+    <button
+      type="button"
       onClick={onClick}
+      className="w-full text-left rounded-lg transition-all"
+      style={{
+        background: "rgba(17,14,38,0.6)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        padding: "7px 9px",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(139,92,246,0.28)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.06)";
+      }}
     >
       <div className="flex items-center gap-2">
-        <span className="text-lg">{agent.species_emoji || agent.emoji}</span>
+        <span className="text-base leading-none">{agent.species_emoji || agent.emoji}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-bold text-white/80 truncate">{agent.name}</span>
-            <span className="text-[9px] text-yellow-400 font-mono">Lv{agent.level}</span>
+            <span
+              className="text-[11px] font-bold truncate font-mono"
+              style={{ color: "#ede9fe" }}
+            >
+              {agent.name}
+            </span>
+            <span className="text-[9px] font-mono" style={{ color: "#f59e0b" }}>
+              L{agent.level}
+            </span>
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="text-[9px] text-white/30">{agent.role}</span>
+            <span className="text-[9px] font-mono" style={{ color: "#534a78" }}>
+              {agent.role}
+            </span>
             {agent.rarity && agent.rarity !== "common" && (
               <span
-                className={`text-[8px] rounded px-1 ${
-                  agent.rarity === "legendary"
-                    ? "bg-amber-500/20 text-amber-400"
-                    : agent.rarity === "rare"
-                      ? "bg-purple-500/20 text-purple-400"
-                      : "bg-cyan-500/20 text-cyan-400"
-                }`}
+                className="text-[8px] rounded px-1 font-mono"
+                style={{
+                  background:
+                    agent.rarity === "legendary"
+                      ? "rgba(245,158,11,0.15)"
+                      : agent.rarity === "rare"
+                        ? "rgba(139,92,246,0.15)"
+                        : "rgba(34,211,238,0.15)",
+                  color:
+                    agent.rarity === "legendary"
+                      ? "#fcd34d"
+                      : agent.rarity === "rare"
+                        ? "#c4b5fd"
+                        : "#67e8f9",
+                }}
               >
                 {agent.rarity}
               </span>
             )}
           </div>
         </div>
-        <span className={`rounded-full px-1.5 py-0.5 text-[8px] ${moodStyle}`}>{agent.mood}</span>
+        <span
+          className="rounded-full px-1.5 py-0.5 text-[8px] font-mono shrink-0"
+          style={{ background: mood.bg, color: mood.color }}
+        >
+          {agent.mood}
+        </span>
       </div>
 
-      {/* XP Bar */}
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <div className="h-1 flex-1 rounded-full bg-white/10 overflow-hidden">
+      {/* XP bar */}
+      <div className="mt-2 flex items-center gap-1.5">
+        <div
+          className="h-0.5 flex-1 rounded-full overflow-hidden"
+          style={{ background: "rgba(255,255,255,0.07)" }}
+        >
           <div
-            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-fuchsia-500 transition-all duration-300"
-            style={{ width: `${xpPct}%` }}
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${xpPct}%`,
+              background: "linear-gradient(90deg, #7c3aed, #22d3ee)",
+            }}
           />
         </div>
-        <span className="text-[8px] text-white/30 font-mono">
+        <span className="text-[8px] font-mono" style={{ color: "#534a78" }}>
           {agent.xp}/{agent.xp_to_next}
         </span>
       </div>
 
       {/* Traits */}
       {agent.traits && agent.traits.length > 0 && (
-        <div className="mt-1 flex gap-1">
-          {agent.traits.map((t) => (
-            <span key={t} className="rounded bg-white/5 px-1 py-0.5 text-[7px] text-white/30">
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {agent.traits.slice(0, 3).map((t) => (
+            <span
+              key={t}
+              className="rounded px-1 py-0.5 text-[7px] font-mono"
+              style={{ background: "rgba(139,92,246,0.08)", color: "#534a78" }}
+            >
               {t}
             </span>
           ))}
         </div>
       )}
-    </div>
+    </button>
   );
 }
