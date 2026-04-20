@@ -118,6 +118,7 @@ export default function Home() {
             getMouthAmplitude={getMouthAmplitude}
             speakingAgents={speakingAgents}
             onSelectAgent={handleSelectAgent}
+            backdrop="studio"
           />
         </div>
 

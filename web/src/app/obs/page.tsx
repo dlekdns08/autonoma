@@ -3,12 +3,15 @@
 /**
  * OBS / streaming view.
  *
- *   /obs                       ← default, black bg, record button visible
+ *   /obs                       ← default, black bg, studio backdrop, record button
  *   /obs?bg=transparent        ← body bg forced to transparent for OBS Browser
  *                                 Source composite (enable "Shutdown source
  *                                 when not visible" to save CPU)
  *   /obs?bg=green              ← chromakey green (#00b140)
  *   /obs?bg=blue               ← chromakey blue (#0047ab)
+ *   /obs?backdrop=studio       ← soft photo-studio cyclorama behind character
+ *   /obs?backdrop=default      ← the original cyber/HUD grid + fuchsia glow
+ *   /obs?backdrop=none         ← no backdrop (auto-selected for chroma/transparent)
  *   /obs?ui=0                  ← hide the record button (useful when the
  *                                 /obs page itself is being captured)
  *
@@ -30,7 +33,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
-import VTuberStage from "@/components/vtuber/VTuberStage";
+import VTuberStage, { type BackdropPreset } from "@/components/vtuber/VTuberStage";
 import AuthModal from "@/components/AuthModal";
 
 // Next 15 requires `useSearchParams` consumers to be inside a Suspense
@@ -48,6 +51,20 @@ function ObsContent() {
   const params = useSearchParams();
   const bg = params.get("bg") ?? "default";
   const showUi = params.get("ui") !== "0";
+
+  // Backdrop default: chromakey / transparent modes want `none` so the
+  // composited background shows through; otherwise fall back to the
+  // studio preset which looks good on the dark default outer bg.
+  const bgIsChroma = bg === "transparent" || bg === "green" || bg === "blue";
+  const backdropParam = params.get("backdrop");
+  const backdrop: BackdropPreset =
+    backdropParam === "default" ||
+    backdropParam === "studio" ||
+    backdropParam === "none"
+      ? backdropParam
+      : bgIsChroma
+        ? "none"
+        : "studio";
 
   const {
     state,
@@ -96,6 +113,7 @@ function ObsContent() {
           getMouthAmplitude={getMouthAmplitude}
           speakingAgents={speakingAgents}
           obsMode
+          backdrop={backdrop}
         />
       ) : (
         <div className="flex h-full items-center justify-center font-mono text-sm text-white/40">

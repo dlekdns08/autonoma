@@ -27,6 +27,15 @@ import type { AgentData } from "@/lib/types";
 import VRMCharacter from "./VRMCharacter";
 import { creditForAgent } from "./vrmCredits";
 
+/** Which backdrop preset paints behind the spotlighted character.
+ *
+ *   - `default`  — the original cyber / game-HUD look (fuchsia grid + pink floor).
+ *   - `studio`   — soft photo-studio cyclorama (warm key, cool fill, neutral wall).
+ *   - `none`     — renders nothing, so OBS chromakey / transparent mode works.
+ *
+ * Exported so the /obs route can type-check its query-param mapping. */
+export type BackdropPreset = "default" | "studio" | "none";
+
 interface Props {
   agents: AgentData[];
   /** Live amplitude feed for lip-sync. */
@@ -36,10 +45,13 @@ interface Props {
   /** Click → open agent modal in the parent. */
   onSelectAgent?: (name: string) => void;
   /** Streaming-friendly variant used by the /obs route. Drops the
-   *  gallery, border, grid backdrop, and camera controls so OBS /
-   *  chromakey compositing gets a clean character + name tag + speech
-   *  bubble on whatever background the outer page provides. */
+   *  gallery, border, and camera controls so OBS / chromakey compositing
+   *  gets a clean character + name tag + speech bubble on whatever
+   *  background the outer page provides. */
   obsMode?: boolean;
+  /** Backdrop preset. Defaults to `default` — callers (e.g. the OBS
+   *  route) can override per-session. */
+  backdrop?: BackdropPreset;
 }
 
 const MOOD_COLORS: Record<string, string> = {
@@ -59,6 +71,7 @@ export default function VTuberStage({
   speakingAgents,
   onSelectAgent,
   obsMode = false,
+  backdrop = "default",
 }: Props) {
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
@@ -104,42 +117,27 @@ export default function VTuberStage({
   return (
     <div className="flex h-full flex-col gap-2 overflow-hidden">
       {/* ── Spotlight ────────────────────────────────────────────── */}
+      {/* The outer container intentionally has NO background — the
+       *  Backdrop component below owns that, so switching presets (or
+       *  rendering `none` for OBS chromakey) doesn't require bending
+       *  around a baked-in gradient here. */}
       <div
         className={`relative flex-1 min-h-0 overflow-hidden rounded-xl ${
           obsMode
             ? ""
-            : "border border-fuchsia-500/25 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 shadow-[0_0_30px_rgba(244,114,182,0.08)]"
+            : "border border-fuchsia-500/25 shadow-[0_0_30px_rgba(244,114,182,0.08)]"
         }`}
       >
-        {/* Subtle grid backdrop — skipped in OBS mode so chromakey stays
-         *  clean and the character sits on whatever the outer page
-         *  provides (transparent / green / etc.). */}
-        {!obsMode && (
-          <div
-            className="absolute inset-0 opacity-[0.06]"
-            style={{
-              backgroundImage:
-                "linear-gradient(rgba(244,114,182,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(244,114,182,0.6) 1px, transparent 1px)",
-              backgroundSize: "48px 48px",
-            }}
-          />
-        )}
+        <Backdrop preset={backdrop} />
 
-        {/* Mood-tinted radial backlight — follows the spotlighted agent. */}
+        {/* Mood-tinted radial backlight — follows the spotlighted agent.
+         *  Stays inline (not part of Backdrop) because it reacts to the
+         *  current agent's mood, not the chosen preset. */}
         <div
           key={`mood-${spotlightAgent?.name}-${spotlightAgent?.mood}`}
           className={`pointer-events-none absolute inset-0 bg-gradient-radial-[at_center_40%] ${spotlightMood} transition-opacity duration-700`}
           style={{
             background: `radial-gradient(ellipse at center 55%, var(--tw-gradient-stops))`,
-          }}
-        />
-
-        {/* Floor glow — gives the character a sense of grounding. */}
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-32"
-          style={{
-            background:
-              "radial-gradient(ellipse at 50% 100%, rgba(244,114,182,0.18) 0%, transparent 60%)",
           }}
         />
 
@@ -331,5 +329,106 @@ export default function VTuberStage({
         }
       `}</style>
     </div>
+  );
+}
+
+// ── Backdrop presets ──────────────────────────────────────────────────
+//
+// All presets render as absolute-inset layers filling the spotlight
+// container. They sit *below* the mood-tinted radial and the character,
+// so the mood tint still reads regardless of preset. Adding a new
+// preset means extending `BackdropPreset` and adding a branch here.
+//
+// Kept inline in this file (rather than a separate `backdrops.tsx`)
+// because these presets are only ever consumed by VTuberStage, and a
+// separate module would split context for a change this small.
+
+function Backdrop({ preset }: { preset: BackdropPreset }) {
+  if (preset === "none") return null;
+
+  if (preset === "studio") {
+    return (
+      <>
+        {/* Neutral wall gradient — slight warm tint avoids the
+            cold-blue sterility of a flat slate wash. Darkens toward
+            the bottom so the floor spill below has contrast to read. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, #1c1e24 0%, #121318 55%, #0a0b0f 100%)",
+          }}
+        />
+        {/* Key light: warm cream spot from upper-right. "Short"
+            lighting (key on the far side of the face) reads more
+            cinematic than a dead-center front-light. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 55% 45% at 70% 25%, rgba(255, 228, 196, 0.14), transparent 70%)",
+          }}
+        />
+        {/* Fill light: dim cool cyan from the opposite side — just
+            enough to keep the shadow side from going dead black
+            without fighting the key light for attention. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 50% 50% at 20% 55%, rgba(170, 210, 245, 0.08), transparent 70%)",
+          }}
+        />
+        {/* Cyclorama — the soft bright arc photographers put behind
+            the subject. Positioned at shoulder height so it haloes
+            the character rather than framing them symmetrically. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 90% 60% at 50% 60%, rgba(255, 255, 255, 0.05), transparent 60%)",
+          }}
+        />
+        {/* Floor spill — warm pool beneath the character sells the
+            "standing on a surface" illusion without actual 3D
+            geometry, and grounds the silhouette against the wall. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-40"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 100%, rgba(255, 223, 186, 0.16) 0%, transparent 65%)",
+          }}
+        />
+      </>
+    );
+  }
+
+  // Default: the original cyber / game-HUD look — dark slate gradient,
+  // fuchsia grid overlay, pink floor glow.
+  return (
+    <>
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(180deg, rgb(2 6 23) 0%, rgb(2 6 23) 50%, rgb(15 23 42) 100%)",
+        }}
+      />
+      <div
+        className="absolute inset-0 opacity-[0.06]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(244,114,182,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(244,114,182,0.6) 1px, transparent 1px)",
+          backgroundSize: "48px 48px",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-32"
+        style={{
+          background:
+            "radial-gradient(ellipse at 50% 100%, rgba(244,114,182,0.18) 0%, transparent 60%)",
+        }}
+      />
+    </>
   );
 }
