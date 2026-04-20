@@ -455,29 +455,53 @@ app.add_middleware(
 )
 
 
+def _cleanup_session(session_id: int) -> None:
+    """Remove a session entry. Safe to call multiple times."""
+    _sessions.pop(session_id, None)
+
+
+async def _cancel_session_task(session: SessionState) -> None:
+    """Cancel the session's running swarm task (if any) and await its exit."""
+    if session.task is not None and not session.task.done():
+        session.task.cancel()
+        try:
+            await session.task
+        except (asyncio.CancelledError, Exception):
+            pass
+    session.task = None
+
+
+def _session_project(session_id: int | None) -> Any | None:
+    if session_id is None:
+        return None
+    session = _sessions.get(session_id)
+    return session.project if session else None
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
-    global _swarm_task, _swarm, _project
-    ws_id = id(ws)
+    session = SessionState(ws=ws, session_id=id(ws))
+    _sessions[session.session_id] = session
 
     await manager.connect(ws)
     try:
-        # ── Announce auth requirements on connect ──
+        # ── Announce auth + session id on connect ──
         has_admin = bool(settings.admin_password)
         await ws.send_text(json.dumps({
             "event": "auth.status",
             "data": {
                 "requires_auth": True,
                 "has_admin": has_admin,
-                # Tell the UI which provider the server uses so it can show
-                # the correct model name when admin logs in.
                 "server_provider": settings.provider if has_admin else None,
                 "server_model": settings.model if has_admin else None,
+                # Every connection gets its own session id; the client must
+                # use it for downloads so file routes are isolated too.
+                "session_id": session.session_id,
             },
         }))
 
-        # ── Initial state snapshot ──
-        snapshot = _get_snapshot()
+        # ── Initial state snapshot (always idle for a fresh connection) ──
+        snapshot = _get_snapshot(session.session_id)
         await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
 
         # ── Command loop ──
@@ -492,33 +516,30 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
                 if auth_type == "admin":
                     if not settings.admin_password:
-                        await ws.send_text(json.dumps({
-                            "event": "auth.failed",
-                            "data": {"message": "관리자 계정이 서버에 설정되어 있지 않습니다."},
-                        }))
+                        await manager.send_to_ws(ws, "auth.failed", {
+                            "message": "관리자 계정이 서버에 설정되어 있지 않습니다.",
+                        })
                     elif msg.get("password") != settings.admin_password:
-                        await ws.send_text(json.dumps({
-                            "event": "auth.failed",
-                            "data": {"message": "관리자 비밀번호가 올바르지 않습니다."},
-                        }))
+                        await manager.send_to_ws(ws, "auth.failed", {
+                            "message": "관리자 비밀번호가 올바르지 않습니다.",
+                        })
                     else:
                         llm_cfg = _build_admin_llm_config()
                         if llm_cfg is None:
-                            await ws.send_text(json.dumps({
-                                "event": "auth.failed",
-                                "data": {"message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요."},
-                            }))
+                            await manager.send_to_ws(ws, "auth.failed", {
+                                "message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.",
+                            })
                         else:
-                            _auth_store[ws_id] = llm_cfg
-                            logger.info(f"[WS:{ws_id}] Admin authenticated (provider={llm_cfg.provider})")
-                            await ws.send_text(json.dumps({
-                                "event": "auth.success",
-                                "data": {
-                                    "is_admin": True,
-                                    "provider": llm_cfg.provider,
-                                    "model": llm_cfg.model,
-                                },
-                            }))
+                            session.llm_config = llm_cfg
+                            logger.info(
+                                f"[WS:{session.session_id}] Admin authenticated "
+                                f"(provider={llm_cfg.provider})"
+                            )
+                            await manager.send_to_ws(ws, "auth.success", {
+                                "is_admin": True,
+                                "provider": llm_cfg.provider,
+                                "model": llm_cfg.model,
+                            })
 
                 elif auth_type == "user":
                     provider = msg.get("provider", "anthropic")
@@ -537,135 +558,165 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         error = "vLLM 서버 URL을 입력해주세요."
 
                     if error:
-                        await ws.send_text(json.dumps({
-                            "event": "auth.failed",
-                            "data": {"message": error},
-                        }))
+                        logger.info(
+                            f"[WS:{session.session_id}] User auth rejected: {error}"
+                        )
+                        await manager.send_to_ws(ws, "auth.failed", {"message": error})
                     else:
+                        # Only carry base_url when the provider actually uses it.
+                        # Passing a stale base_url to anthropic/openai can make
+                        # the SDK talk to the wrong endpoint and throw errors
+                        # that look like "invalid API key".
+                        effective_base_url = base_url if provider == "vllm" else ""
                         llm_cfg = LLMConfig(
                             provider=provider,  # type: ignore[arg-type]
                             api_key=api_key,
                             model=model,
-                            base_url=base_url,
+                            base_url=effective_base_url,
                             max_tokens=settings.max_tokens,
                             temperature=settings.temperature,
                         )
-                        _auth_store[ws_id] = llm_cfg
-                        logger.info(f"[WS:{ws_id}] User authenticated (provider={provider}, model={model})")
-                        await ws.send_text(json.dumps({
-                            "event": "auth.success",
-                            "data": {
-                                "is_admin": False,
-                                "provider": provider,
-                                "model": model,
-                            },
-                        }))
+                        session.llm_config = llm_cfg
+                        logger.info(
+                            f"[WS:{session.session_id}] User authenticated "
+                            f"(provider={provider}, model={model}, "
+                            f"key_len={len(api_key)}, base_url="
+                            f"{effective_base_url or '(n/a)'})"
+                        )
+                        await manager.send_to_ws(ws, "auth.success", {
+                            "is_admin": False,
+                            "provider": provider,
+                            "model": model,
+                        })
                 else:
-                    await ws.send_text(json.dumps({
-                        "event": "auth.failed",
-                        "data": {"message": "인증 방식이 올바르지 않습니다 (admin 또는 user)."},
-                    }))
+                    await manager.send_to_ws(ws, "auth.failed", {
+                        "message": "인증 방식이 올바르지 않습니다 (admin 또는 user).",
+                    })
 
             # ── get_snapshot ──────────────────────────────────────────
             elif cmd == "get_snapshot":
-                snapshot = _get_snapshot()
-                await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
+                snap = _get_snapshot(session.session_id)
+                await manager.send_to_ws(ws, "snapshot", snap)
 
             # ── start ─────────────────────────────────────────────────
             elif cmd == "start":
-                llm_cfg = _auth_store.get(ws_id)
-                if llm_cfg is None:
-                    await ws.send_text(json.dumps({
-                        "event": "auth.required",
-                        "data": {"message": "스웜을 시작하려면 먼저 로그인해주세요."},
-                    }))
+                if session.llm_config is None:
+                    await manager.send_to_ws(ws, "auth.required", {
+                        "message": "스웜을 시작하려면 먼저 로그인해주세요.",
+                    })
                     continue
 
                 goal = msg.get("goal", "").strip()
                 if not goal:
-                    await ws.send_text(json.dumps({
-                        "event": "error",
-                        "data": {"message": "Goal is required"},
-                    }))
-                elif _swarm_task and not _swarm_task.done():
-                    await ws.send_text(json.dumps({
-                        "event": "error",
-                        "data": {"message": "Swarm is already running"},
-                    }))
+                    await manager.send_to_ws(ws, "error", {
+                        "message": "Goal is required",
+                    })
+                elif session.task is not None and not session.task.done():
+                    await manager.send_to_ws(ws, "error", {
+                        "message": "Swarm is already running in this session",
+                    })
                 else:
                     max_rounds = msg.get("max_rounds", 30)
-                    _swarm_task = asyncio.create_task(
-                        _run_swarm(goal, max_rounds, llm_config=llm_cfg)
+                    # Capture the current context so _run_swarm starts with
+                    # our session id set on the ContextVar.
+                    ctx = contextvars.copy_context()
+                    ctx.run(_current_session_id.set, session.session_id)
+                    session.task = asyncio.create_task(
+                        _run_swarm(
+                            session.session_id,
+                            goal,
+                            max_rounds,
+                            llm_config=session.llm_config,
+                        ),
+                        context=ctx,
                     )
-                    await ws.send_text(json.dumps({
-                        "event": "swarm.starting",
-                        "data": {"goal": goal},
-                    }))
+                    await manager.send_to_ws(ws, "swarm.starting", {"goal": goal})
 
             # ── stop ──────────────────────────────────────────────────
             elif cmd == "stop":
-                if _swarm_task and not _swarm_task.done():
-                    _swarm_task.cancel()
-                    await ws.send_text(json.dumps({"event": "swarm.stopped", "data": {}}))
+                if session.task is not None and not session.task.done():
+                    session.task.cancel()
+                    await manager.send_to_ws(ws, "swarm.stopped", {})
 
             # ── reset ─────────────────────────────────────────────────
-            # Bring the server back to the idle state so the user can
-            # start a brand-new project from the start screen.
             elif cmd == "reset":
-                if _swarm_task and not _swarm_task.done():
-                    _swarm_task.cancel()
-                    try:
-                        await _swarm_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                _swarm = None
-                _project = None
-                _swarm_task = None
-                logger.info(f"[WS:{ws_id}] Project reset — returning to idle")
-                await manager.broadcast("swarm.reset", {})
-                await manager.broadcast("snapshot", _get_snapshot())
+                await _cancel_session_task(session)
+                session.swarm = None
+                session.project = None
+                logger.info(
+                    f"[WS:{session.session_id}] Session reset — returning to idle"
+                )
+                await manager.send_to_ws(ws, "swarm.reset", {})
+                await manager.send_to_ws(
+                    ws, "snapshot", _get_snapshot(session.session_id)
+                )
 
             # ── message ───────────────────────────────────────────────
             elif cmd == "message":
                 text = msg.get("text", "")
                 target = msg.get("target")
                 if text.startswith("/cheer"):
-                    await bus.emit("world.event", title="The audience cheers wildly! Agents feel inspired!")
-                elif text.startswith("/status") or text.startswith("/snapshot"):
-                    snapshot = _get_snapshot()
-                    await ws.send_text(json.dumps({"event": "snapshot", "data": snapshot}))
-                elif text.startswith("/stop"):
-                    if _swarm_task and not _swarm_task.done():
-                        _swarm_task.cancel()
-                else:
-                    await manager.broadcast(
-                        "chat.message",
-                        {"text": text, "source": "user", "target": target or ""},
+                    await bus.emit(
+                        "world.event",
+                        title="The audience cheers wildly! Agents feel inspired!",
                     )
+                elif text.startswith("/status") or text.startswith("/snapshot"):
+                    await manager.send_to_ws(
+                        ws, "snapshot", _get_snapshot(session.session_id)
+                    )
+                elif text.startswith("/stop"):
+                    if session.task is not None and not session.task.done():
+                        session.task.cancel()
+                else:
+                    await manager.send_to_ws(ws, "chat.message", {
+                        "text": text, "source": "user", "target": target or "",
+                    })
                     if (
                         text
-                        and _swarm is not None
-                        and _swarm_task is not None
-                        and not _swarm_task.done()
+                        and session.swarm is not None
+                        and session.task is not None
+                        and not session.task.done()
                     ):
                         try:
-                            await _swarm.inject_human_message(text, target=target)
+                            await session.swarm.inject_human_message(
+                                text, target=target
+                            )
                         except Exception as e:
-                            logger.error(f"[WS] Failed to inject human message: {e}")
+                            logger.error(
+                                f"[WS:{session.session_id}] "
+                                f"Failed to inject human message: {e}"
+                            )
 
     except WebSocketDisconnect:
-        manager.disconnect(ws)
+        pass
     except Exception as e:
-        logger.error(f"[WS] Error: {e}")
+        logger.error(f"[WS:{session.session_id}] Error: {e}")
+    finally:
+        # Tear down anything this session owned so no orphaned task keeps
+        # burning tokens after the user disconnects.
+        await _cancel_session_task(session)
         manager.disconnect(ws)
+        _cleanup_session(session.session_id)
+
+
+def _require_session(session_id: int | None) -> SessionState:
+    if session_id is None:
+        raise HTTPException(
+            status_code=400, detail="session query parameter is required"
+        )
+    session = _sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return session
 
 
 @app.get("/api/files")
-async def list_files() -> dict[str, Any]:
-    if _project is None:
+async def list_files(session: int | None = Query(default=None)) -> dict[str, Any]:
+    project = _session_project(session)
+    if project is None:
         return {"project": None, "files": []}
     return {
-        "project": _project.name,
+        "project": project.name,
         "files": [
             {
                 "path": f.path,
@@ -673,16 +724,19 @@ async def list_files() -> dict[str, Any]:
                 "description": f.description,
                 "created_by": f.created_by,
             }
-            for f in _project.files
+            for f in project.files
         ],
     }
 
 
 @app.get("/api/files/download")
-async def download_file(path: str) -> Response:
-    if _project is None:
-        raise HTTPException(status_code=404, detail="No active project")
-    artifact = next((f for f in _project.files if f.path == path), None)
+async def download_file(
+    path: str, session: int | None = Query(default=None)
+) -> Response:
+    project = _session_project(session)
+    if project is None:
+        raise HTTPException(status_code=404, detail="No active project for session")
+    artifact = next((f for f in project.files if f.path == path), None)
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     filename = path.rsplit("/", 1)[-1] or "file"
@@ -694,19 +748,20 @@ async def download_file(path: str) -> Response:
 
 
 @app.get("/api/files/zip")
-async def download_zip() -> Response:
-    if _project is None or not _project.files:
+async def download_zip(session: int | None = Query(default=None)) -> Response:
+    project = _session_project(session)
+    if project is None or not project.files:
         raise HTTPException(status_code=404, detail="No files to download")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for artifact in _project.files:
+        for artifact in project.files:
             safe_path = "/".join(
                 seg for seg in artifact.path.split("/") if seg and seg != ".."
             )
             if not safe_path:
                 continue
             zf.writestr(safe_path, artifact.content)
-    project_name = _project.name or "autonoma-project"
+    project_name = project.name or "autonoma-project"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -716,10 +771,15 @@ async def download_zip() -> Response:
 
 @app.get("/api/health")
 async def health():
+    active_swarms = sum(
+        1 for s in _sessions.values()
+        if s.task is not None and not s.task.done()
+    )
     return {
         "status": "ok",
         "connections": len(manager.connections),
-        "swarm_running": _swarm_task is not None and not _swarm_task.done(),
+        "sessions": len(_sessions),
+        "active_swarms": active_swarms,
     }
 
 
