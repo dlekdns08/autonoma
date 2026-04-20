@@ -1276,6 +1276,50 @@ class AgentSwarm:
                 "text": last_thought,
             })
 
+    async def _hold_funeral(self, deceased_name: str) -> None:
+        """Have the deceased's closest survivors deliver brief eulogies.
+
+        We pull trust scores from the existing relationship graph rather
+        than scoring inline — the graph is already what drives the rest
+        of the social fabric, and using it here keeps "who counts as
+        close" consistent with friend lists, gossip, etc.
+        """
+        from autonoma.dialogue_style import funeral_lines
+
+        # Build the (survivor, trust) list. We only look at relationships
+        # where the survivor has a positive bond *toward* the deceased
+        # (frm = survivor, to = deceased) — eulogies are first-person.
+        candidates: list[tuple[str, float]] = []
+        for frm, to, rel in self.relationships.get_all_pairs():
+            if to != deceased_name:
+                continue
+            if frm not in self.agents or frm == deceased_name:
+                continue
+            candidates.append((frm, rel.trust))
+
+        lines = funeral_lines(deceased_name=deceased_name, survivors=candidates)
+        if not lines:
+            return
+
+        # Mark the moment with a world event so the UI can dim/spotlight
+        # if it wants to. Done first so the eulogy speech reads in the
+        # right context order on the client.
+        await bus.emit(
+            "world.event",
+            title=f"A funeral is held for {deceased_name}.",
+        )
+        for survivor_name, line in lines:
+            survivor = self.agents.get(survivor_name)
+            if survivor is None:
+                continue
+            try:
+                await survivor._say(line, style="italic")
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug("funeral line for %s failed: %s", survivor_name, exc)
+            # Tiny gap so the lines don't all fire on the same frame —
+            # gives the UI room to render speech bubbles in sequence.
+            await asyncio.sleep(0.4)
+
     async def _ghost_appearances(self) -> None:
         """Let ghosts appear and share wisdom."""
         messages = self.ghost_realm.maybe_appear(self._round)
