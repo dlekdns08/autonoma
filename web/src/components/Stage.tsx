@@ -474,15 +474,38 @@ function AgentOnMap({
   agent,
   motion,
   dialogue,
+  emote,
+  getMouthAmplitude,
   onClick,
 }: {
   agent: AgentData;
   motion: MotionState;
   dialogue: DialogueBubble | null;
+  emote: AgentEmote | null;
+  getMouthAmplitude?: (agent: string) => number;
   onClick?: () => void;
 }) {
   const rarityClass = RARITY_TEXT[agent.rarity || "common"] ?? RARITY_TEXT.common;
   const speech = dialogue?.text ?? agent.speech;
+
+  // Drive a "speaking glow" off the live audio amplitude. We mutate a CSS
+  // variable on a single ref each frame so React doesn't re-render on
+  // every audio sample (would cost ~60 renders/sec per agent).
+  const glowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!getMouthAmplitude) return;
+    let raf = 0;
+    const tick = () => {
+      const amp = getMouthAmplitude(agent.name);
+      const el = glowRef.current;
+      if (el) {
+        el.style.setProperty("--amp", String(amp));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [agent.name, getMouthAmplitude]);
 
   return (
     <div
@@ -514,6 +537,33 @@ function AgentOnMap({
           </div>
         </div>
       )}
+
+      {emote && (
+        // `key` includes seq so a re-emote on the same agent restarts
+        // the animation instead of being silently merged.
+        <div
+          key={emote.seq}
+          className="pointer-events-none absolute -top-3 left-1/2 -translate-x-1/2 select-none text-[16px] drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]"
+          style={{
+            animation: "emote-pop 1800ms ease-out forwards",
+          }}
+        >
+          {emote.icon}
+        </div>
+      )}
+
+      <div
+        ref={glowRef}
+        className="pointer-events-none absolute inset-0 rounded-full"
+        style={{
+          // CSS var is updated on RAF; opacity scales with amplitude so a
+          // speaking agent has a soft halo and a silent one fades out.
+          opacity: "calc(var(--amp, 0) * 0.7)",
+          background:
+            "radial-gradient(circle, rgba(125,211,252,0.55) 0%, rgba(125,211,252,0) 65%)",
+          transform: "scale(1.4)",
+        }}
+      />
 
       <PixelCharacter
         role={agent.role}
