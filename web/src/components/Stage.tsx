@@ -589,6 +589,27 @@ function AgentOnMap({
           />
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes emote-pop {
+          0% {
+            transform: translate(-50%, 4px) scale(0.4);
+            opacity: 0;
+          }
+          18% {
+            transform: translate(-50%, -6px) scale(1.25);
+            opacity: 1;
+          }
+          70% {
+            transform: translate(-50%, -10px) scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -14px) scale(0.9);
+            opacity: 0;
+          }
+        }
+      `}</style>
     </div>
   );
 }
