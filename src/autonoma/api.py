@@ -391,7 +391,7 @@ app.add_middleware(
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
-    global _swarm_task
+    global _swarm_task, _swarm, _project
     ws_id = id(ws)
 
     await manager.connect(ws)
@@ -546,7 +546,6 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             # Bring the server back to the idle state so the user can
             # start a brand-new project from the start screen.
             elif cmd == "reset":
-                global _swarm, _project
                 if _swarm_task and not _swarm_task.done():
                     _swarm_task.cancel()
                     try:
