@@ -78,6 +78,7 @@ function useAuthStore(): UseAuthReturn {
         setUser(data.user ?? null);
       } else if (res.status === 401) {
         setUser(null);
+        setError("Session expired. Please log in again.");
       } else {
         setUser(null);
         setError(`unexpected status ${res.status}`);
