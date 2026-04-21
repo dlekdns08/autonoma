@@ -522,9 +522,16 @@ export function useSwarm() {
               next.agents = prev.agents.map((a) =>
                 a.name === agentName ? { ...a, speech: data.text as string } : a,
               );
-              // Speak via Web Speech API when server TTS is not producing audio
               const speechText = data.text as string | undefined;
               if (agentName && speechText) {
+                // Mark the agent as speaking immediately — drives the
+                // spotlight switch and VRM talking overlay even when
+                // both server TTS audio and Web Speech fail (headless,
+                // CORS-blocked, or just mid-load). Real TTS amplitude
+                // supersedes the fake oscillation when it arrives.
+                voiceRef.current.markSpeakingFromText(agentName, speechText);
+                // Web Speech is still best-effort — only fires when the
+                // browser has voices available and the tab is focused.
                 voiceRef.current.speakText(agentName, speechText);
               }
               break;
@@ -541,6 +548,16 @@ export function useSwarm() {
                       mood: (data.mood as string) || a.mood,
                     }
                   : a,
+              );
+              break;
+            }
+
+            case "agent.mood": {
+              const agentName = data.agent as string | undefined;
+              const moodValue = data.mood as string | undefined;
+              if (!agentName || !moodValue) break;
+              next.agents = prev.agents.map((a) =>
+                a.name === agentName ? { ...a, mood: moodValue } : a,
               );
               break;
             }
