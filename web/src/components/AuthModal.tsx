@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useAuth, type AuthUser, type LoginReason, type SignupReason } from "@/hooks/useAuth";
+import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AuthState, UserCredentials } from "@/lib/types";
 
 // ── Props ─────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ export default function AuthModal({
   onAuthSuccess,
 }: Props) {
   const { login, signup } = useAuth();
+  const dialogRef = useModalA11y<HTMLDivElement>();
 
   const [tab, setTab] = useState<Tab>("login");
 
@@ -147,12 +149,19 @@ export default function AuthModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
         className="w-full max-w-md rounded-2xl border border-fuchsia-500/30 bg-slate-950/95 p-6 shadow-2xl shadow-fuchsia-500/10"
         onKeyDown={handleKeyDown}
       >
         {/* Header */}
         <div className="mb-6 text-center">
-          <h2 className="text-2xl font-bold font-mono text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-400">
+          <h2
+            id="auth-modal-title"
+            className="text-2xl font-bold font-mono text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-400"
+          >
             ~* Autonoma *~
           </h2>
           <p className="mt-1 text-xs text-white/40 font-mono">
