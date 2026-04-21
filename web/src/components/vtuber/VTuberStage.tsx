@@ -22,7 +22,7 @@
  * until the next utterance from someone else takes over.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { AgentData, AgentEmote } from "@/lib/types";
 import VRMCharacter from "./VRMCharacter";
 import { creditForAgent } from "./vrmCredits";
