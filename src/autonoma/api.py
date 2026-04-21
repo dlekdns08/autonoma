@@ -976,6 +976,49 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 elif text.startswith("/stop"):
                     if session.task is not None and not session.task.done():
                         session.task.cancel()
+                elif text.startswith("/cookie"):
+                    # Dev helper: drop a fortune cookie on the map right now
+                    # so the pickup loop can be verified without waiting for
+                    # dawn. Usage: "/cookie <AgentName>" — if the name is
+                    # omitted, picks a random non-Director agent.
+                    parts = text.split(maxsplit=1)
+                    target_name = parts[1].strip() if len(parts) > 1 else ""
+                    if session.swarm is None or session.task is None or session.task.done():
+                        await manager.send_to_ws(ws, "chat.message", {
+                            "text": "/cookie: swarm not running",
+                            "source": "system", "target": "",
+                        })
+                    else:
+                        swarm = session.swarm
+                        if not target_name:
+                            candidates = [
+                                n for n in swarm.agents.keys() if n != "Director"
+                            ]
+                            target_name = candidates[0] if candidates else ""
+                        if target_name not in swarm.agents:
+                            await manager.send_to_ws(ws, "chat.message", {
+                                "text": f"/cookie: unknown agent '{target_name}'",
+                                "source": "system", "target": "",
+                            })
+                        else:
+                            token = _current_session_id.set(session.session_id)
+                            try:
+                                cookie = swarm.fortune_jar.give_cookie(
+                                    target_name, swarm._round
+                                )
+                                if cookie is None:
+                                    await manager.send_to_ws(ws, "chat.message", {
+                                        "text": f"/cookie: {target_name} already has one",
+                                        "source": "system", "target": "",
+                                    })
+                                else:
+                                    await bus.emit(
+                                        "fortune.given",
+                                        agent=target_name,
+                                        fortune=cookie.fortune,
+                                    )
+                            finally:
+                                _current_session_id.reset(token)
                 else:
                     await manager.send_to_ws(ws, "chat.message", {
                         "text": text, "source": "user", "target": target or "",
