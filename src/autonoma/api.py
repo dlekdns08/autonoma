@@ -2228,6 +2228,594 @@ async def apply_template(
     }
 
 
+# ── /api/files/history — Feature 9: File Version History ──────────────────
+
+
+async def _insert_file_history(
+    session_id: int, path: str, content: str, created_by: str
+) -> None:
+    """Insert a new version row into ``file_history``.
+
+    The ``version_number`` is computed as ``max(existing) + 1`` for the
+    (session_id, path) pair, defaulting to 1 for the first version. Runs
+    inside the existing async engine so no new connections are needed.
+    """
+    from sqlalchemy import func, insert, select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import file_history
+
+    engine = get_engine()
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                select(func.max(file_history.c.version_number)).where(
+                    file_history.c.session_id == session_id,
+                    file_history.c.path == path,
+                )
+            )
+            row = result.first()
+            next_version = (row[0] or 0) + 1
+            await conn.execute(
+                insert(file_history).values(
+                    session_id=session_id,
+                    path=path,
+                    content=content,
+                    created_by=created_by,
+                    version_number=next_version,
+                )
+            )
+    except Exception as exc:
+        logger.warning("[file_history] insert failed: %s", exc)
+
+
+@app.get("/api/files/history")
+async def get_file_history(
+    path: str,
+    session: int | None = Query(default=None),
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return the version list for a file path within a session.
+
+    Accessible to authenticated users (not admin-only). Content is omitted
+    from the list — use ``GET /api/files/history/{version_id}`` for that.
+    """
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import file_history as fh_table
+
+    if session is None:
+        raise HTTPException(status_code=400, detail="session query parameter required")
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            select(
+                fh_table.c.id,
+                fh_table.c.path,
+                fh_table.c.created_by,
+                fh_table.c.created_at,
+                fh_table.c.version_number,
+                fh_table.c.content,
+            )
+            .where(
+                fh_table.c.session_id == session,
+                fh_table.c.path == path,
+            )
+            .order_by(fh_table.c.version_number)
+        )
+        rows = result.fetchall()
+
+    versions = [
+        {
+            "version_id": r.id,
+            "version_number": r.version_number,
+            "created_by": r.created_by,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "size": len(r.content),
+        }
+        for r in rows
+    ]
+    return {"path": path, "session_id": session, "versions": versions}
+
+
+@app.get("/api/files/history/{version_id}")
+async def get_file_version_content(
+    version_id: int,
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return the full content of a specific file version by ``version_id``."""
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import file_history as fh_table
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            select(fh_table).where(fh_table.c.id == version_id)
+        )
+        row = result.first()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="version_not_found")
+
+    return {
+        "version_id": row.id,
+        "session_id": row.session_id,
+        "path": row.path,
+        "content": row.content,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "version_number": row.version_number,
+    }
+
+
+# ── /api/agents/{name}/memory — Feature 11: Agent Memory Inspector ─────────
+
+
+@app.get("/api/agents/{agent_name}/memory")
+async def get_agent_memory(
+    agent_name: str,
+    session: int | None = Query(default=None),
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return the live AgentMemory state for ``agent_name``. Admin-only.
+
+    Requires a running swarm (returns 404 if none is active for the given
+    session). The ``session`` query param identifies which session's swarm
+    to inspect; when omitted, the first session with a live swarm is used.
+    """
+    target_session: SessionState | None = None
+    if session is not None:
+        target_session = _sessions.get(session)
+    else:
+        for s in _sessions.values():
+            if s.swarm is not None:
+                target_session = s
+                break
+
+    if target_session is None or target_session.swarm is None:
+        raise HTTPException(status_code=404, detail="no_active_swarm")
+
+    swarm = target_session.swarm
+    agent = swarm.agents.get(agent_name)
+    if agent is None:
+        raise HTTPException(
+            status_code=404, detail=f"agent_not_found: {agent_name}"
+        )
+
+    memory = getattr(agent, "memory", None)
+    if memory is None:
+        raise HTTPException(status_code=404, detail="agent_has_no_memory")
+
+    mem_dict = memory.to_dict()
+    experiences = [
+        {
+            "content": e["text"],
+            "category": e["type"],
+            "round": e["round"],
+        }
+        for e in mem_dict.get("private", [])
+    ]
+    hindsight_notes = [
+        f"{n['title']}: {n['lesson']}"
+        for n in mem_dict.get("hindsight", [])
+    ]
+
+    # Relationship opinions: trust values for each peer this agent has
+    # interacted with. Pulled from the swarm's relationship graph.
+    relationship_opinions: dict[str, float] = {}
+    rel_graph = getattr(swarm, "relationships", None)
+    if rel_graph is not None:
+        for (frm, to), rel in rel_graph._graph.items():
+            if frm == agent_name:
+                relationship_opinions[to] = round(rel.trust, 3)
+
+    return {
+        "agent": agent_name,
+        "experiences": experiences,
+        "hindsight_notes": hindsight_notes,
+        "relationship_opinions": relationship_opinions,
+    }
+
+
+# ── /api/workspace/export — Feature 21: Workspace Export ───────────────────
+
+
+@app.get("/api/workspace/export")
+async def export_workspace(
+    session: int | None = Query(default=None),
+    format: str = Query(default="zip"),
+    user: User = Depends(require_active_user),
+) -> Response:
+    """Download the full workspace as a zip archive.
+
+    Includes all generated files, a README_AUTONOMA.txt with run metadata,
+    a tasks.json summary, and a chat_log.txt with all agent messages.
+    Accessible to authenticated users.
+    """
+    if format != "zip":
+        raise HTTPException(status_code=400, detail="only format=zip is supported")
+
+    project = _session_project(session)
+    if project is None:
+        raise HTTPException(
+            status_code=404, detail="No active project for session"
+        )
+
+    sess = _sessions.get(session) if session is not None else None
+    swarm = sess.swarm if sess is not None else None
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # ── Project files ──
+        for artifact in project.files:
+            safe_path = "/".join(
+                seg for seg in artifact.path.split("/") if seg and seg != ".."
+            )
+            if not safe_path:
+                continue
+            zf.writestr(safe_path, artifact.content)
+
+        # ── README_AUTONOMA.txt ──
+        agent_names = [a.name for a in project.agents]
+        round_count = swarm._round if swarm is not None else 0
+        task_summary_lines = [
+            f"  [{t.status.value.upper()}] {t.title} (assigned: {t.assigned_to or 'unassigned'})"
+            for t in project.tasks
+        ]
+        readme_lines = [
+            "AUTONOMA WORKSPACE EXPORT",
+            "=" * 40,
+            f"Project : {project.name}",
+            f"Goal    : {project.description}",
+            f"Agents  : {', '.join(agent_names)}",
+            f"Rounds  : {round_count}",
+            f"Files   : {len(project.files)}",
+            f"Tasks   : {len(project.tasks)}",
+            "",
+            "TASK SUMMARY",
+            "-" * 20,
+        ] + task_summary_lines
+        zf.writestr("README_AUTONOMA.txt", "\n".join(readme_lines))
+
+        # ── tasks.json ──
+        import json as _json
+        tasks_data = [
+            {
+                "id": t.id,
+                "title": t.title,
+                "description": t.description,
+                "status": t.status.value,
+                "priority": t.priority.value,
+                "assigned_to": t.assigned_to,
+                "created_by": t.created_by,
+                "output": t.output,
+                "artifacts": t.artifacts,
+                "created_at": t.created_at.isoformat(),
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            }
+            for t in project.tasks
+        ]
+        zf.writestr("tasks.json", _json.dumps(tasks_data, indent=2))
+
+        # ── chat_log.txt ──
+        chat_lines = []
+        for msg in sorted(project.messages, key=lambda m: m.timestamp):
+            ts = msg.timestamp.strftime("%H:%M:%S")
+            chat_lines.append(
+                f"[{ts}] {msg.sender} -> {msg.recipient}: {msg.content}"
+            )
+        zf.writestr("chat_log.txt", "\n".join(chat_lines))
+
+    session_tag = str(session)[:8] if session is not None else "unknown"
+    filename = f"autonoma_workspace_{session_tag}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── /api/runs — Feature 12: Multi-Run Comparison ────────────────────────────
+
+
+async def _record_run_summary(
+    *,
+    session_id: int,
+    goal: str,
+    agent_count: int,
+    task_count: int,
+    tasks_done: int,
+    tasks_failed: int,
+    total_rounds: int,
+    llm_calls: int,
+    preset_id: str,
+    policy_hash: str,
+) -> int | None:
+    """Insert a row into ``run_summary`` and return the new row id."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy import insert
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import run_summary
+
+    engine = get_engine()
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                insert(run_summary).values(
+                    session_id=session_id,
+                    goal=goal,
+                    completed_at=_dt.utcnow(),
+                    agent_count=agent_count,
+                    task_count=task_count,
+                    tasks_done=tasks_done,
+                    tasks_failed=tasks_failed,
+                    total_rounds=total_rounds,
+                    llm_calls=llm_calls,
+                    preset_id=preset_id,
+                    policy_hash=policy_hash,
+                )
+            )
+            return result.lastrowid
+    except Exception as exc:
+        logger.warning("[run_summary] insert failed: %s", exc)
+        return None
+
+
+@app.get("/api/runs")
+async def list_runs(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Paginated list of run summaries. Admin-only."""
+    from sqlalchemy import func, select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import run_summary
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        total_result = await conn.execute(
+            select(func.count()).select_from(run_summary)
+        )
+        total = total_result.scalar() or 0
+
+        rows_result = await conn.execute(
+            select(run_summary)
+            .order_by(run_summary.c.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = rows_result.fetchall()
+
+    items = [
+        {
+            "id": r.id,
+            "session_id": r.session_id,
+            "goal": r.goal,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "agent_count": r.agent_count,
+            "task_count": r.task_count,
+            "tasks_done": r.tasks_done,
+            "tasks_failed": r.tasks_failed,
+            "total_rounds": r.total_rounds,
+            "llm_calls": r.llm_calls,
+            "preset_id": r.preset_id,
+            "policy_hash": r.policy_hash,
+        }
+        for r in rows
+    ]
+    return {"total": total, "limit": limit, "offset": offset, "runs": items}
+
+
+def _run_row_to_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "session_id": row.session_id,
+        "goal": row.goal,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "agent_count": row.agent_count,
+        "task_count": row.task_count,
+        "tasks_done": row.tasks_done,
+        "tasks_failed": row.tasks_failed,
+        "total_rounds": row.total_rounds,
+        "llm_calls": row.llm_calls,
+        "preset_id": row.preset_id,
+        "policy_hash": row.policy_hash,
+    }
+
+
+@app.get("/api/runs/{run_id}/compare")
+async def compare_runs(
+    run_id: int,
+    with_: int = Query(alias="with"),
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return a side-by-side comparison of two runs with numeric deltas.
+    Admin-only.
+    """
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import run_summary
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result_a = await conn.execute(
+            select(run_summary).where(run_summary.c.id == run_id)
+        )
+        result_b = await conn.execute(
+            select(run_summary).where(run_summary.c.id == with_)
+        )
+        row_a = result_a.first()
+        row_b = result_b.first()
+
+    if row_a is None:
+        raise HTTPException(status_code=404, detail=f"run_not_found: {run_id}")
+    if row_b is None:
+        raise HTTPException(status_code=404, detail=f"run_not_found: {with_}")
+
+    dict_a = _run_row_to_dict(row_a)
+    dict_b = _run_row_to_dict(row_b)
+
+    _numeric_keys = (
+        "agent_count", "task_count", "tasks_done", "tasks_failed",
+        "total_rounds", "llm_calls",
+    )
+    delta = {
+        k: dict_b[k] - dict_a[k]
+        for k in _numeric_keys
+        if isinstance(dict_a.get(k), int) and isinstance(dict_b.get(k), int)
+    }
+
+    return {"run_a": dict_a, "run_b": dict_b, "delta": delta}
+
+
+# ── /api/session/{id}/checkpoint — Feature 30: Session Resume Foundation ────
+
+
+async def _upsert_checkpoint(
+    session_id: int, round_number: int, state_json: str
+) -> None:
+    """Insert or replace a checkpoint row for (session_id, round_number).
+
+    Uses a DELETE + INSERT pattern which is portable across SQLite versions
+    (SQLite's ``ON CONFLICT DO UPDATE`` requires SQLAlchemy dialect awareness).
+    """
+    from sqlalchemy import delete, insert
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import session_checkpoint
+
+    engine = get_engine()
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                delete(session_checkpoint).where(
+                    session_checkpoint.c.session_id == session_id,
+                    session_checkpoint.c.round_number == round_number,
+                )
+            )
+            await conn.execute(
+                insert(session_checkpoint).values(
+                    session_id=session_id,
+                    round_number=round_number,
+                    state_json=state_json,
+                )
+            )
+    except Exception as exc:
+        logger.warning("[checkpoint] upsert failed: %s", exc)
+
+
+@app.get("/api/session/{session_id}/checkpoint")
+async def get_session_checkpoint(
+    session_id: int,
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return the latest checkpoint metadata for a session. Admin-only.
+
+    Does NOT return ``state_json`` in the response to avoid transmitting
+    potentially large blobs. Use the POST resume endpoint to load the state.
+    """
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import session_checkpoint
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            select(
+                session_checkpoint.c.id,
+                session_checkpoint.c.session_id,
+                session_checkpoint.c.round_number,
+                session_checkpoint.c.created_at,
+            )
+            .where(session_checkpoint.c.session_id == session_id)
+            .order_by(session_checkpoint.c.round_number.desc())
+            .limit(1)
+        )
+        row = result.first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="no_checkpoint_for_session"
+        )
+
+    return {
+        "checkpoint_id": row.id,
+        "session_id": row.session_id,
+        "round_number": row.round_number,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@app.post("/api/session/{session_id}/resume")
+async def resume_session(
+    session_id: int,
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Load the latest checkpoint for ``session_id`` and return its state.
+
+    Full swarm resumption from a checkpoint is not yet implemented
+    (``AgentSwarm`` does not expose ``start_from_checkpoint()``). This
+    endpoint returns the deserialized checkpoint data so the frontend can
+    display it and prompt the user.
+
+    # TODO: requires swarm.start_from_checkpoint() to fully resume a run.
+    """
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import session_checkpoint
+    from autonoma.models import ProjectState
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            select(session_checkpoint)
+            .where(session_checkpoint.c.session_id == session_id)
+            .order_by(session_checkpoint.c.round_number.desc())
+            .limit(1)
+        )
+        row = result.first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="no_checkpoint_for_session"
+        )
+
+    try:
+        state = ProjectState.from_json(row.state_json)
+    except (ValueError, Exception) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"checkpoint_corrupt: {exc}",
+        )
+
+    return {
+        "checkpoint_id": row.id,
+        "session_id": row.session_id,
+        "round_number": row.round_number,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "state": state.model_dump(mode="json"),
+        "resume_supported": False,
+        "resume_note": (
+            "Full resume not yet implemented — "
+            "AgentSwarm.start_from_checkpoint() is pending. "
+            "Use this payload to inspect or re-display the checkpoint state."
+        ),
+    }
+
+
 @app.get("/api/health")
 async def health():
     active_swarms = sum(
