@@ -11,9 +11,9 @@ from typing import Any
 
 from autonoma.agents.base import (
     AutonomousAgent,
-    TASKS_LOCK,
     _atomic_claim_task,
     _extract_json,
+    get_tasks_lock,
 )
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
 from autonoma.config import settings
@@ -439,8 +439,14 @@ Rules:
         import re as _re
         path_pattern = _re.compile(r"[\w./\-]+\.[a-zA-Z]{1,6}")
 
+        # Scan wider than 30 messages so conflicts separated by a few rounds
+        # don't slip through. Budget grows with team size (agents chatter
+        # more in bigger teams) and is capped so DebateArena's scan stays
+        # bounded on very long runs.
+        worker_count = max(1, sum(1 for a in project.agents if a.name != "Director"))
+        window_size = min(200, max(60, worker_count * 20))
         file_to_senders: dict[str, list[str]] = {}
-        for msg in project.messages[-30:]:
+        for msg in project.messages[-window_size:]:
             sender = msg.sender
             if sender == "Director":
                 continue
@@ -552,10 +558,19 @@ Rules:
             )
 
         # Assign unassigned tasks to available agents (respecting dependencies).
-        # Hold TASKS_LOCK across the read-select + write so agents running
+        # Hold the tasks lock across the read-select + write so agents running
         # concurrently in _action_work can't race us into the same OPEN task.
-        pending_assignments: list[tuple[Task, str]] = []
-        async with TASKS_LOCK:
+        # We capture an immutable snapshot (title/description/priority as
+        # plain strings) inside the lock so when we emit events outside, we
+        # can't observe the task object mid-mutation.
+        pending_assignments: list[dict[str, Any]] = []
+        # Stall-detection counters must be captured inside the lock — if
+        # we read ``done/in_progress/blocked/in_review`` after releasing,
+        # a concurrent ``_action_work`` can flip a task's status between
+        # the assignment write and the count read, producing bogus stall
+        # triggers or missed stalls.
+        stall_snapshot: dict[str, int] = {}
+        async with get_tasks_lock():
             open_tasks = [
                 t for t in project.tasks
                 if t.status == TaskStatus.OPEN
@@ -579,27 +594,54 @@ Rules:
                 # consistent and no other agent can steal this OPEN task.
                 task.assigned_to = agent_name
                 task.status = TaskStatus.ASSIGNED
-                pending_assignments.append((task, agent_name))
+                pending_assignments.append({
+                    "task_id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "priority": task.priority.value,
+                    "agent_name": agent_name,
+                })
+
+            # Snapshot the status tallies while still holding the lock so
+            # the stall check below operates on a coherent view.
+            stall_snapshot["done"] = sum(
+                1 for t in project.tasks if t.status == TaskStatus.DONE
+            )
+            stall_snapshot["total"] = len(project.tasks)
+            stall_snapshot["in_progress"] = sum(
+                1 for t in project.tasks if t.status == TaskStatus.IN_PROGRESS
+            )
+            stall_snapshot["blocked"] = sum(
+                1 for t in project.tasks if t.status == TaskStatus.BLOCKED
+            )
+            stall_snapshot["in_review"] = sum(
+                1 for t in project.tasks if t.status == TaskStatus.REVIEW
+            )
 
         assigned_count = 0
-        for task, agent_name in pending_assignments:
-            await self._say(f"{agent_name}, handle '{task.title}'!", style="bold")
+        for snap in pending_assignments:
+            agent_name = snap["agent_name"]
+            await self._say(
+                f"{agent_name}, handle '{snap['title']}'!", style="bold"
+            )
 
             # Feature 2: compute skill match score for the assignment message
             agent_persona = next((a for a in project.agents if a.name == agent_name), None)
             agent_skills = agent_persona.skills if agent_persona else []
-            match_score = skill_similarity(task.title, task.description, agent_skills)
+            match_score = skill_similarity(
+                snap["title"], snap["description"], agent_skills
+            )
 
             msg = AgentMessage(
                 sender="Director",
                 recipient=agent_name,
                 msg_type=MessageType.TASK_ASSIGN,
                 content=(
-                    f"Task: {task.title}\n{task.description}\n"
-                    f"Priority: {task.priority.value}\n"
+                    f"Task: {snap['title']}\n{snap['description']}\n"
+                    f"Priority: {snap['priority']}\n"
                     f"Skill match: {match_score:.0%}"
                 ),
-                data={"task_id": task.id},
+                data={"task_id": snap["task_id"]},
             )
             project.messages.append(msg)
 
@@ -607,17 +649,17 @@ Rules:
                 "task.assigned",
                 agent="Director",
                 assigned_to=agent_name,
-                task_id=task.id,
-                title=task.title,
+                task_id=snap["task_id"],
+                title=snap["title"],
             )
             assigned_count += 1
 
-        # Detect stalls
-        done = sum(1 for t in project.tasks if t.status == TaskStatus.DONE)
-        total = len(project.tasks)
-        in_progress = sum(1 for t in project.tasks if t.status == TaskStatus.IN_PROGRESS)
-        blocked = sum(1 for t in project.tasks if t.status == TaskStatus.BLOCKED)
-        in_review = sum(1 for t in project.tasks if t.status == TaskStatus.REVIEW)
+        # Detect stalls — use the snapshot captured inside the lock above.
+        done = stall_snapshot["done"]
+        total = stall_snapshot["total"]
+        in_progress = stall_snapshot["in_progress"]
+        blocked = stall_snapshot["blocked"]
+        in_review = stall_snapshot["in_review"]
 
         # REVIEW→DONE transition: without a dedicated reviewer loop, tasks
         # that reach REVIEW can stick forever. After the stall threshold we
@@ -655,7 +697,7 @@ Rules:
                 if action == "approve_reviews":
                     targets = plan.get("tasks", [])
                     did_reset = False
-                    async with TASKS_LOCK:
+                    async with get_tasks_lock():
                         for rt in targets:
                             logger.warning(
                                 f"[Director] Auto-approving stalled REVIEW task "
@@ -675,7 +717,7 @@ Rules:
                     target = plan["task"]
                     cleared = plan.get("cleared", [])
                     did_reset = False
-                    async with TASKS_LOCK:
+                    async with get_tasks_lock():
                         target.depends_on.clear()
                         did_reset = True
                     logger.warning(
