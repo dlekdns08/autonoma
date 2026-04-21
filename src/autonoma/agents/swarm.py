@@ -1325,7 +1325,7 @@ class AgentSwarm:
                     agent = self.agents.get(name)
                     if agent:
                         agent.stats.add_xp(xp_reward)
-                        agent.mood = Mood.EXCITED
+                        await agent._set_mood(Mood.EXCITED)
                 await bus.emit("boss.defeated", name=boss.name, xp_reward=xp_reward)
                 self.multiverse.record_branch(
                     self._round, f"Defeated {boss.name}!",
