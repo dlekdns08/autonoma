@@ -31,6 +31,7 @@ from autonoma.harness import (  # noqa: F401 — triggers @register
     safety_enforcement_strategies as _safety_enforcement_strategies,
     safety_strategies as _safety_strategies,
 )
+from autonoma.harness.decision_strategies import ParseFailureAbort
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import (
@@ -55,7 +56,11 @@ from autonoma.models import (
     Task,
     TaskStatus,
 )
+from autonoma.dialogue_style import style_speech
+from autonoma.tts import pick_voice_for
+from autonoma.tts_worker import get_default_worker
 from autonoma.world import (
+    ACHIEVEMENTS,
     AgentBones,
     AgentMemory,
     AgentStats,
@@ -532,7 +537,17 @@ Rules:
             handler = _strategy_lookup(
                 "decision.on_parse_failure", self.policy.decision.on_parse_failure
             )
-            return handler(e, self.name)
+            result = handler(e, self.name)
+            # "abort" strategy returns a sentinel dict; detect and re-raise so
+            # the swarm loop can surface the error rather than papering over it.
+            if result.get("thinking") == "parse_failure_abort":
+                raise ParseFailureAbort(
+                    f"[{self.name}] parse_failure_abort: {result.get('_abort_exc', e)}"
+                ) from e
+            return result
+        except ParseFailureAbort:
+            # Let abort propagate without being caught by the generic handler.
+            raise
         except Exception as e:
             logger.error(f"[{self.name}] Unexpected error in decide: {e}")
             return {"action": "idle", "speech": f"Error: {str(e)[:30]}", "thinking": "error"}
@@ -860,7 +875,6 @@ Rules:
         """Check for new achievements and emit events."""
         newly_earned = check_achievements(self.stats)
         for ach_id in newly_earned:
-            from autonoma.world import ACHIEVEMENTS
             ach = ACHIEVEMENTS[ach_id]
             self.memory.remember(f"Achievement unlocked: {ach['title']}", "success", self._round_number)
             # Event emission is fire-and-forget since we can't await here
@@ -873,7 +887,6 @@ Rules:
         # the agent's sonic personality (rarity + traits + mood). The
         # transform is deterministic and never paraphrases — call sites
         # don't need to know it ran.
-        from autonoma.dialogue_style import style_speech
         text = style_speech(
             name=self.name,
             text=text,
@@ -888,7 +901,6 @@ Rules:
         # worker handles budget, rate-limiting, and audio fan-out.
         if settings.tts_enabled:
             voice = self._resolve_voice()
-            from autonoma.tts_worker import get_default_worker
             get_default_worker().enqueue(
                 agent=self.name,
                 text=text,
@@ -918,7 +930,6 @@ Rules:
         if getattr(self, "voice_id", ""):
             return self.voice_id
         import hashlib
-        from autonoma.tts import pick_voice_for
         seed = hashlib.md5(
             f"{self.persona.role}:{self.persona.name}:autonoma-world-v1".encode()
         ).hexdigest()
