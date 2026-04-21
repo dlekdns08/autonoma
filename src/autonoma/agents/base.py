@@ -296,7 +296,30 @@ class AutonomousAgent:
         mood_fn = _strategy_lookup(
             "mood.transition_strategy", self.policy.mood.transition_strategy
         )
+        prev_mood = self.mood
         self.mood = mood_fn(self.mood, result, self._mood_rng)
+        if prev_mood is not self.mood:
+            await bus.emit(
+                "agent.mood",
+                agent=self.name,
+                mood=self.mood.value,
+            )
+
+        # ── Sticky-state reset ──
+        # Without this, a TALKING pose set during send_message/request_help
+        # (or CELEBRATING from a `celebrate` action) persists across the
+        # swarm's sleep between rounds, so the VRM keeps firing
+        # beat/nod gestures while the agent isn't actually speaking. Drop
+        # the agent back to IDLE once the action has completed; the next
+        # think_and_act immediately re-sets THINKING on the following
+        # round. ERROR/SPAWNING are intentionally left sticky (they'd
+        # otherwise vanish before the frontend could render them).
+        if self.state in (
+            AgentState.TALKING,
+            AgentState.CELEBRATING,
+            AgentState.WORKING,
+        ):
+            await self._set_state(AgentState.IDLE)
 
         return result
 
@@ -845,7 +868,34 @@ Rules:
 
     async def _set_state(self, state: AgentState) -> None:
         self.state = state
-        await bus.emit("agent.state", agent=self.name, state=state.value)
+        # Include the current mood on every state event. The frontend
+        # reads ``data.mood`` off the same payload so VRM mood blendshapes
+        # can update when the backend sends no separate ``agent.mood``
+        # (e.g., right after an action where only the state changed).
+        mood_value = self.mood.value if getattr(self, "mood", None) else ""
+        await bus.emit(
+            "agent.state",
+            agent=self.name,
+            state=state.value,
+            mood=mood_value,
+        )
+
+    async def _set_mood(self, mood: Mood) -> None:
+        """Update mood and emit ``agent.mood`` only if it actually changed.
+
+        Direct ``self.mood = X`` assignments elsewhere bypass this helper;
+        the swarm-level mood watcher (``Swarm._emit_mood_changes``) picks
+        those up each animation tick so nothing is lost regardless of
+        which call site does the assignment.
+        """
+        prev = self.mood
+        self.mood = mood
+        if prev is not mood:
+            await bus.emit(
+                "agent.mood",
+                agent=self.name,
+                mood=mood.value,
+            )
 
     def tick_speech(self) -> None:
         if self.speech:
