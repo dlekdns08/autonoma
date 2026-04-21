@@ -638,9 +638,16 @@ Rules:
     async def _action_review(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         await self._set_state(AgentState.THINKING)
 
-        # Extract verdict if present (structured output from harness)
+        # Extract verdict (required for Reviewer/Tester harnesses — output_format
+        # mandates a "VERDICT: PASS|FAIL|PARTIAL" line; log a warning when missing
+        # so drift from the harness output_format is visible in telemetry).
         verdict = decision.get("verdict", "")
-        review_content = decision.get("message_content", "")
+        if not verdict:
+            logger.warning(
+                f"[{self.name}] review_work action missing 'verdict' field. "
+                f"Harness '{self.harness.name}' output_format requires "
+                f"VERDICT: PASS|FAIL|PARTIAL. LLM may have ignored output format."
+            )
 
         if verdict:
             await self._say(f"Review: {verdict}", style="bold magenta")
