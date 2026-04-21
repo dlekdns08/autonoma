@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
 import { useAuth } from "@/hooks/useAuth";
+import { useKeyNav } from "@/hooks/useKeyNav";
 import Header from "@/components/Header";
 import Stage from "@/components/Stage";
 import TaskPanel from "@/components/TaskPanel";
@@ -21,6 +22,7 @@ import ChatPanel from "@/components/ChatPanel";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
+import KeyboardHelpModal from "@/components/KeyboardHelpModal";
 import type { AgentData } from "@/lib/types";
 
 // ── Top-level gate ─────────────────────────────────────────────────────
@@ -115,7 +117,7 @@ function UserChip({
 
 function Dashboard() {
   const {
-    state, connected, toasts, dismissToast,
+    state, connected, connectionFailed, toasts, dismissToast,
     sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
     authState, authenticate, logout, sessionId,
     emotes, getMouthAmplitude,
@@ -129,6 +131,33 @@ function Dashboard() {
   // Pixel → VTuber transition state
   const [bloomingAgent, setBloomingAgent] = useState<string | null>(null);
   const [vtPinned, setVtPinned] = useState<string | null>(null);
+
+  const [shareCopied, setShareCopied] = useState(false);
+
+  const handleShare = useCallback(() => {
+    const url = room.code
+      ? `${window.location.origin}${window.location.pathname}?room=${room.code}`
+      : window.location.href;
+    void navigator.clipboard.writeText(url).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    });
+  }, [room.code]);
+
+  // A viewer is in spectator mode when they joined via a shared URL (not owner)
+  const isSpectator = !room.isOwner;
+
+  // Panel visibility — toggled by keyboard shortcuts
+  const [showTasks, setShowTasks] = useState(true);
+  const [showFiles, setShowFiles] = useState(true);
+  const [showChat, setShowChat] = useState(true);
+
+  const { showHelp, setShowHelp } = useKeyNav({
+    onToggleTasks: () => setShowTasks((v) => !v),
+    onToggleFiles: () => setShowFiles((v) => !v),
+    onToggleChat: () => setShowChat((v) => !v),
+    isRunning: state.status === "running",
+  });
 
   // Floating user chrome (chip + settings modal). Rendered inside every
   // Dashboard layout variant so the ⚙ action is reachable from idle,
@@ -319,7 +348,7 @@ function Dashboard() {
             gap: "6px",
           }}
         >
-          <TaskPanel tasks={state.tasks} />
+          {showTasks && <TaskPanel tasks={state.tasks} />}
 
           <RelationshipWeb
             agents={state.agents}
@@ -327,17 +356,19 @@ function Dashboard() {
             onSelectAgent={handleSelectAgent}
           />
 
-          <div style={{ height: 272 }}>
-            <ChatPanel
-              room={room}
-              messages={chat}
-              onSend={sendChat}
-              onSetName={setDisplayName}
-              onJoinRoom={joinRoom}
-            />
-          </div>
+          {showChat && (
+            <div style={{ height: 272 }}>
+              <ChatPanel
+                room={room}
+                messages={chat}
+                onSend={sendChat}
+                onSetName={setDisplayName}
+                onJoinRoom={joinRoom}
+              />
+            </div>
+          )}
 
-          <FileTree files={state.files} sessionId={sessionId} />
+          {showFiles && <FileTree files={state.files} sessionId={sessionId} />}
 
           {/* Agent Cards */}
           <div
@@ -399,6 +430,39 @@ function Dashboard() {
           {state.boss && (
             <span style={{ color: "#fb7185" }}>BOSS:{state.boss.name}</span>
           )}
+          <span className="text-white/20">|</span>
+          <button
+            type="button"
+            onClick={() => setShowTasks((v) => !v)}
+            title="Tasks [T]"
+            className={`hover:text-violet-400 transition-colors ${showTasks ? "text-violet-600" : "text-white/30"}`}
+          >
+            tasks
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowChat((v) => !v)}
+            title="Chat [C]"
+            className={`hover:text-cyan-400 transition-colors ${showChat ? "text-cyan-700" : "text-white/30"}`}
+          >
+            chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowFiles((v) => !v)}
+            title="Files [F]"
+            className={`hover:text-green-400 transition-colors ${showFiles ? "text-green-700" : "text-white/30"}`}
+          >
+            files
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowHelp(true)}
+            title="Keyboard shortcuts [?]"
+            className="hover:text-white/60 transition-colors text-white/25"
+          >
+            ?
+          </button>
         </div>
         {authState.status === "authenticated" && (
           <div className="flex items-center gap-3">
@@ -428,6 +492,9 @@ function Dashboard() {
       {needsAuth && authState.status !== "unknown" && (
         <AuthModal authState={authState} onAuthenticate={authenticate} />
       )}
+
+      {showHelp && <KeyboardHelpModal onClose={() => setShowHelp(false)} />}
+
       {userChrome}
     </div>
   );
