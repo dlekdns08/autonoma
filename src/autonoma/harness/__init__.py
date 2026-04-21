@@ -6,6 +6,9 @@ phases) the strategy registry that backs every enum-valued knob.
 
 from autonoma.harness.policy import (
     ActionPolicy,
+    BudgetPolicy,
+    CachePolicy,
+    CheckpointPolicy,
     DecisionPolicy,
     HarnessPolicy,
     HarnessPolicyContent,
@@ -16,6 +19,7 @@ from autonoma.harness.policy import (
     SafetyPolicy,
     SocialPolicy,
     SpawnPolicy,
+    SystemPolicy,
     default_policy_content,
 )
 
@@ -36,9 +40,18 @@ from autonoma.harness import (  # noqa: F401
     safety_enforcement_strategies as _safety_enforcement_strategies,
 )
 from autonoma.harness import mood_strategies as _mood_strategies  # noqa: F401
+from autonoma.harness import system_strategies as _system_strategies  # noqa: F401
+from autonoma.harness import cache_strategies as _cache_strategies  # noqa: F401
+from autonoma.harness import budget_strategies as _budget_strategies  # noqa: F401
+from autonoma.harness import (  # noqa: F401
+    checkpoint_strategies as _checkpoint_strategies,
+)
 
 __all__ = [
     "ActionPolicy",
+    "BudgetPolicy",
+    "CachePolicy",
+    "CheckpointPolicy",
     "DecisionPolicy",
     "HarnessPolicy",
     "HarnessPolicyContent",
@@ -49,5 +62,6 @@ __all__ = [
     "SafetyPolicy",
     "SocialPolicy",
     "SpawnPolicy",
+    "SystemPolicy",
     "default_policy_content",
 ]
