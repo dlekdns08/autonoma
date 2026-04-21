@@ -174,13 +174,15 @@ export function useHarnessPresets(options?: {
     setLoading(true);
     setError(null);
     try {
-      const [nextSchema, nextPresets] = await Promise.all([
-        // Only refetch schema the first time — it's static per server
-        // build, so later refreshes skip it.
+      const [nextSchema, nextPipeline, nextPresets] = await Promise.all([
+        // Schema and pipeline are both static per server build, so
+        // later refreshes skip the round-trip.
         schema ? Promise.resolve(schema) : fetchSchema(),
+        pipeline ? Promise.resolve(pipeline) : fetchPipeline(),
         fetchPresets(),
       ]);
       setSchema(nextSchema);
+      setPipeline(nextPipeline);
       setPresets(nextPresets);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -188,7 +190,7 @@ export function useHarnessPresets(options?: {
     } finally {
       setLoading(false);
     }
-  }, [enabled, fetchPresets, fetchSchema, schema]);
+  }, [enabled, fetchPresets, fetchSchema, fetchPipeline, schema, pipeline]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -276,6 +278,7 @@ export function useHarnessPresets(options?: {
   return {
     presets,
     schema,
+    pipeline,
     loading,
     error,
     refresh,
