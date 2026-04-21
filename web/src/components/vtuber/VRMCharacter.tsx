@@ -1029,7 +1029,9 @@ function VRMModel({
         st.nodCooldownUntil = now + 1.2; // 1.2 s before next nod can fire
       } else {
         // Damped sine — gentle forward dip, 5° max.
-        nodX = -Math.sin(nt * Math.PI * 2) * Math.exp(-nt * 4.0) * 0.055;
+        // Clamp nt to avoid frame-drop spikes making the decay jump.
+        const ntClamped = Math.min(nt, 0.55);
+        nodX = -Math.sin(ntClamped * Math.PI * 2) * Math.exp(-ntClamped * 4.0) * 0.055;
       }
     }
 
