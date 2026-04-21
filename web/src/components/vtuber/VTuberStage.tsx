@@ -102,7 +102,6 @@ export default function VTuberStage({
   const useSubtitles = subtitles ?? obsMode;
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
-  const lastSpeakerRef = useRef<string | null>(null);
   // Bumped when the user clicks "reset view" — VRMCharacter watches this
   // and snaps the camera back to the default full-body framing.
   const [resetNonce, setResetNonce] = useState(0);
@@ -111,14 +110,11 @@ export default function VTuberStage({
   const [showHint, setShowHint] = useState(true);
   // Flash overlay for the pixel → VTuber reveal transition.
   const [revealFlash, setRevealFlash] = useState(false);
-  const prevForcedRef = useRef<string | null | undefined>(undefined);
+  const [prevForced, setPrevForced] = useState<string | null | undefined>(undefined);
 
   if (speakingAgents.size > 0) {
     const next = Array.from(speakingAgents)[0];
-    if (next !== lastSpeakerRef.current) {
-      lastSpeakerRef.current = next;
-      if (lastSpeaker !== next) setLastSpeaker(next);
-    }
+    if (next && next !== lastSpeaker) setLastSpeaker(next);
   }
 
   useEffect(() => {
@@ -127,8 +123,8 @@ export default function VTuberStage({
   }, []);
 
   // Sync external pin + trigger reveal flash when the forced agent changes.
-  if (forcePinnedAgent != null && forcePinnedAgent !== prevForcedRef.current) {
-    prevForcedRef.current = forcePinnedAgent;
+  if (forcePinnedAgent != null && forcePinnedAgent !== prevForced) {
+    setPrevForced(forcePinnedAgent);
     if (pinned !== forcePinnedAgent) setPinned(forcePinnedAgent);
     if (!revealFlash) setRevealFlash(true);
   }
