@@ -80,8 +80,19 @@ function UserChip({
     >
       <span>
         👤 {username}
-        {isAdmin && " ⚙"}
+        {isAdmin && " 👑"}
       </span>
+      {isAdmin && (
+        <>
+          <span className="text-white/20">|</span>
+          <a
+            href="/admin/users"
+            className="text-amber-300/70 hover:text-amber-200 transition-colors underline underline-offset-2"
+          >
+            users
+          </a>
+        </>
+      )}
       <span className="text-white/20">|</span>
       <button
         type="button"
