@@ -41,8 +41,11 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
   const handleApplyHarness = useCallback((payload: HarnessStartPayload) => {
     setPendingHarness(payload);
     setPanelOpen(false);
-    // If the user already typed a goal, treat "Apply & Start" as a
-    // one-shot "go now" — saves them from clicking Build afterwards.
+  }, []);
+
+  const handleApplyAndStartHarness = useCallback((payload: HarnessStartPayload) => {
+    setPendingHarness(payload);
+    setPanelOpen(false);
     const trimmed = goal.trim();
     if (trimmed && connected) {
       setStarting(true);
@@ -117,6 +120,7 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
         onApply={handleApplyHarness}
+        onApplyAndStart={handleApplyAndStartHarness}
         activeFieldPaths={lastRunFieldPaths}
       />
     </div>
