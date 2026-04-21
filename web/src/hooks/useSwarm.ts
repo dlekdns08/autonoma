@@ -524,15 +524,11 @@ export function useSwarm() {
               );
               const speechText = data.text as string | undefined;
               if (agentName && speechText) {
-                // Mark the agent as speaking immediately — drives the
-                // spotlight switch and VRM talking overlay even when
-                // both server TTS audio and Web Speech fail (headless,
-                // CORS-blocked, or just mid-load). Real TTS amplitude
-                // supersedes the fake oscillation when it arrives.
-                voiceRef.current.markSpeakingFromText(agentName, speechText);
-                // Web Speech is still best-effort — only fires when the
-                // browser has voices available and the tab is focused.
-                voiceRef.current.speakText(agentName, speechText);
+                // Unified path: marks the agent speaking for the UI
+                // spotlight immediately, and schedules Web Speech with a
+                // short delay so server TTS (if configured) can pre-empt
+                // the browser fallback via ``pushAudioEvent``.
+                voiceRef.current.requestSpeak(agentName, speechText);
               }
               break;
             }
