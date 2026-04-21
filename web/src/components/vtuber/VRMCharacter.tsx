@@ -161,14 +161,15 @@ const GESTURES: Record<
       // the body instead of up toward the head.
       const osc = Math.sin(t * Math.PI * 4); // ~2 full wave cycles
       if (b.rightUpperArm) {
-        // Shoulder flexion (rotation.x) is the primary raise axis for a
-        // greeting wave — the arm lifts FORWARD and up from the hip,
-        // not sideways. rotation.z (abduction) is kept small, just
-        // enough to clear the arm from the torso. The previous version
-        // swapped these which produced a T-pose-style sideways raise
-        // instead of a front-facing hello.
-        b.rightUpperArm.rotation.z += env * 0.35;
-        b.rightUpperArm.rotation.x += env * 1.35;
+        // In this rig (Euler XYZ), rotation.z (abduction) must do most
+        // of the arm raise — relying on rotation.x alone to lift the
+        // arm forward pushes the shoulder joint past its skinned range
+        // and the mesh tears at the shoulder seam. We keep z as the
+        // primary raise (less than the original 1.75 so the arm isn't
+        // straight out to the side) and use rotation.x for a moderate
+        // forward tilt, finishing the front-facing greeting look.
+        b.rightUpperArm.rotation.z += env * 1.55;
+        b.rightUpperArm.rotation.x += env * 0.8;
         b.rightUpperArm.rotation.y -= env * osc * 0.5;
       }
       if (b.rightLowerArm) {
@@ -198,10 +199,10 @@ const GESTURES: Record<
       // bigger shoulder-twist sweep, plus a head tilt and chest lean.
       const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
       if (b.rightUpperArm) {
-        // See `wave` — shoulder flexion (x) is the primary raise axis;
-        // abduction (z) is minimal.
-        b.rightUpperArm.rotation.z += env * 0.45;
-        b.rightUpperArm.rotation.x += env * 1.5;
+        // See `wave` — abduction (z) does the primary raise, flexion (x)
+        // adds moderate forward tilt without tearing the shoulder seam.
+        b.rightUpperArm.rotation.z += env * 1.75;
+        b.rightUpperArm.rotation.x += env * 0.95;
         b.rightUpperArm.rotation.y -= env * osc * 0.65;
       }
       if (b.rightLowerArm) {
