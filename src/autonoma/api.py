@@ -625,10 +625,27 @@ async def _bootstrap_admin_user() -> None:
         logger.warning("[auth] bootstrap admin user create failed: %s", exc)
 
 
+async def _bootstrap_default_harness_policy() -> None:
+    """Seed the system-default harness preset on startup.
+
+    Idempotent — ``ensure_default_policy`` checks for an existing default
+    before inserting, so this is safe on every boot.
+    """
+    from autonoma.db.harness_policies import ensure_default_policy
+
+    try:
+        await ensure_default_policy()
+        logger.info("[harness] default policy ensured")
+    except Exception as exc:
+        # Non-fatal: a missing default preset is recoverable at first use.
+        logger.warning("[harness] default policy bootstrap failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _register_event_bridge()
     await _bootstrap_admin_user()
+    await _bootstrap_default_harness_policy()
     yield
     _unregister_event_bridge()
 
