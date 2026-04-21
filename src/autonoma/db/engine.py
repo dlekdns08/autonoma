@@ -143,11 +143,12 @@ async def init_db() -> None:
     counter, and tables are created with checkfirst=True.
     """
     global _initialized
-    # Side-effect import: registers the ``users`` table on the shared
-    # ``metadata`` before the baseline migration runs. Done here (rather
-    # than at module top) to avoid a circular import — ``db.users``
-    # depends on ``db.engine``.
+    # Side-effect imports: register the ``users`` and ``harness_policies``
+    # tables on the shared ``metadata`` before the baseline migration
+    # runs. Done here (rather than at module top) to avoid a circular
+    # import — both modules depend on ``db.engine``.
     from autonoma.db import users as _users_module  # noqa: F401
+    from autonoma.db import harness_policies as _harness_policies_module  # noqa: F401
 
     async with _init_lock:
         if _initialized:
