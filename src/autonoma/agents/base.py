@@ -476,13 +476,15 @@ RECENT MESSAGES:
         system = self.harness.build_system_prompt(self.persona.name, self.persona.skills)
 
         # Build action list filtered to what this harness actually allows.
-        # Always include meta-actions (idle, celebrate) which are unconditionally
-        # permitted and never fire the capability enforcer.
+        # Use get_effective_capabilities() directly (no side-effect logging)
+        # so the prompt construction doesn't spam warning logs for every
+        # capability that isn't in this harness.
+        _effective_caps = {cap.value for cap in self.harness.get_effective_capabilities()}
         _all_actions = [
             "work_on_task", "create_file", "send_message", "request_help",
             "review_work", "spawn_agent", "complete_task", "run_code",
         ]
-        _permitted = [a for a in _all_actions if self.harness.can_perform(a)]
+        _permitted = [a for a in _all_actions if a in _effective_caps]
         _permitted += ["idle", "celebrate"]
         _action_list = ", ".join(_permitted)
 
