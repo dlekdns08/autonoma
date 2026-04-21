@@ -169,6 +169,47 @@ script, done.
 Agents are assigned to VRMs deterministically via a djb2 hash of their
 name, so the same agent keeps the same character across sessions.
 
+## Harness Engineering
+
+Runtime policy for each swarm run — routing, loop limits, decision
+strategies, safety levels, mood transitions, and more — lives in the
+`harness_policies` table and is resolved per-`start` command. Users
+pick a preset in the Idle screen's ⚙ panel and/or override specific
+sections; the merged policy is validated before the swarm boots.
+
+- **Presets** — per-user and a system default. CRUD via
+  `/api/harness/presets`. The default is read-only; users can save
+  tweaks as new presets.
+- **Validation** — two orthogonal layers on top of Pydantic:
+  dangerous combinations (e.g. `code_execution=disabled` +
+  `harness_enforcement=off`) are rejected for everyone, admin-only
+  values (e.g. `safety.enforcement_level=off`, `loop.max_rounds>200`)
+  are rejected for non-admins. See
+  [`src/autonoma/harness/validation.py`](./src/autonoma/harness/validation.py).
+- **Observability** — each run records `session_id`, `preset_id`,
+  overridden sections, effective policy, and strategy picks. Fetch via
+  `GET /api/session/{id}/metadata`; global rollups at
+  `GET /api/harness/metrics` (admin). Emitted as `session.metadata`
+  over the WS event bus when a run ends.
+- **Schema for the UI** — `GET /api/harness/schema` introspects
+  `HarnessPolicyContent` at runtime and returns per-field type / default /
+  enum options / numeric bounds. Add a new `Literal` value to the
+  Pydantic model and the frontend form picks it up with no TS change.
+
+### Deployment notes
+
+- Migrations are version-gated and apply automatically on startup
+  (see [`src/autonoma/db/engine.py`](./src/autonoma/db/engine.py)).
+  `harness_policies` is migration 003; the framework uses
+  `create_all(checkfirst=True)` plus a `schema_version` counter so
+  re-running the process against a populated DB is a safe no-op.
+- Set `AUTONOMA_SESSION_SECRET` in production — without it, cookie
+  sessions are signed with an ephemeral per-process secret and every
+  restart logs every user out.
+- Admin-only harness policies require a cookie-session user with
+  `role=admin`. The legacy WS admin-password path also grants
+  `is_admin` for the connection's `start` command.
+
 ## Docker deployment
 
 ```bash
