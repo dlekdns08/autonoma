@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
+import { useAuth } from "@/hooks/useAuth";
 import Header from "@/components/Header";
 import Stage from "@/components/Stage";
 import TaskPanel from "@/components/TaskPanel";
@@ -21,7 +22,79 @@ import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
 import type { AgentData } from "@/lib/types";
 
+// ── Top-level gate ─────────────────────────────────────────────────────
+// The backend expects a logged-in user for everything meaningful, so the
+// page is gated on the cookie session from `useAuth` before the swarm
+// dashboard ever mounts. The dashboard component itself is unchanged —
+// it still runs `useSwarm` and owns WebSocket lifecycle as before.
+
 export default function Home() {
+  const { user, loading, logout } = useAuth();
+
+  // Initial hydrate — show a tiny spinner instead of flashing the login
+  // modal while /api/auth/me is in flight.
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0a0a12] font-mono text-sm text-white/40">
+        loading...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="h-screen w-screen bg-[#0a0a12]">
+        <AuthModal />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Dashboard />
+      <UserChip
+        username={user.username}
+        isAdmin={user.role === "admin"}
+        onLogout={() => void logout()}
+      />
+    </>
+  );
+}
+
+// Fixed top-right chip showing the current user + a quick logout button.
+// Rendered as a sibling of the dashboard so the existing <Header> layout
+// stays untouched.
+function UserChip({
+  username,
+  isAdmin,
+  onLogout,
+}: {
+  username: string;
+  isAdmin: boolean;
+  onLogout: () => void;
+}) {
+  return (
+    <div
+      className="fixed top-2 right-24 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/80 px-3 py-1 font-mono text-[10px] text-white/70 backdrop-blur-sm"
+      style={{ boxShadow: "0 0 12px rgba(139,92,246,0.08)" }}
+    >
+      <span>
+        👤 {username}
+        {isAdmin && " ⚙"}
+      </span>
+      <span className="text-white/20">|</span>
+      <button
+        type="button"
+        onClick={onLogout}
+        className="text-white/50 hover:text-fuchsia-300 transition-colors underline underline-offset-2"
+      >
+        logout
+      </button>
+    </div>
+  );
+}
+
+function Dashboard() {
   const {
     state, connected, toasts, dismissToast,
     sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
