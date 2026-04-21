@@ -12,6 +12,7 @@ import BossOverlay from "@/components/BossOverlay";
 import EndScreen from "@/components/EndScreen";
 import IdleScreen from "@/components/IdleScreen";
 import AuthModal from "@/components/AuthModal";
+import ModelSettingsModal from "@/components/ModelSettingsModal";
 import ToastContainer from "@/components/Toast";
 import AgentModal from "@/components/AgentModal";
 import RelationshipWeb from "@/components/RelationshipWeb";
@@ -49,29 +50,22 @@ export default function Home() {
     );
   }
 
-  return (
-    <>
-      <Dashboard />
-      <UserChip
-        username={user.username}
-        isAdmin={user.role === "admin"}
-        onLogout={() => void logout()}
-      />
-    </>
-  );
+  return <Dashboard />;
 }
 
-// Fixed top-right chip showing the current user + a quick logout button.
-// Rendered as a sibling of the dashboard so the existing <Header> layout
-// stays untouched.
+// Fixed top-right chip showing the current user + quick actions. Rendered
+// inside <Dashboard> so the ⚙ button can reach the swarm's `authenticate`
+// callback without threading it through context.
 function UserChip({
   username,
   isAdmin,
   onLogout,
+  onOpenSettings,
 }: {
   username: string;
   isAdmin: boolean;
   onLogout: () => void;
+  onOpenSettings?: () => void;
 }) {
   return (
     <div
@@ -82,6 +76,20 @@ function UserChip({
         👤 {username}
         {isAdmin && " 👑"}
       </span>
+      {onOpenSettings && (
+        <>
+          <span className="text-white/20">|</span>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="text-cyan-300/70 hover:text-cyan-200 transition-colors"
+            title="모델 설정"
+            aria-label="모델 설정"
+          >
+            ⚙ 모델
+          </button>
+        </>
+      )}
       {isAdmin && (
         <>
           <span className="text-white/20">|</span>
@@ -115,10 +123,33 @@ function Dashboard() {
     speakingAgents,
     lastRunFieldPaths,
   } = useSwarm();
+  const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Pixel → VTuber transition state
   const [bloomingAgent, setBloomingAgent] = useState<string | null>(null);
   const [vtPinned, setVtPinned] = useState<string | null>(null);
+
+  // Floating user chrome (chip + settings modal). Rendered inside every
+  // Dashboard layout variant so the ⚙ action is reachable from idle,
+  // running, and finished states alike.
+  const userChrome = user ? (
+    <>
+      <UserChip
+        username={user.username}
+        isAdmin={user.role === "admin"}
+        onLogout={() => void httpLogout()}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+      {settingsOpen && (
+        <ModelSettingsModal
+          authState={authState}
+          onAuthenticate={authenticate}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+    </>
+  ) : null;
 
   const needsAuth = authState.status !== "authenticated";
 
@@ -161,6 +192,7 @@ function Dashboard() {
         {needsAuth && authState.status !== "unknown" && (
           <AuthModal authState={authState} onAuthenticate={authenticate} />
         )}
+        {userChrome}
       </div>
     );
   }
@@ -196,6 +228,7 @@ function Dashboard() {
         {needsAuth && authState.status !== "unknown" && (
           <AuthModal authState={authState} onAuthenticate={authenticate} />
         )}
+        {userChrome}
       </div>
     );
   }
@@ -395,6 +428,7 @@ function Dashboard() {
       {needsAuth && authState.status !== "unknown" && (
         <AuthModal authState={authState} onAuthenticate={authenticate} />
       )}
+      {userChrome}
     </div>
   );
 }
