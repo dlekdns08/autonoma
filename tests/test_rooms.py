@@ -68,12 +68,12 @@ def test_short_code_is_unique_under_load() -> None:
         seen.add(code)
 
 
-def test_create_room_routes_session_into_it() -> None:
+async def test_create_room_routes_session_into_it() -> None:
     """After ``_create_room_for(s)`` the session points at a fresh
     room, the short code is registered, and the proxy properties on the
     session hit the room object."""
     host = _make_session(100)
-    room = _create_room_for(host)
+    room = await _create_room_for(host)
 
     assert room.room_id == host.session_id
     assert room.owner_session_id == host.session_id
@@ -84,11 +84,11 @@ def test_create_room_routes_session_into_it() -> None:
     assert host.swarm == "fake-swarm"
 
 
-def test_viewers_in_room_groups_by_room_id() -> None:
+async def test_viewers_in_room_groups_by_room_id() -> None:
     """Viewers who joined a host's room must be returned together; a
     stranger sitting in a private room of their own must not."""
     host = _make_session(1)
-    room = _create_room_for(host)
+    room = await _create_room_for(host)
 
     viewer = _make_session(2)
     viewer.room_id = room.room_id
