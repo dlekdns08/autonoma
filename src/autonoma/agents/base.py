@@ -24,6 +24,7 @@ from autonoma.harness import (  # noqa: F401 — triggers @register
     action_strategies as _action_strategies,
     enforcement_strategies as _enforcement_strategies,
     llm_error_strategies as _llm_error_strategies,
+    memory_strategies as _memory_strategies,
     message_strategies as _message_strategies,
     safety_strategies as _safety_strategies,
 )
@@ -326,7 +327,7 @@ YOUR IDENTITY:
   Current task: {self.current_task.title if self.current_task else 'None'}
 
 MEMORIES:
-{self.memory.get_summary()}
+{self.memory.get_summary(private_formatter=_strategy_lookup("memory.summarization", self.policy.memory.summarization))}
 
 TEAM:
   {chr(10).join(other_agents) if other_agents else 'You are alone'}

@@ -395,15 +395,23 @@ class AgentMemory:
                 return self.private[-10:]
             return [e for e in self.private if keyword.lower() in e.text.lower()][-5:]
 
-    def get_summary(self) -> str:
-        """Format both layers for injection into situation report."""
+    def get_summary(self, private_formatter=None, private_limit: int = 6) -> str:
+        """Format both layers for injection into situation report.
+
+        ``private_formatter`` is an optional ``(entries, limit) -> list[str]``
+        callable from ``autonoma.harness.memory_strategies``. Passing ``None``
+        preserves the pre-harness default (last 6 verbatim) so direct
+        callers (tests, status dumps) don't need to know about policy.
+        """
         lines = []
         with self._private_lock:
             private_snapshot = list(self.private)
         if private_snapshot:
             lines.append("  [Private Memories]")
-            for e in private_snapshot[-6:]:
-                lines.append(f"    {e}")
+            if private_formatter is None:
+                lines.extend(f"    {e}" for e in private_snapshot[-private_limit:])
+            else:
+                lines.extend(private_formatter(private_snapshot, private_limit))
         else:
             lines.append("  No memories yet - this is a fresh start!")
 
