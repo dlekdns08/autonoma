@@ -194,6 +194,10 @@ class AgentMessage(BaseModel):
     content: str
     data: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.now)
+    # Optional channel for group routing. Common values: "api-team",
+    # "frontend", "docs", "all". When set, the swarm router delivers
+    # the message to all agents whose role matches the channel keywords.
+    channel: str | None = None
 
 
 # ── TUI Position ───────────────────────────────────────────────────────────
