@@ -741,6 +741,13 @@ class AgentSwarm:
             )
 
         self.agents[name] = agent
+        # Prime the mood watcher so the first tick after spawn doesn't
+        # mistake this agent's starting mood for a fresh transition and
+        # emit a spurious ``agent.mood`` before the UI has even learned
+        # about the spawn.
+        current_mood = getattr(agent, "mood", None)
+        if current_mood is not None:
+            self._last_moods[name] = current_mood
 
         # Narrate the spawn
         if agent.bones:
