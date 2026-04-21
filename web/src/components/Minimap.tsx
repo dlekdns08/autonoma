@@ -46,13 +46,18 @@ export default function Minimap({ agents, onSelectAgent }: Props) {
           const color = STATE_COLORS[agent.state] || STATE_COLORS.idle;
 
           return (
-            <div
+            <button
+              type="button"
               key={agent.name}
-              className="absolute cursor-pointer group"
+              aria-label={`${agent.name} — ${agent.state ?? "idle"}`}
+              className="absolute cursor-pointer group focus:outline-none focus-visible:ring focus-visible:ring-cyan-400/60"
               style={{
                 left: `${x}%`,
                 top: `${y}%`,
                 transform: "translate(-50%, -50%)",
+                background: "transparent",
+                border: "none",
+                padding: 0,
               }}
               onClick={() => onSelectAgent?.(agent.name)}
             >
@@ -77,10 +82,10 @@ export default function Minimap({ agents, onSelectAgent }: Props) {
               />
 
               {/* Tooltip */}
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[8px] text-white font-mono">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block group-focus-visible:block whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 text-[8px] text-white font-mono">
                 {agent.species_emoji || agent.emoji} {agent.name}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
