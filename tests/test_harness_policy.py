@@ -33,6 +33,21 @@ def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     yield tmp_path
 
 
+async def _make_user(username: str) -> str:
+    """Insert a stub user row (so FK-backed preset inserts succeed) and
+    return its id. Password hash is a placeholder — auth isn't under
+    test here."""
+    from autonoma.db.users import create_user
+
+    user = await create_user(
+        username=username,
+        password_hash="not-a-real-hash",
+        role="user",
+        status="active",
+    )
+    return user.id
+
+
 # ── Model-layer tests ─────────────────────────────────────────────────
 
 
