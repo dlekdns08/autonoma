@@ -527,6 +527,10 @@ export function useAgentVoice(): UseAgentVoiceResult {
       clearTimeout(t.clear);
     }
     fallbackTimersRef.current.clear();
+    for (const t of pendingWebSpeechRef.current.values()) {
+      clearTimeout(t);
+    }
+    pendingWebSpeechRef.current.clear();
     setSpeakingAgents(new Set());
   }, []);
 
