@@ -95,6 +95,11 @@ class AgentSwarm:
         # Scratchpad the routing strategy uses for state that must
         # persist across calls (e.g. round-robin cursor).
         self._routing_state: dict[str, Any] = {}
+        # Per-agent mood snapshot so ``_emit_mood_changes`` can detect
+        # direct ``agent.mood = Mood.X`` assignments (there are ~18 of
+        # them across this file plus base.py) without forcing every call
+        # site to go through an async helper.
+        self._last_moods: dict[str, Mood] = {}
 
         # Persistent character registry. When None we use a disabled one,
         # which short-circuits every DB call so tests and one-shot scripts
@@ -500,6 +505,9 @@ class AgentSwarm:
 
             # Tick animations
             self._tick_animations()
+            # Fan out mood changes accumulated since the previous tick
+            # (direct ``agent.mood = …`` assignments don't self-emit).
+            await self._emit_mood_changes()
 
             if recorder is not None:
                 recorder.checkpoint(self._round, project)
@@ -919,6 +927,32 @@ class AgentSwarm:
         for agent in self.agents.values():
             agent.tick_speech()
             agent.tick_movement()
+
+    async def _emit_mood_changes(self) -> None:
+        """Emit ``agent.mood`` for any agent whose mood has shifted since
+        the last tick.
+
+        Many code paths in this file set ``agent.mood = Mood.X`` directly
+        (campfire warmth, boss damage, level-up, message routing, ...).
+        Watching once per tick picks up all of them uniformly without
+        having to refactor every call site through an async helper.
+        """
+        prev = self._last_moods
+        for name, agent in self.agents.items():
+            current_mood = getattr(agent, "mood", None)
+            if current_mood is None:
+                continue
+            last = prev.get(name)
+            if last is not current_mood:
+                prev[name] = current_mood
+                # Skip the very first observation (connection snapshot
+                # already carries the initial mood); only fire on change.
+                if last is not None:
+                    await bus.emit(
+                        "agent.mood",
+                        agent=name,
+                        mood=current_mood.value,
+                    )
 
     async def _on_spawn_request(
         self,
