@@ -29,7 +29,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import io
 import re
@@ -40,6 +40,7 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Query,
+    Request,
     Response as FastAPIResponse,
     WebSocket,
     WebSocketDisconnect,
@@ -296,6 +297,7 @@ FORWARDED_EVENTS = [
     "swarm.round",
     "swarm.finished",
     "session.metadata",
+    "session.checkpoint",
     "agent.speech",
     "agent.speech_audio_start",
     "agent.speech_audio_chunk",
@@ -511,6 +513,9 @@ async def _run_swarm(
             content=policy,
         )
 
+    checkpoint_task = _start_checkpoint_task(session_id, policy)
+    _apply_policy_side_effects(session_id, policy)
+
     try:
         await swarm.initialize(project)
 
@@ -537,6 +542,9 @@ async def _run_swarm(
         if sess is not None:
             await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
     finally:
+        if checkpoint_task is not None:
+            checkpoint_task.cancel()
+
         # Seal per-run observability before taking the room down.
         from autonoma.harness.observability import (
             get_session_metadata,
@@ -557,6 +565,80 @@ async def _run_swarm(
         # may already be cleared by the time the finally-block runs.
         from autonoma.tts_worker import shutdown_worker
         shutdown_worker(session_id)
+
+
+def _apply_policy_side_effects(
+    session_id: int, policy: HarnessPolicyContent | None
+) -> None:
+    """Log the new Group-C policy choices at run start.
+
+    The fields themselves already feed observability counters via
+    ``record_run_start`` — this exists so an operator reading raw logs
+    can confirm which variants actually kicked in without parsing JSON.
+    """
+    if policy is None:
+        return
+    logger.info(
+        "[swarm:%s] policy system=%s cache=%s budget=%s/%d checkpoint=%s/%ds",
+        session_id,
+        policy.system.prompt_variant,
+        policy.cache.provider_cache,
+        policy.budget.enforcement,
+        policy.budget.tokens_per_run,
+        policy.checkpoint.include_full_state,
+        policy.checkpoint.interval_seconds,
+    )
+
+
+def _start_checkpoint_task(
+    session_id: int, policy: HarnessPolicyContent | None
+) -> asyncio.Task[None] | None:
+    """Spin up the periodic ``session.checkpoint`` emitter.
+
+    Returns ``None`` (no task) when the policy disables checkpoints
+    (``interval_seconds=0``) or no policy was resolved. The task is
+    cancelled from ``_run_swarm``'s ``finally`` block, which already
+    handles room teardown — no separate cleanup path needed.
+    """
+    if policy is None or policy.checkpoint.interval_seconds <= 0:
+        return None
+
+    interval = policy.checkpoint.interval_seconds
+    shape_variant = policy.checkpoint.include_full_state
+    from autonoma.harness.strategies import lookup
+
+    shape_fn = lookup("checkpoint.include_full_state", shape_variant)
+
+    async def _emit_loop() -> None:
+        round_counter = 0
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                round_counter += 1
+                sess = _sessions.get(session_id)
+                if sess is None or sess.swarm is None:
+                    continue
+                agents = (
+                    [a.name for a in sess.swarm.agents.values()]
+                    if shape_variant == "on"
+                    else []
+                )
+                payload = shape_fn(
+                    {
+                        "session_id": session_id,
+                        "round": round_counter,
+                        "tokens_used": 0,  # placeholder until token tracking lands
+                        "agents": agents,
+                        "recent_messages": [],
+                    }
+                )
+                await bus.emit("session.checkpoint", **payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover — log & carry on
+            logger.warning("[swarm:%s] checkpoint loop: %s", session_id, exc)
+
+    return asyncio.create_task(_emit_loop())
 
 
 # ── Swarm State Snapshot ──────────────────────────────────────────────────
@@ -747,11 +829,25 @@ async def _bootstrap_default_harness_policy() -> None:
         logger.warning("[harness] default policy bootstrap failed: %s", exc)
 
 
+def _log_startup_summary() -> None:
+    """One-line bootstrap summary. Makes "why is auth misbehaving" take
+    ten seconds to diagnose instead of ten minutes.
+    """
+    logger.info(
+        "[startup] admin_bootstrap=%s session_secret=%s cookie_samesite=%s provider=%s",
+        "configured" if settings.admin_password else "skipped",
+        "configured" if settings.session_secret else "ephemeral",
+        _cookie_samesite(),
+        settings.provider,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _register_event_bridge()
     await _bootstrap_admin_user()
     await _bootstrap_default_harness_policy()
+    _log_startup_summary()
     yield
     _unregister_event_bridge()
 
@@ -783,6 +879,17 @@ def _cookie_is_secure() -> bool:
     return bool(settings.session_secret)
 
 
+def _cookie_samesite() -> Literal["lax", "strict"]:
+    """Lax in development, strict once a session_secret is configured.
+
+    Same signal as ``_cookie_is_secure`` — an operator who has set a durable
+    secret has signed up for real deployment semantics. Lax is required for
+    typical dev setups where the Next.js dev server (port 3000) and the
+    FastAPI process (3479) are different origins but same site.
+    """
+    return "strict" if settings.session_secret else "lax"
+
+
 def _set_session_cookie(response: FastAPIResponse, user_id: str) -> None:
     token = issue_session_token(user_id)
     response.set_cookie(
@@ -790,7 +897,7 @@ def _set_session_cookie(response: FastAPIResponse, user_id: str) -> None:
         value=token,
         httponly=True,
         secure=_cookie_is_secure(),
-        samesite="strict",
+        samesite=_cookie_samesite(),
         path="/",
     )
 
@@ -801,7 +908,7 @@ def _clear_session_cookie(response: FastAPIResponse) -> None:
         path="/",
         httponly=True,
         secure=_cookie_is_secure(),
-        samesite="strict",
+        samesite=_cookie_samesite(),
     )
 
 
@@ -886,6 +993,28 @@ async def auth_me(
 ) -> dict[str, Any]:
     """Return the current active user or 401/403."""
     return {"user": user.public_dict()}
+
+
+@app.get("/api/debug/auth")
+async def debug_auth(request: Request) -> dict[str, Any]:
+    """Dev-only sanity check for auth wiring.
+
+    Returns 404 when ``session_secret`` is set — the presence of a durable
+    secret is our "this is a real deployment" signal, and a probe endpoint
+    that enumerates bootstrap state has no business on a prod server.
+    """
+    if settings.session_secret:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND)
+    admin_row = await get_user_by_username("admin")
+    return {
+        "admin_password_configured": bool(settings.admin_password),
+        "session_secret_configured": False,
+        "admin_user_exists": admin_row is not None,
+        "admin_user_active": (admin_row is not None and admin_row.status == "active"),
+        "cookie_received": SESSION_COOKIE_NAME in request.cookies,
+        "cookie_samesite": _cookie_samesite(),
+        "cookie_secure": _cookie_is_secure(),
+    }
 
 
 # ── /api/admin/users/* ────────────────────────────────────────────────
