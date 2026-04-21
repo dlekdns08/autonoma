@@ -20,7 +20,10 @@ from typing import Any
 from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
-from autonoma.harness import safety_strategies as _safety_strategies  # noqa: F401 — triggers @register
+from autonoma.harness import (  # noqa: F401 — triggers @register
+    action_strategies as _action_strategies,
+    safety_strategies as _safety_strategies,
+)
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import (
@@ -113,30 +116,14 @@ def _atomic_claim_task(task: Task, agent_name: str) -> None:
     task.status = TaskStatus.IN_PROGRESS
 
 
-def _extract_json(text: str) -> dict[str, Any]:
-    """Robustly extract JSON from LLM response, handling markdown fences."""
-    text = text.strip()
-    # Try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    # Try extracting from markdown fences
-    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(1).strip())
-        except json.JSONDecodeError:
-            pass
-    # Try finding first { ... } block
-    brace_start = text.find("{")
-    brace_end = text.rfind("}")
-    if brace_start != -1 and brace_end > brace_start:
-        try:
-            return json.loads(text[brace_start : brace_end + 1])
-        except json.JSONDecodeError:
-            pass
-    raise ValueError(f"Could not extract JSON from response: {text[:200]}")
+def _extract_json(text: str, strategy: str = "fallback_chain") -> dict[str, Any]:
+    """Extract JSON from an LLM response.
+
+    Dispatches to the registered ``action.json_extraction`` strategy.
+    The default ``fallback_chain`` preserves the pre-harness behavior so
+    callers that don't thread a policy through see no change.
+    """
+    return _strategy_lookup("action.json_extraction", strategy)(text)
 
 
 class AutonomousAgent:
@@ -473,7 +460,7 @@ Rules:
 
         try:
             full_text = await self._stream_decide(system, situation)
-            return _extract_json(full_text)
+            return _extract_json(full_text, strategy=self.policy.action.json_extraction)
 
         except LLMConnectionError as e:
             logger.warning(f"[{self.name}] API connection error: {e}")

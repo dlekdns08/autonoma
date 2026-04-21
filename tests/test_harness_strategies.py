@@ -58,6 +58,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("spawn.approval_mode", "director_only"),
         ("spawn.approval_mode", "peer_vote"),
         ("spawn.approval_mode", "automatic"),
+        ("action.json_extraction", "direct"),
+        ("action.json_extraction", "fenced_first"),
+        ("action.json_extraction", "fallback_chain"),
     }
 
     stubs = set(all_stubs())

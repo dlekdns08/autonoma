@@ -132,7 +132,10 @@ Rules:
                 messages=[{"role": "user", "content": prompt}],
             )
             self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
-            data = _extract_json(response.content[0].text)
+            data = _extract_json(
+                response.content[0].text,
+                strategy=self.policy.action.json_extraction,
+            )
             logger.info(
                 f"[Director] LLM plan parsed: tasks={len(data.get('tasks', []))}, "
                 f"agents_needed={len(data.get('agents_needed', []))}"
