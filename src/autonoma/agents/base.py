@@ -22,6 +22,7 @@ from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — triggers @register
     action_strategies as _action_strategies,
+    llm_error_strategies as _llm_error_strategies,
     message_strategies as _message_strategies,
     safety_strategies as _safety_strategies,
 )
@@ -456,13 +457,12 @@ Rules:
             full_text = await self._stream_decide(system, situation)
             return _extract_json(full_text, strategy=self.policy.action.json_extraction)
 
-        except LLMConnectionError as e:
-            logger.warning(f"[{self.name}] API connection error: {e}")
-            return {"action": "idle", "speech": "Can't reach the API...", "thinking": "connection_error"}
-        except LLMRateLimitError:
-            logger.warning(f"[{self.name}] Rate limited, backing off")
-            await asyncio.sleep(2)
-            return {"action": "idle", "speech": "Rate limited, waiting...", "thinking": "rate_limited"}
+        except (LLMConnectionError, LLMRateLimitError) as e:
+            logger.warning(f"[{self.name}] LLM error ({type(e).__name__}): {e}")
+            handler = _strategy_lookup(
+                "action.llm_error_handling", self.policy.action.llm_error_handling
+            )
+            return await handler(e, self.name)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"[{self.name}] Failed to parse LLM response: {e}")
             handler = _strategy_lookup(
