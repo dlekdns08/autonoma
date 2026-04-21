@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hmac
+import itertools
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -109,6 +112,17 @@ class SessionState:
     # Display name for chat. Defaults to a friendly anonymous handle until
     # the viewer sets one via the ``set_name`` command.
     display_name: str = ""
+    # Set when this session authenticates via HTTP cookie. File/artifact
+    # endpoints check this to reject cross-user access. None means either
+    # a legacy admin-password session or a user-provided-API-key session
+    # (both only expose the owner's own session_id to their browser).
+    owner_user_id: str | None = None
+    # Per-connection brute-force guard for the legacy admin-password
+    # auth path. Locks the connection out after too many failures within
+    # the window so a hostile client can't enumerate passwords on a
+    # single WS.
+    failed_auth_attempts: int = 0
+    last_failed_auth_at: float = 0.0
     # ── Compatibility shims (read-through to the room) ──
     @property
     def swarm(self) -> Any:
@@ -169,6 +183,38 @@ _rooms: dict[int, RoomState] = {}
 # Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
 # misreads when someone reads it aloud).
 _short_codes: dict[str, int] = {}
+
+# Guards mutations to ``_rooms`` and ``_short_codes``. Room
+# creation/destruction interleaves with HTTP handlers that read these
+# maps, and the disconnect-cleanup path touches both: without the lock a
+# concurrent ``_create_room`` and a viewer disconnect can both update
+# ``_short_codes`` and leave a stale code pointing at a torn-down room
+# id (observed once in dev as a 404 on a freshly issued code).
+_rooms_lock: asyncio.Lock | None = None
+
+
+def _get_rooms_lock() -> asyncio.Lock:
+    """Lazy singleton — see ``_TASKS_LOCK_SINGLETON`` in agents.base for
+    the same pattern. Keeps the module importable before the event loop
+    exists (tests, CLI commands)."""
+    global _rooms_lock
+    if _rooms_lock is None:
+        _rooms_lock = asyncio.Lock()
+    return _rooms_lock
+
+# Monotonic session-id source. ``id(ws)`` was the previous source and
+# could alias across connections once the WebSocket object was GC'd and
+# its memory slot reused, letting a fresh connection inherit a stale
+# session's room/file state. ``itertools.count`` is atomic in CPython and
+# the counter survives for the lifetime of the process.
+_next_session_id: itertools.count[int] = itertools.count(1)
+
+# Legacy admin-password brute-force guardrails. Per-connection (not per
+# IP) because that's the scope we can enforce from inside the WS loop;
+# hostile clients opening many WS connections are a separate concern
+# that belongs on the reverse proxy.
+_ADMIN_AUTH_MAX_ATTEMPTS = 5
+_ADMIN_AUTH_WINDOW_SECONDS = 60.0
 
 
 def _build_admin_llm_config() -> LLMConfig | None:
@@ -970,13 +1016,40 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Autonoma API", version="0.1.0", lifespan=lifespan)
 
+def _resolve_cors_origins() -> list[str]:
+    """Compose the CORS allow-list from the deployment environment.
+
+    Dev mode hardcodes the localhost ports so the Next dev server and the
+    docker-compose web container both work with zero config. Prod starts
+    from an empty baseline and requires an explicit
+    ``AUTONOMA_CORS_ALLOW_ORIGINS`` — wildcarding under
+    ``allow_credentials=True`` is unsafe, so we never fall back to ``*``.
+    """
+    origins: list[str] = []
+    if settings.environment == "development":
+        origins.extend([
+            "http://localhost:3000", "http://127.0.0.1:3000",
+            "http://localhost:3478", "http://127.0.0.1:3478",
+        ])
+    extra = [
+        o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()
+    ]
+    for origin in extra:
+        if origin not in origins:
+            origins.append(origin)
+    if not origins:
+        logger.warning(
+            "[cors] No origins configured for environment=%s. "
+            "Set AUTONOMA_CORS_ALLOW_ORIGINS to the browser origin(s) "
+            "that should be allowed to call this API.",
+            settings.environment,
+        )
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://127.0.0.1:3000",
-        "http://localhost:3478", "http://127.0.0.1:3478",
-        "https://autonoma.koala.ai.kr", "http://autonoma.koala.ai.kr",
-    ],
+    allow_origins=_resolve_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1692,19 +1765,25 @@ def _generate_short_code() -> str:
     raise RuntimeError("could not allocate a unique short code")
 
 
-def _create_room_for(session: SessionState) -> RoomState:
+async def _create_room_for(session: SessionState) -> RoomState:
     """Create a new room owned by ``session`` and reroute the session
-    into it. Returns the room (also stored in ``_rooms``)."""
-    code = _generate_short_code()
-    room = RoomState(
-        room_id=session.session_id,
-        owner_session_id=session.session_id,
-        short_code=code,
-    )
-    _rooms[room.room_id] = room
-    _short_codes[code] = room.room_id
-    session.room_id = room.room_id
-    return room
+    into it. Returns the room (also stored in ``_rooms``).
+
+    Holds ``_get_rooms_lock()`` across the short-code allocation and the
+    two-map insert so a concurrent disconnect cleanup can't race with the
+    room becoming visible — see the comment on ``_rooms_lock``.
+    """
+    async with _get_rooms_lock():
+        code = _generate_short_code()
+        room = RoomState(
+            room_id=session.session_id,
+            owner_session_id=session.session_id,
+            short_code=code,
+        )
+        _rooms[room.room_id] = room
+        _short_codes[code] = room.room_id
+        session.room_id = room.room_id
+        return room
 
 
 def _viewers_in_room(room_id: int) -> list[SessionState]:
@@ -1729,7 +1808,10 @@ async def _notify_room_membership(room_id: int) -> None:
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
-    session = SessionState(ws=ws, session_id=id(ws))
+    # Using a monotonic counter instead of ``id(ws)`` so the id can't
+    # collide with a previous (GC'd) connection's session, which would
+    # let a fresh viewer inherit the former room's bus subscriptions.
+    session = SessionState(ws=ws, session_id=next(_next_session_id))
     # A fresh connection is its own private room until it either starts
     # a swarm (creating a real room) or joins one via short code. The
     # default room id == session id keeps the bus-routing invariant
@@ -1768,6 +1850,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             if llm_cfg is not None:
                 session.llm_config = llm_cfg
                 session.is_admin = cookie_user.role == "admin"
+                session.owner_user_id = cookie_user.id
                 logger.info(
                     f"[WS:{session.session_id}] Cookie auth ok "
                     f"(user={cookie_user.username}, role={cookie_user.role}, "
@@ -1786,7 +1869,25 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         # ── Command loop ──
         while True:
             data = await ws.receive_text()
-            msg = json.loads(data)
+            # Malformed frames must not drop the WS — otherwise any
+            # viewer can crash their own room by sending garbage, and a
+            # buggy frontend takes down the whole connection on a single
+            # bad message instead of surfacing a normal error toast.
+            try:
+                msg = json.loads(data)
+            except (json.JSONDecodeError, ValueError) as parse_err:
+                logger.warning(
+                    f"[WS:{session.session_id}] Ignored malformed frame: {parse_err}"
+                )
+                await manager.send_to_ws(ws, "error", {
+                    "message": "Malformed command (invalid JSON).",
+                })
+                continue
+            if not isinstance(msg, dict):
+                await manager.send_to_ws(ws, "error", {
+                    "message": "Malformed command (expected JSON object).",
+                })
+                continue
             cmd = msg.get("command")
 
             # ── authenticate ──────────────────────────────────────────
@@ -1794,32 +1895,74 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 auth_type = msg.get("type")
 
                 if auth_type == "admin":
+                    # Throttle per-connection brute force. A fresh window
+                    # opens once the cooldown elapses so an honest typo
+                    # doesn't permanently lock the viewer out.
+                    now = time.monotonic()
+                    if (
+                        session.failed_auth_attempts >= _ADMIN_AUTH_MAX_ATTEMPTS
+                        and (now - session.last_failed_auth_at)
+                        < _ADMIN_AUTH_WINDOW_SECONDS
+                    ):
+                        retry_in = int(
+                            _ADMIN_AUTH_WINDOW_SECONDS
+                            - (now - session.last_failed_auth_at)
+                        )
+                        logger.warning(
+                            f"[WS:{session.session_id}] Admin auth rate-limited "
+                            f"(attempts={session.failed_auth_attempts})"
+                        )
+                        await manager.send_to_ws(ws, "auth.failed", {
+                            "message": (
+                                f"너무 많은 시도가 감지되었습니다. "
+                                f"{retry_in}초 뒤에 다시 시도해주세요."
+                            ),
+                        })
+                        continue
+                    # Drop the failure count if the window already expired.
+                    if (
+                        session.failed_auth_attempts > 0
+                        and (now - session.last_failed_auth_at)
+                        >= _ADMIN_AUTH_WINDOW_SECONDS
+                    ):
+                        session.failed_auth_attempts = 0
+
                     if not settings.admin_password:
                         await manager.send_to_ws(ws, "auth.failed", {
                             "message": "관리자 계정이 서버에 설정되어 있지 않습니다.",
                         })
-                    elif msg.get("password") != settings.admin_password:
-                        await manager.send_to_ws(ws, "auth.failed", {
-                            "message": "관리자 비밀번호가 올바르지 않습니다.",
-                        })
                     else:
-                        llm_cfg = _build_admin_llm_config()
-                        if llm_cfg is None:
+                        # Constant-time comparison — a plain ``!=`` on
+                        # strings leaks the password's length and first
+                        # mismatching byte via timing.
+                        submitted = msg.get("password") or ""
+                        if not hmac.compare_digest(
+                            str(submitted), settings.admin_password
+                        ):
+                            session.failed_auth_attempts += 1
+                            session.last_failed_auth_at = now
                             await manager.send_to_ws(ws, "auth.failed", {
-                                "message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.",
+                                "message": "관리자 비밀번호가 올바르지 않습니다.",
                             })
                         else:
-                            session.llm_config = llm_cfg
-                            session.is_admin = True
-                            logger.info(
-                                f"[WS:{session.session_id}] Admin authenticated "
-                                f"(provider={llm_cfg.provider})"
-                            )
-                            await manager.send_to_ws(ws, "auth.success", {
-                                "is_admin": True,
-                                "provider": llm_cfg.provider,
-                                "model": llm_cfg.model,
-                            })
+                            llm_cfg = _build_admin_llm_config()
+                            if llm_cfg is None:
+                                await manager.send_to_ws(ws, "auth.failed", {
+                                    "message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.",
+                                })
+                            else:
+                                session.failed_auth_attempts = 0
+                                session.llm_config = llm_cfg
+                                session.is_admin = True
+                                logger.info(
+                                    f"[WS:{session.session_id}] Admin authenticated "
+                                    f"(provider={llm_cfg.provider})"
+                                )
+                                await manager.send_to_ws(ws, "auth.success", {
+                                    "is_admin": True,
+                                    "provider": llm_cfg.provider,
+                                    "model": llm_cfg.model,
+                                })
 
                 elif auth_type == "user":
                     provider = msg.get("provider", "anthropic")
@@ -1920,7 +2063,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     # working without a parallel id space.
                     room = _rooms.get(session.session_id)
                     if room is None:
-                        room = _create_room_for(session)
+                        room = await _create_room_for(session)
                     # Capture the current context so _run_swarm starts with
                     # our session id set on the ContextVar.
                     ctx = contextvars.copy_context()
@@ -2178,15 +2321,17 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         # burning tokens after the user disconnects.
         room_id = session.room_id
         # Only cancel the swarm task when the *owner* leaves. Spectators
-        # disconnecting must not stop the show.
-        owned_room = _rooms.get(session.session_id)
+        # disconnecting must not stop the show. The lookup + pop happens
+        # under ``_rooms_lock`` so a concurrent ``_create_room_for`` can't
+        # interleave and leave a half-registered room behind.
+        async with _get_rooms_lock():
+            owned_room = _rooms.pop(session.session_id, None)
+            if owned_room is not None:
+                _short_codes.pop(owned_room.short_code, None)
         if owned_room is not None:
+            # Cancelling the task touches the swarm and can await a while;
+            # do it OUTSIDE the lock so viewer-side reads stay responsive.
             await _cancel_session_task(session)
-            # Bid the room goodbye — drop the short code and the room
-            # registry entry. Any remaining viewers will see future
-            # events stop arriving and can choose to leave.
-            _short_codes.pop(owned_room.short_code, None)
-            _rooms.pop(session.session_id, None)
         manager.disconnect(ws)
         _cleanup_session(session.session_id)
         # If this session was a *viewer* (not the owner), notify the
@@ -2206,9 +2351,47 @@ def _require_session(session_id: int | None) -> SessionState:
     return session
 
 
+async def _require_session_owner(
+    session_id: int | None, request: Request
+) -> SessionState:
+    """Like ``_require_session`` but rejects cross-user access.
+
+    If the session was created by a logged-in user (``owner_user_id`` is
+    set), the caller's cookie must identify that same user — or an
+    admin. Anonymous sessions (legacy admin-password or BYO-key paths)
+    retain the old "session id is itself the capability" contract since
+    there is no user to bind them to.
+    """
+    session = _require_session(session_id)
+    if session.owner_user_id is None:
+        return session
+
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    cookie_user_id = read_session_token(cookie_token or "")
+    cookie_user = await get_user_by_id(cookie_user_id) if cookie_user_id else None
+    if cookie_user is None or cookie_user.status != "active":
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for this session's artifacts",
+        )
+    if cookie_user.id != session.owner_user_id and cookie_user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="This session belongs to another user",
+        )
+    return session
+
+
 @app.get("/api/files")
-async def list_files(session: int | None = Query(default=None)) -> dict[str, Any]:
-    project = _session_project(session)
+async def list_files(
+    request: Request,
+    session: int | None = Query(default=None),
+) -> dict[str, Any]:
+    # Gate on ownership so a viewer can't enumerate logged-in users'
+    # sessions by probing sequential ids. See ``_require_session_owner``
+    # for the anonymous-session passthrough rule.
+    sess = await _require_session_owner(session, request)
+    project = sess.project
     if project is None:
         return {"project": None, "files": []}
     return {
@@ -2227,9 +2410,12 @@ async def list_files(session: int | None = Query(default=None)) -> dict[str, Any
 
 @app.get("/api/files/download")
 async def download_file(
-    path: str, session: int | None = Query(default=None)
+    request: Request,
+    path: str,
+    session: int | None = Query(default=None),
 ) -> Response:
-    project = _session_project(session)
+    sess = await _require_session_owner(session, request)
+    project = sess.project
     if project is None:
         raise HTTPException(status_code=404, detail="No active project for session")
     artifact = next((f for f in project.files if f.path == path), None)
@@ -2244,8 +2430,12 @@ async def download_file(
 
 
 @app.get("/api/files/zip")
-async def download_zip(session: int | None = Query(default=None)) -> Response:
-    project = _session_project(session)
+async def download_zip(
+    request: Request,
+    session: int | None = Query(default=None),
+) -> Response:
+    sess = await _require_session_owner(session, request)
+    project = sess.project
     if project is None or not project.files:
         raise HTTPException(status_code=404, detail="No files to download")
     buf = io.BytesIO()
@@ -2398,6 +2588,23 @@ async def get_file_history(
     if session is None:
         raise HTTPException(status_code=400, detail="session query parameter required")
 
+    # Cross-user history reads are an admin-only capability. If the
+    # session is still live and owned by this user that's fine; if it's
+    # anonymous we fall back to "admin only" rather than leaving history
+    # reads open to anyone who guesses a session id.
+    live = _sessions.get(session)
+    if live is not None and live.owner_user_id is not None:
+        if live.owner_user_id != user.id and user.role != "admin":
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="This session belongs to another user",
+            )
+    elif user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Only admins can read history for anonymous or ended sessions",
+        )
+
     engine = get_engine()
     async with engine.connect() as conn:
         result = await conn.execute(
@@ -2450,6 +2657,22 @@ async def get_file_version_content(
 
     if row is None:
         raise HTTPException(status_code=404, detail="version_not_found")
+
+    # Same ownership gate as the list endpoint: either the session is
+    # live and owned by this user, or the caller is an admin. Version
+    # ids are sequential so we can't rely on them being unguessable.
+    live = _sessions.get(row.session_id)
+    if live is not None and live.owner_user_id is not None:
+        if live.owner_user_id != user.id and user.role != "admin":
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="This version belongs to another user's session",
+            )
+    elif user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Only admins can read versions from anonymous or ended sessions",
+        )
 
     return {
         "version_id": row.id,
