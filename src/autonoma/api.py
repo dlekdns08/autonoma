@@ -1177,6 +1177,22 @@ def _harness_policy_to_dict(policy: Any) -> dict[str, Any]:
     return policy.model_dump(mode="json")
 
 
+@app.get("/api/harness/pipeline")
+async def get_harness_pipeline(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Pipeline-view layout: 16 nodes grouped into A/B/C plus intra-group edges.
+
+    Read-only; the actual editing flow still goes through the existing
+    preset / override endpoints. This endpoint exists so the UI can lay
+    the harness out as a visual flow without embedding the grouping
+    decisions into frontend code.
+    """
+    from autonoma.harness.pipeline import pipeline_payload
+
+    return pipeline_payload()
+
+
 @app.get("/api/harness/schema")
 async def get_harness_schema(
     user: User = Depends(require_active_user),
