@@ -87,6 +87,19 @@ export interface UseAgentVoiceResult {
    * slot.amp remains below a threshold).
    */
   markSpeakingFromText: (agentName: string, text: string) => void;
+  /**
+   * Unified speech entry point for the WS ``agent.speech`` event:
+   * - immediately marks the agent as speaking (drives spotlight + VRM
+   *   talking overlay),
+   * - schedules Web Speech API playback with a short delay so that if
+   *   server TTS audio lands within that window, Web Speech is skipped
+   *   (avoids hearing the same line twice, out of sync).
+   * The pending timer is cancelled from ``pushAudioEvent`` when an
+   * ``agent.speech_audio_start`` arrives for the same agent.
+   */
+  requestSpeak: (agentName: string, text: string) => void;
+  /** Drop a specific agent's resources (call on agent.despawned). */
+  cleanupAgent: (agentName: string) => void;
 }
 
 export function useAgentVoice(): UseAgentVoiceResult {
@@ -195,6 +208,17 @@ export function useAgentVoice(): UseAgentVoiceResult {
           // by the chunk handler below.
           slot.seq = data.seq ?? slot.seq + 1;
           slot.chunks = [];
+          // Server TTS is about to take over — cancel any deferred Web
+          // Speech kick-off for this agent and stop any utterance it
+          // already started, so we never hear the same line twice.
+          const pending = pendingWebSpeechRef.current.get(agent);
+          if (pending) {
+            clearTimeout(pending);
+            pendingWebSpeechRef.current.delete(agent);
+          }
+          if (typeof window !== "undefined" && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+          }
           // Don't stop the currently-playing audio yet — let it finish
           // the prior word so the cut-over doesn't sound jarring. The
           // new src will replace it when audio_end fires.
@@ -369,7 +393,20 @@ export function useAgentVoice(): UseAgentVoiceResult {
   // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
   // each call can cancel the prior timer/interval without rerendering.
   const fallbackTimersRef = useRef<
-    Map<string, { clear: number; amp: ReturnType<typeof setInterval> }>
+    Map<
+      string,
+      {
+        clear: ReturnType<typeof setTimeout>;
+        amp: ReturnType<typeof setInterval>;
+      }
+    >
+  >(new Map());
+
+  // Pending Web Speech kick-off timers — keyed by agent. Lets
+  // ``pushAudioEvent`` cancel the browser TTS the instant server TTS
+  // audio arrives, avoiding double-speak.
+  const pendingWebSpeechRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
 
   const markSpeakingFromText = useCallback(
@@ -421,6 +458,58 @@ export function useAgentVoice(): UseAgentVoiceResult {
     },
     [ensureSlot, setSpeaking],
   );
+
+  const requestSpeak = useCallback(
+    (agentName: string, text: string) => {
+      if (!agentName || !text) return;
+      // Instant UI feedback.
+      markSpeakingFromText(agentName, text);
+      // Defer Web Speech by ~400ms so server TTS audio_start (which
+      // cancels the pending timer) usually wins the race on setups that
+      // have server TTS configured.
+      const prior = pendingWebSpeechRef.current.get(agentName);
+      if (prior) clearTimeout(prior);
+      const t = setTimeout(() => {
+        pendingWebSpeechRef.current.delete(agentName);
+        speakText(agentName, text);
+      }, 400);
+      pendingWebSpeechRef.current.set(agentName, t);
+    },
+    [markSpeakingFromText, speakText],
+  );
+
+  const cleanupAgent = useCallback((agentName: string) => {
+    const slot = slotsRef.current.get(agentName);
+    if (slot) {
+      try {
+        slot.audio.pause();
+        const src = slot.audio.src;
+        slot.audio.removeAttribute("src");
+        slot.audio.load();
+        if (src && src.startsWith("blob:")) URL.revokeObjectURL(src);
+      } catch {
+        /* element may already be torn down */
+      }
+      slotsRef.current.delete(agentName);
+    }
+    const fallback = fallbackTimersRef.current.get(agentName);
+    if (fallback) {
+      clearInterval(fallback.amp);
+      clearTimeout(fallback.clear);
+      fallbackTimersRef.current.delete(agentName);
+    }
+    const pending = pendingWebSpeechRef.current.get(agentName);
+    if (pending) {
+      clearTimeout(pending);
+      pendingWebSpeechRef.current.delete(agentName);
+    }
+    setSpeakingAgents((prev) => {
+      if (!prev.has(agentName)) return prev;
+      const next = new Set(prev);
+      next.delete(agentName);
+      return next;
+    });
+  }, []);
 
   const reset = useCallback(() => {
     for (const slot of slotsRef.current.values()) {
