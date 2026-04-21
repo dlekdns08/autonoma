@@ -755,8 +755,13 @@ function VRMModel({
     rightHand: null,
   });
 
-  useFrame((_, delta) => {
+  useFrame((_, rawDelta) => {
     if (!vrm) return;
+
+    // Clamp delta to 100ms max so a frame drop (tab hidden, GC pause, etc.)
+    // doesn't cause animations to snap or skip. 0.1s is roughly 10fps —
+    // below that threshold we accept some slowdown rather than a visual pop.
+    const delta = Math.min(rawDelta, 0.1);
 
     const em = vrm.expressionManager;
     const now = performance.now() / 1000;
