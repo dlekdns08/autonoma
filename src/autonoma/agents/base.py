@@ -475,12 +475,22 @@ RECENT MESSAGES:
         # Build system prompt from harness (includes failure mode inoculation)
         system = self.harness.build_system_prompt(self.persona.name, self.persona.skills)
 
-        # Add JSON action format
-        system += """
+        # Build action list filtered to what this harness actually allows.
+        # Always include meta-actions (idle, celebrate) which are unconditionally
+        # permitted and never fire the capability enforcer.
+        _all_actions = [
+            "work_on_task", "create_file", "send_message", "request_help",
+            "review_work", "spawn_agent", "complete_task", "run_code",
+        ]
+        _permitted = [a for a in _all_actions if self.harness.can_perform(a)]
+        _permitted += ["idle", "celebrate"]
+        _action_list = ", ".join(_permitted)
+
+        system += f"""
 Based on the situation, decide your SINGLE next action. Respond with JSON:
-{
+{{
   "thinking": "Brief internal thought about what to do next",
-  "action": "one of: work_on_task, create_file, send_message, request_help, review_work, spawn_agent, complete_task, run_code, celebrate, idle",
+  "action": "one of: {_action_list}",
   "speech": "What you say out loud (keep it short, personality-driven)",
   "target_task_id": "task id if working on specific task",
   "file_path": "if creating a file",
@@ -495,7 +505,7 @@ Based on the situation, decide your SINGLE next action. Respond with JSON:
   "verdict": "PASS|FAIL|PARTIAL if reviewing (required for reviewers/testers)",
   "code_language": "python|bash|node (if run_code)",
   "code_body": "the actual program source to execute in the sandbox (if run_code). Stdlib only, no network. Keep it short — a few seconds of CPU max. Use print() to report results."
-}
+}}
 
 Rules:
 - Pick up unassigned tasks that match your skills
