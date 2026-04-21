@@ -692,6 +692,8 @@ export default function HarnessPanel({
     !presets.find((p) => p.id === selectedId)?.is_default &&
     modifiedSections.size > 0;
 
+  const policyWarnings = useMemo(() => validatePolicy(working), [working]);
+
   if (!open) return null;
 
   return (
@@ -850,6 +852,15 @@ export default function HarnessPanel({
 
               {saveError && (
                 <div className="text-[11px] font-mono text-red-400">{saveError}</div>
+              )}
+
+              {/* Policy validation warnings */}
+              {policyWarnings.length > 0 && (
+                <div className="flex flex-col gap-1 rounded-lg border border-yellow-500/30 bg-yellow-500/8 px-3 py-2">
+                  {policyWarnings.map((w, i) => (
+                    <p key={i} className="text-[11px] font-mono text-yellow-300/90">{w}</p>
+                  ))}
+                </div>
               )}
 
               {/* Action buttons */}
