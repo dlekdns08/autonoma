@@ -139,6 +139,11 @@ class AgentSwarm:
         self.director.position = Position(x=35, y=1)
         self.agents["Director"] = self.director
 
+        # Wire the swarm's world systems into the director so _check_for_conflicts
+        # can use them without creating a circular import or tight coupling.
+        self.director._swarm_debate_arena = self.debate_arena
+        self.director._swarm_relationships = self.relationships
+
         bus.on("agent.spawn_requested", self._on_spawn_request)
 
     async def initialize(self, project: ProjectState) -> None:
