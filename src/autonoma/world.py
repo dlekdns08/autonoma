@@ -2407,6 +2407,7 @@ class FortuneCookie:
     bonus_xp: int
     round_given: int
     fulfilled: bool = False
+    picked_up: bool = False
 
     def __str__(self) -> str:
         status = "✓" if self.fulfilled else "◇"
@@ -2466,6 +2467,19 @@ class FortuneCookieJar:
 
     def get_active_fortune(self, agent_name: str) -> FortuneCookie | None:
         return self.active_fortunes.get(agent_name)
+
+    def open_cookie(self, agent_name: str) -> FortuneCookie | None:
+        """Mark the agent's active cookie as physically picked up.
+
+        Idempotent: returns None if the agent has no active cookie or the
+        cookie has already been opened. The cookie stays in ``active_fortunes``
+        so the action-based fulfilment in ``check_fulfillment`` can still fire.
+        """
+        cookie = self.active_fortunes.get(agent_name)
+        if cookie is None or cookie.picked_up:
+            return None
+        cookie.picked_up = True
+        return cookie
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

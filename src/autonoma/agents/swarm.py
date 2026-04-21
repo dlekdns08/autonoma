@@ -1052,6 +1052,34 @@ class AgentSwarm:
                     f"🥠 Fortune: {cookie.fortune}", "observation", self._round,
                 )
 
+    async def pickup_fortune_cookie(self, agent_name: str) -> None:
+        """Handle the physical pickup of a fortune cookie on the stage."""
+        cookie = self.fortune_jar.open_cookie(agent_name)
+        if cookie is None:
+            return
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            return
+        agent.stats.add_xp(5)
+        agent.mood = Mood.EXCITED
+        agent.memory.remember(
+            f"🥠 Opened fortune cookie: {cookie.fortune}", "observation", self._round,
+        )
+        logger.info(f"[Fortune] {agent_name} picked up cookie: {cookie.fortune}")
+        await bus.emit(
+            "fortune.pickup",
+            agent=agent_name,
+            fortune=cookie.fortune,
+            bonus_xp=5,
+            condition=cookie.condition,
+        )
+        await bus.emit(
+            "agent.speech", agent=agent_name, text=cookie.fortune, mood="excited",
+        )
+        await bus.emit(
+            "agent.emote", agent=agent_name, icon="🥠", ttl_ms=2500,
+        )
+
     async def _check_fortune(self, agent_name: str, action: str) -> None:
         """Check if an action fulfills a fortune cookie."""
         cookie = self.fortune_jar.check_fulfillment(agent_name, action)
