@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { API_BASE_URL } from "@/hooks/useSwarm";
+import type { CheckpointEntry } from "@/hooks/useSwarm";
 import type { FileEntry } from "@/lib/types";
 
 interface Props {
@@ -15,7 +16,9 @@ interface Props {
   sessionId: number | null;
   completed: boolean;
   incompleteReason: string;
+  checkpoints?: CheckpointEntry[];
   onReset: () => void;
+  onResumeFromCheckpoint?: (sessionId: string, checkpointId: string) => void;
 }
 
 const INCOMPLETE_REASON_LABELS: Record<string, string> = {
@@ -36,7 +39,9 @@ export default function EndScreen({
   sessionId,
   completed,
   incompleteReason,
+  checkpoints = [],
   onReset,
+  onResumeFromCheckpoint,
 }: Props) {
   const reasonLabel = incompleteReason
     ? INCOMPLETE_REASON_LABELS[incompleteReason] ?? incompleteReason
@@ -180,6 +185,39 @@ export default function EndScreen({
                     ⬇
                   </a>
                 )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Checkpoints (Feature 4) */}
+      {checkpoints.length > 0 && onResumeFromCheckpoint && sessionId !== null && (
+        <div className="max-w-3xl w-full rounded-xl border border-amber-500/20 bg-slate-900/60 p-5 backdrop-blur-sm">
+          <h2 className="mb-3 text-sm font-bold text-amber-300 font-mono">
+            ✦ Resume from checkpoint ({checkpoints.length})
+          </h2>
+          <div className="flex flex-col gap-1 max-h-40 overflow-y-auto scrollbar-thin">
+            {checkpoints.map((cp) => (
+              <div
+                key={cp.id}
+                className="flex items-center justify-between rounded px-2 py-1 hover:bg-white/5"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono text-amber-200">
+                    Round {cp.round}
+                  </span>
+                  <span className="text-[10px] text-white/40">
+                    {new Date(cp.created_at).toLocaleTimeString()}
+                  </span>
+                </div>
+                <button
+                  onClick={() =>
+                    onResumeFromCheckpoint(String(sessionId), cp.id)
+                  }
+                  className="rounded border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-[10px] font-mono text-amber-200 hover:bg-amber-500/25 transition-colors"
+                >
+                  Resume
+                </button>
               </div>
             ))}
           </div>
