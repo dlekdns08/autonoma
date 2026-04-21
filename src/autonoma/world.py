@@ -2047,6 +2047,13 @@ class QuestBoard:
             secret=template.get("secret", False),
         )
         self.active_quests.setdefault(agent_name, []).append(quest)
+        _fire_event(
+            "quest.assigned",
+            agent=agent_name,
+            quest_id=quest.quest_id,
+            title=quest.title,
+            round=round_number,
+        )
         return quest
 
     def check_completion(self, agent_name: str, condition: str, round_number: int) -> list[Quest]:
@@ -2059,6 +2066,14 @@ class QuestBoard:
                 quest.status = QuestStatus.COMPLETED
                 self.completed_quests.append(quest)
                 completed.append(quest)
+                _fire_event(
+                    "quest.completed",
+                    agent=agent_name,
+                    quest_id=quest.quest_id,
+                    title=quest.title,
+                    xp_reward=quest.xp_reward,
+                    round=round_number,
+                )
         return completed
 
     def expire_quests(self, round_number: int) -> list[Quest]:
