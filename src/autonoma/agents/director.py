@@ -537,6 +537,9 @@ Rules:
             await bus.emit("project.completed", agent="Director")
             return {"agent": "Director", "action": "project_complete"}
 
+        # ── Feature 20: Conflict detection via DebateArena ──
+        await self._check_for_conflicts(project)
+
         # ── Feature 1: Critical path computation ──
         critical_path = compute_critical_path(project.tasks)
 
