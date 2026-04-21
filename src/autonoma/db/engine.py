@@ -103,9 +103,19 @@ async def _migration_002_users(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_003_harness_policies(conn) -> None:
+    """Create the ``harness_policies`` table.
+
+    Per-user Harness Engineering presets plus the system default preset.
+    Same ``create_all(checkfirst=True)`` pattern as the earlier migrations.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
+    (3, _migration_003_harness_policies),
 ]
 
 
