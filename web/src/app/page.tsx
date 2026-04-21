@@ -103,6 +103,13 @@ function UserChip({
           >
             users
           </a>
+          <span className="text-white/20">|</span>
+          <a
+            href="/admin/memory"
+            className="text-amber-300/70 hover:text-amber-200 transition-colors underline underline-offset-2"
+          >
+            memory
+          </a>
         </>
       )}
       <span className="text-white/20">|</span>
@@ -486,19 +493,39 @@ function Dashboard() {
             ?
           </button>
         </div>
-        {authState.status === "authenticated" && (
-          <div className="flex items-center gap-3">
-            <span>
-              {authState.isAdmin ? "admin" : `${authState.provider}/${authState.model}`}
+        <div className="flex items-center gap-3">
+          {room.code && (
+            <span className="text-white/25 font-mono">
+              room:{room.code.slice(0, 6)}
+              {room.viewerCount > 1 && ` (${room.viewerCount})`}
             </span>
-            <button
-              onClick={logout}
-              className="hover:text-violet-400 transition-colors underline underline-offset-2"
-            >
-              logout
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={handleShare}
+            className="rounded px-2 py-0.5 text-[9px] font-mono transition-colors"
+            style={{
+              background: shareCopied ? "rgba(34,197,94,0.15)" : "rgba(139,92,246,0.12)",
+              color: shareCopied ? "#86efac" : "#a78bfa",
+              border: shareCopied ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(139,92,246,0.2)",
+            }}
+          >
+            {shareCopied ? "Copied!" : "Share"}
+          </button>
+          {authState.status === "authenticated" && (
+            <>
+              <span>
+                {authState.isAdmin ? "admin" : `${authState.provider}/${authState.model}`}
+              </span>
+              <button
+                onClick={logout}
+                className="hover:text-violet-400 transition-colors underline underline-offset-2"
+              >
+                logout
+              </button>
+            </>
+          )}
+        </div>
       </footer>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
