@@ -55,6 +55,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("loop.stall_policy", "auto_unblock"),
         ("loop.stall_policy", "wait"),
         ("loop.stall_policy", "escalate_to_director"),
+        ("spawn.approval_mode", "director_only"),
+        ("spawn.approval_mode", "peer_vote"),
+        ("spawn.approval_mode", "automatic"),
     }
 
     stubs = set(all_stubs())

@@ -19,6 +19,7 @@ from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — imports trigger @register
     loop_strategies as _loop_strategies,
     routing_strategies as _routing_strategies,
+    spawn_strategies as _spawn_strategies,
 )
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
@@ -929,6 +930,21 @@ class AgentSwarm:
         color: str = "cyan",
         **_: Any,
     ) -> None:
+        approve_fn = _strategy_lookup(
+            "spawn.approval_mode", self.policy.spawn.approval_mode
+        )
+        approved, reason = approve_fn(requester, list(self.agents.keys()))
+        if not approved:
+            logger.info(f"[Swarm] {reason}")
+            await bus.emit(
+                "agent.spawn_failed",
+                name=name,
+                reason="not_approved",
+                detail=reason,
+                requester=requester,
+            )
+            return
+
         agent = self.spawn_agent(
             name=name,
             role=role,
