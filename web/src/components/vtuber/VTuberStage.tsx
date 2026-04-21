@@ -420,6 +420,26 @@ const STATE_ICONS: Record<string, string> = {
   idle: "",
 };
 
+// Gallery mood tint — a solid css color per mood. Mixed on top of the
+// agent.color base at a low opacity so the tile still reads as "that
+// agent" but the hue shifts with their current feeling.
+const GALLERY_MOOD_COLORS: Record<string, string> = {
+  happy:       "#10b981",
+  excited:     "#f59e0b",
+  proud:       "#d946ef",
+  frustrated:  "#ef4444",
+  worried:     "#f97316",
+  relaxed:     "#22d3ee",
+  determined:  "#fbbf24",
+  focused:     "#6366f1",
+  curious:     "#a78bfa",
+  tired:       "#64748b",
+  nostalgic:   "#fb7185",
+  inspired:    "#facc15",
+  mischievous: "#c026d3",
+  friendly:    "#34d399",
+};
+
 function GalleryTile({
   agent,
   isSpeaking,
@@ -430,12 +450,22 @@ function GalleryTile({
   isFocus: boolean;
 }) {
   const stateIcon = STATE_ICONS[agent.state] ?? "";
-  // Derive a subtle background from the agent's color field (hex/css).
-  // We layer it as a very-low-opacity fill so tiles are visually distinct
-  // without shouting over the spotlight.
-  const bgStyle: React.CSSProperties = agent.color
-    ? { background: `color-mix(in srgb, ${agent.color} 18%, transparent)` }
-    : {};
+  // Composite tile background: the agent's identity color (constant)
+  // layered under a mood tint (dynamic). Mood occupies the top layer
+  // at a higher weight so mood changes are actually visible — previously
+  // only agent.color drove the tile background, so "curious → excited"
+  // looked identical.
+  const moodColor = GALLERY_MOOD_COLORS[agent.mood];
+  const baseLayer = agent.color
+    ? `color-mix(in srgb, ${agent.color} 18%, transparent)`
+    : "transparent";
+  const moodLayer = moodColor
+    ? `color-mix(in srgb, ${moodColor} 32%, transparent)`
+    : "transparent";
+  const bgStyle: React.CSSProperties = {
+    background: `linear-gradient(180deg, ${moodLayer}, ${baseLayer})`,
+    transition: "background 600ms ease",
+  };
 
   const xpPct =
     agent.xp_to_next > 0
