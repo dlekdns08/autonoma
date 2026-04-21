@@ -75,6 +75,50 @@ class Mood(str, Enum):
     NOSTALGIC = "nostalgic"
 
 
+# ── Mood Contagion ───────────────────────────────────────────────────────────
+# Maps mood names to contagion strength. Moods not present here have 0 strength.
+# Probability that a given nearby agent is affected = strength * 0.5.
+
+MOOD_CONTAGION_STRENGTH: dict[str, float] = {
+    "excited": 0.3,
+    "frustrated": 0.4,
+    "happy": 0.2,
+    "tired": 0.1,
+    "inspired": 0.25,
+    "mischievous": 0.2,
+    "worried": 0.15,
+}
+
+
+def apply_mood_contagion(
+    source_mood: "Mood",
+    agents: list,
+    source_agent_name: str,
+    rng: random.Random,
+) -> list[tuple[str, "Mood"]]:
+    """Spread ``source_mood`` from one agent to nearby agents probabilistically.
+
+    For each agent in ``agents`` that is not ``source_agent_name``, the
+    probability of being affected is ``contagion_strength * 0.5``.
+
+    Returns a list of ``(agent_name, new_mood)`` pairs for every agent
+    whose mood changed as a result of contagion.
+    """
+    strength = MOOD_CONTAGION_STRENGTH.get(source_mood.value, 0.0)
+    if strength == 0.0:
+        return []
+
+    affected: list[tuple[str, "Mood"]] = []
+    prob = strength * 0.5
+    for agent in agents:
+        name = getattr(agent, "name", None)
+        if name is None or name == source_agent_name:
+            continue
+        if rng.random() < prob:
+            affected.append((name, source_mood))
+    return affected
+
+
 class Trait(str, Enum):
     """Personality traits - Big Five inspired, kawaii flavored."""
     DILIGENT = "diligent"
@@ -281,6 +325,30 @@ class RelationshipGraph:
             positive=positive,
             trust=rel.trust,
         )
+
+    def decay_all(self, decay_rate: float = 0.02) -> None:
+        """Reduce all trust values toward 0 by ``decay_rate * current_trust``.
+
+        Called once per round so long-dormant relationships slowly fade.
+        Trust of 0.8 → 0.784 (never goes negative, never goes below 0).
+        """
+        for rel in self._graph.values():
+            if rel.trust > 0.0:
+                rel.trust = max(0.0, rel.trust - decay_rate * rel.trust)
+            elif rel.trust < 0.0:
+                rel.trust = min(0.0, rel.trust - decay_rate * rel.trust)
+
+    def get_strong_pairs(self, threshold: float = 0.7) -> list[tuple[str, str]]:
+        """Return all (from, to) pairs whose trust is above ``threshold``.
+
+        These are "squad bonus" pairs — agents that trust each other enough
+        to earn collaborative perks.
+        """
+        return [
+            (frm, to)
+            for (frm, to), rel in self._graph.items()
+            if rel.trust >= threshold
+        ]
 
     def get_friends(self, agent: str, threshold: float = 0.7) -> list[str]:
         return [
@@ -682,7 +750,27 @@ TIER_EMOJIS = {
 }
 
 
-def check_achievements(stats: AgentStats) -> list[str]:
+def get_tier_progress(stats: AgentStats) -> dict[str, dict[str, int]]:
+    """Return earned vs. total achievement counts broken down by tier.
+
+    Example return value::
+
+        {
+            "bronze":  {"total": 4, "earned": 3},
+            "silver":  {"total": 6, "earned": 1},
+            "gold":    {"total": 4, "earned": 0},
+            "diamond": {"total": 3, "earned": 0},
+        }
+    """
+    progress: dict[str, dict[str, int]] = {}
+    for tier in AchievementTier:
+        tier_achs = [aid for aid, a in ACHIEVEMENTS.items() if a.get("tier") == tier]
+        earned = [aid for aid in tier_achs if aid in stats.achievements]
+        progress[tier.value] = {"total": len(tier_achs), "earned": len(earned)}
+    return progress
+
+
+def check_achievements(stats: AgentStats, agent_name: str = "") -> list[str]:
     """Check which achievements are newly earned and award XP.
 
     Double-call safety: `stats.achievements` is mutated in-place before
@@ -692,6 +780,9 @@ def check_achievements(stats: AgentStats) -> list[str]:
     already present and skip it.  This prevents double-XP as long as
     both callers share the same AgentStats instance (which they do —
     agent.stats is a single object per agent).
+
+    When ``agent_name`` is provided, emits ``achievement.tier_complete``
+    if completing a newly-earned achievement finishes an entire tier.
     """
     newly_earned: list[str] = []
     for ach_id, ach in ACHIEVEMENTS.items():
@@ -700,6 +791,26 @@ def check_achievements(stats: AgentStats) -> list[str]:
             stats.achievements.append(ach_id)
             newly_earned.append(ach_id)
             stats.add_xp(ach.get("xp_reward", 0))
+
+    # After awarding all newly earned achievements, check whether any tier
+    # was just completed for the first time and emit a tier_complete event.
+    if agent_name and newly_earned:
+        for tier in AchievementTier:
+            tier_achs = [aid for aid, a in ACHIEVEMENTS.items() if a.get("tier") == tier]
+            if not tier_achs:
+                continue
+            all_earned = all(aid in stats.achievements for aid in tier_achs)
+            # Only fire when THIS call was the one that completed the tier
+            # (i.e. at least one of the newly earned belongs to this tier).
+            tier_newly = [aid for aid in newly_earned if ACHIEVEMENTS[aid].get("tier") == tier]
+            if all_earned and tier_newly:
+                _fire_event(
+                    "achievement.tier_complete",
+                    agent=agent_name,
+                    tier=tier.value,
+                    tier_achievements=tier_achs,
+                )
+
     return newly_earned
 
 
@@ -1471,6 +1582,66 @@ class WorldEventQueue:
 
     def resolve(self, event: WorldEvent) -> None:
         event.resolved = True
+
+
+@dataclass
+class WorldEventLedgerEntry:
+    """Immutable record of a processed world event."""
+    event_type: str
+    title: str
+    description: str
+    round_number: int
+    triggered_by: str  # agent name or "system"
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+class WorldEventLedger(WorldEventQueue):
+    """WorldEventQueue extended with an append-only event ledger.
+
+    Every event that is generated is also written to an in-memory ledger
+    so callers can query history by round, type, or recency.
+    """
+
+    def __init__(self, seed: int = 42) -> None:
+        super().__init__(seed=seed)
+        self._ledger: list[WorldEventLedgerEntry] = []
+
+    def _record_ledger(
+        self, event: WorldEvent, triggered_by: str = "system"
+    ) -> WorldEventLedgerEntry:
+        entry = WorldEventLedgerEntry(
+            event_type=event.event_type.value,
+            title=event.title,
+            description=event.description,
+            round_number=event.round_number,
+            triggered_by=triggered_by,
+        )
+        self._ledger.append(entry)
+        _fire_event(
+            "world.event_ledger_entry",
+            event_type=entry.event_type,
+            title=entry.title,
+            description=entry.description,
+            round=entry.round_number,
+            triggered_by=entry.triggered_by,
+            timestamp=entry.timestamp,
+        )
+        return entry
+
+    def maybe_generate(
+        self,
+        round_number: int,
+        agent_names: list[str],
+        triggered_by: str = "system",
+    ) -> WorldEvent | None:  # type: ignore[override]
+        event = super().maybe_generate(round_number, agent_names)
+        if event is not None:
+            self._record_ledger(event, triggered_by=triggered_by)
+        return event
+
+    def get_ledger(self, limit: int = 50) -> list[WorldEventLedgerEntry]:
+        """Return the most recent ``limit`` ledger entries (newest last)."""
+        return self._ledger[-limit:]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2305,6 +2476,29 @@ class BossAgent:
         )
 
 
+def compute_boss_hp(agent_count: int, avg_level: float, base_hp: int = 100) -> int:
+    """Compute scaled boss HP based on the current team size and average level.
+
+    Formula: ``hp = base_hp + (agent_count * 20) + int(avg_level * 10)``.
+    Capped at 500 to prevent runaway values.
+    """
+    hp = base_hp + (agent_count * 20) + int(avg_level * 10)
+    return min(hp, 500)
+
+
+def compute_boss_reward(hp: int) -> dict[str, Any]:
+    """Return XP and rarity rewards scaled by boss HP.
+
+    Harder boss (higher HP) → better reward.
+    - ``xp_bonus`` = ``hp // 10``
+    - ``rarity_boost`` = ``min(hp / 500, 0.5)``
+    """
+    return {
+        "xp_bonus": hp // 10,
+        "rarity_boost": min(hp / 500, 0.5),
+    }
+
+
 class BossArena:
     """Manages boss encounters."""
 
@@ -2315,7 +2509,12 @@ class BossArena:
         self._boss_probability = 0.1
         self._min_round = 8
 
-    def maybe_spawn_boss(self, round_number: int, team_avg_level: int) -> BossAgent | None:
+    def maybe_spawn_boss(
+        self,
+        round_number: int,
+        team_avg_level: int,
+        agent_count: int = 1,
+    ) -> BossAgent | None:
         if self.current_boss and self.current_boss.phase in (BossPhase.APPEARING, BossPhase.FIGHTING):
             return None
         if round_number < self._min_round:
@@ -2324,6 +2523,10 @@ class BossArena:
             return None
 
         self.current_boss = BossAgent.generate(round_number, team_avg_level, self._rng)
+        # Override the default level-based HP with the scaled value.
+        scaled_hp = compute_boss_hp(agent_count, float(team_avg_level))
+        self.current_boss.hp = scaled_hp
+        self.current_boss.max_hp = scaled_hp
         self.current_boss.phase = BossPhase.FIGHTING
         return self.current_boss
 
@@ -2341,6 +2544,18 @@ class BossArena:
             self.defeated_bosses.append(self.current_boss)
 
         return result
+
+    def get_defeat_rewards(self) -> dict[str, Any]:
+        """Return scaled rewards for the current (or most recently defeated) boss.
+
+        Callers should distribute ``xp_bonus`` to all participating agents.
+        """
+        boss = self.current_boss
+        if boss is None and self.defeated_bosses:
+            boss = self.defeated_bosses[-1]
+        if boss is None:
+            return {"xp_bonus": 0, "rarity_boost": 0.0}
+        return compute_boss_reward(boss.max_hp)
 
     def check_escape(self, round_number: int) -> bool:
         """Boss escapes if not defeated within 5 rounds."""
