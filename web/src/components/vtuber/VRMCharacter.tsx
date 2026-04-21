@@ -763,11 +763,23 @@ function VRMModel({
       const base = MOOD_MAP[mood] ?? {};
       const boost = STATE_EXPRESSION_BOOST[state] ?? {};
       const target: MoodTarget = {};
+      let rawSum = 0;
+      for (const key of EMOTE_KEYS) {
+        const v = (base[key] ?? 0) + (boost[key] ?? 0);
+        target[key] = v;
+        rawSum += v;
+      }
+      // Per-key clamping dropped secondary components (e.g. "surprised"
+      // beside a saturated "happy") whenever mood + state boost summed
+      // past 1.0 on one key. Normalize the whole expression vector when
+      // the combined magnitude would read as over-saturated, preserving
+      // the mix — then clamp each slot to [0, 1] for rig safety.
+      const scale = rawSum > 1.4 ? 1.4 / rawSum : 1;
       let targetSum = 0;
       for (const key of EMOTE_KEYS) {
-        const v = Math.min(1, (base[key] ?? 0) + (boost[key] ?? 0));
-        target[key] = v;
-        targetSum += v;
+        const scaled = Math.min(1, (target[key] ?? 0) * scale);
+        target[key] = scaled;
+        targetSum += scaled;
       }
       const s = st.smoothMood;
       // Ease at ~4/sec so a mood flip takes ~250ms to settle.
