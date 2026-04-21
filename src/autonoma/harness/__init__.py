@@ -24,6 +24,7 @@ from autonoma.harness.policy import (
 from autonoma.harness import routing_strategies as _routing_strategies  # noqa: F401
 from autonoma.harness import loop_strategies as _loop_strategies  # noqa: F401
 from autonoma.harness import safety_strategies as _safety_strategies  # noqa: F401
+from autonoma.harness import stall_strategies as _stall_strategies  # noqa: F401
 
 __all__ = [
     "ActionPolicy",

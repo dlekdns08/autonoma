@@ -18,7 +18,9 @@ from autonoma.agents.base import (
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.harness import stall_strategies as _stall_strategies  # noqa: F401 — triggers @register
 from autonoma.harness.policy import HarnessPolicyContent
+from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import LLMConfig
 from autonoma.tracing import traced_messages_create
 from autonoma.models import (
@@ -411,12 +413,18 @@ Rules:
                 f"open_ready={len(open_tasks)}"
             )
             if self._stall_counter >= 3:
-                # Priority 1: auto-approve stuck REVIEW tasks (no reviewer loop
-                # exists so REVIEW is a terminal trap for completion).
                 review_tasks = [t for t in project.tasks if t.status == TaskStatus.REVIEW]
-                if review_tasks:
+                open_candidates = [t for t in project.tasks if t.status == TaskStatus.OPEN]
+                plan_fn = _strategy_lookup(
+                    "loop.stall_policy", self.policy.loop.stall_policy
+                )
+                plan = plan_fn(review_tasks, open_candidates, len(available_agents))
+                action = plan.get("action", "none")
+
+                if action == "approve_reviews":
+                    targets = plan.get("tasks", [])
                     async with TASKS_LOCK:
-                        for rt in review_tasks:
+                        for rt in targets:
                             logger.warning(
                                 f"[Director] Auto-approving stalled REVIEW task "
                                 f"'{rt.title}' (assigned_to={rt.assigned_to or 'none'}) "
@@ -424,30 +432,39 @@ Rules:
                             )
                             rt.status = TaskStatus.DONE
                     await self._say("Auto-approving stuck reviews!", style="bold red")
-                    await bus.emit(
-                        "director.review_auto_approved",
-                        count=len(review_tasks),
-                    )
+                    await bus.emit("director.review_auto_approved", count=len(targets))
                     self._stall_counter = 0
-                else:
-                    stuck_tasks = [t for t in project.tasks if t.status == TaskStatus.OPEN]
-                    if stuck_tasks and available_agents:
-                        async with TASKS_LOCK:
-                            cleared = list(stuck_tasks[0].depends_on)
-                            stuck_tasks[0].depends_on.clear()
-                        logger.warning(
-                            f"[Director] Forcibly unblocking '{stuck_tasks[0].title}' "
-                            f"by clearing its dependencies={cleared}"
-                        )
-                        await self._say("Unblocking stuck task!", style="bold red")
-                        self._stall_counter = 0
-                    else:
-                        logger.error(
-                            f"[Director] Stalled 3 rounds but cannot unblock: "
-                            f"stuck_open_tasks={len(stuck_tasks)}, "
-                            f"available_agents={len(available_agents)} — "
-                            f"run will keep spinning until max_rounds unless agents recover"
-                        )
+
+                elif action == "clear_deps":
+                    target = plan["task"]
+                    cleared = plan.get("cleared", [])
+                    async with TASKS_LOCK:
+                        target.depends_on.clear()
+                    logger.warning(
+                        f"[Director] Forcibly unblocking '{target.title}' "
+                        f"by clearing its dependencies={cleared}"
+                    )
+                    await self._say("Unblocking stuck task!", style="bold red")
+                    self._stall_counter = 0
+
+                elif action == "escalate":
+                    logger.warning(
+                        f"[Director] stall escalation: {plan.get('message', '')}"
+                    )
+                    await self._say("Stall detected — awaiting intervention.", style="bold red")
+                    await bus.emit(
+                        "director.stall_escalated",
+                        message=plan.get("message", ""),
+                    )
+                    # Counter intentionally NOT reset: the next round will
+                    # re-evaluate and may escalate again.
+
+                elif action == "none":
+                    # "wait" strategy: note it and keep spinning.
+                    logger.info(
+                        f"[Director] stall noted (policy=wait); counter "
+                        f"stays at {self._stall_counter}"
+                    )
         else:
             self._stall_counter = 0
 

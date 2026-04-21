@@ -67,6 +67,7 @@ from autonoma.db.users import (
     update_user_status,
 )
 from autonoma.event_bus import bus
+from autonoma.harness.policy import HarnessPolicyContent, default_policy_content
 from autonoma.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -387,11 +388,64 @@ def _unregister_event_bridge() -> None:
 
 # ── Swarm Runner ─────────────────────────────────────────────────────────
 
+
+async def _resolve_start_policy(
+    *,
+    user_id: str | None,
+    preset_id: Any,
+    overrides: Any,
+) -> tuple[HarnessPolicyContent | None, str | None]:
+    """Build the final HarnessPolicyContent for a ``start`` command.
+
+    Returns ``(content, None)`` on success, or ``(None, error_message)``
+    when the preset is not accessible or the merged content fails
+    validation. ``user_id`` is optional so callers that haven't yet
+    wired per-session auth (the WS path) can skip ownership checks —
+    when supplied, a non-default preset owned by another user yields
+    ``"preset not accessible"``.
+    """
+    from pydantic import ValidationError
+
+    from autonoma.db.harness_policies import get_policy_by_id
+
+    if preset_id is None:
+        base = default_policy_content().model_dump(mode="json")
+    else:
+        if not isinstance(preset_id, str) or not preset_id:
+            return None, "preset not accessible"
+        preset = await get_policy_by_id(preset_id)
+        if preset is None:
+            return None, "preset not accessible"
+        if (
+            not preset.is_default
+            and user_id is not None
+            and preset.owner_user_id != user_id
+        ):
+            return None, "preset not accessible"
+        base = preset.content.model_dump(mode="json")
+
+    if overrides is not None:
+        if not isinstance(overrides, dict):
+            return None, "invalid overrides"
+        # Per-section REPLACE: each top-level key swaps the whole
+        # sub-policy object. This matches the documented merge semantics
+        # and avoids a deep-merge subtlety where partial fields would
+        # conflict with pydantic's extra="forbid".
+        for section, value in overrides.items():
+            base[section] = value
+
+    try:
+        return HarnessPolicyContent(**base), None
+    except ValidationError:
+        return None, "invalid policy content"
+
+
 async def _run_swarm(
     session_id: int,
     goal: str,
     max_rounds: int = 30,
     llm_config: LLMConfig | None = None,
+    policy: HarnessPolicyContent | None = None,
 ) -> None:
     """Run the swarm for a single session in the background.
 
@@ -415,7 +469,7 @@ async def _run_swarm(
 
     name = goal.lower().replace(" ", "-")[:40]
     project = ProjectState(name=name, description=goal)
-    swarm = AgentSwarm(llm_config=llm_config)
+    swarm = AgentSwarm(policy=policy, llm_config=llm_config)
 
     session.swarm = swarm
     session.project = project
@@ -871,6 +925,254 @@ async def admin_reactivate_user(
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
+# ── /api/harness/presets/* ────────────────────────────────────────────
+
+_HARNESS_NAME_MIN = 1
+_HARNESS_NAME_MAX = 64
+
+
+def _pydantic_errors_to_fastapi(exc: Any) -> list[dict[str, Any]]:
+    """Convert a pydantic ValidationError to FastAPI's native error shape.
+
+    FastAPI renders ``RequestValidationError`` as
+    ``{"detail": [{"loc": [...], "msg": "...", "type": "..."}, ...]}`` —
+    we mirror that shape when rejecting ``HarnessPolicyContent(**body)``
+    so the frontend can reuse the same rendering path for both.
+    """
+    items: list[dict[str, Any]] = []
+    for err in exc.errors():
+        items.append(
+            {
+                "loc": list(err.get("loc", [])),
+                "msg": err.get("msg", ""),
+                "type": err.get("type", ""),
+            }
+        )
+    return items
+
+
+def _harness_policy_to_dict(policy: Any) -> dict[str, Any]:
+    return policy.model_dump(mode="json")
+
+
+@app.get("/api/harness/presets")
+async def list_harness_presets(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """List the caller's presets plus the system default preset."""
+    from autonoma.db.harness_policies import (
+        get_default_policy,
+        list_policies_for_user,
+    )
+
+    owned = await list_policies_for_user(user.id)
+    seen_ids = {p.id for p in owned}
+    # list_policies_for_user already includes the default when it exists,
+    # but we re-fetch and merge defensively in case the default was
+    # created after the user's rows (ordering quirks).
+    default = await get_default_policy()
+    presets = list(owned)
+    if default is not None and default.id not in seen_ids:
+        presets.append(default)
+    return {"presets": [_harness_policy_to_dict(p) for p in presets]}
+
+
+@app.get("/api/harness/presets/{preset_id}")
+async def get_harness_preset(
+    preset_id: str,
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    from autonoma.db.harness_policies import get_policy_by_id
+
+    preset = await get_policy_by_id(preset_id)
+    if preset is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="preset_not_found",
+        )
+    if not preset.is_default and preset.owner_user_id != user.id:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+    return _harness_policy_to_dict(preset)
+
+
+@app.post(
+    "/api/harness/presets",
+    status_code=http_status.HTTP_201_CREATED,
+)
+async def create_harness_preset(
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    from pydantic import ValidationError
+
+    from autonoma.db.harness_policies import create_policy
+
+    name = str(payload.get("name") or "").strip()
+    if not (_HARNESS_NAME_MIN <= len(name) <= _HARNESS_NAME_MAX):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=[
+                {
+                    "loc": ["body", "name"],
+                    "msg": (
+                        f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"
+                    ),
+                    "type": "value_error",
+                }
+            ],
+        )
+    content_raw = payload.get("content")
+    if not isinstance(content_raw, dict):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=[
+                {
+                    "loc": ["body", "content"],
+                    "msg": "content must be an object",
+                    "type": "type_error",
+                }
+            ],
+        )
+    try:
+        content = HarnessPolicyContent(**content_raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_pydantic_errors_to_fastapi(exc),
+        )
+    created = await create_policy(
+        owner_user_id=user.id,
+        name=name,
+        content=content,
+    )
+    return _harness_policy_to_dict(created)
+
+
+@app.put("/api/harness/presets/{preset_id}")
+async def update_harness_preset(
+    preset_id: str,
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    from pydantic import ValidationError
+
+    from autonoma.db.harness_policies import (
+        get_policy_by_id,
+        update_policy,
+    )
+
+    existing = await get_policy_by_id(preset_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="preset_not_found",
+        )
+    # Default preset is read-only; surface as 403 rather than letting the
+    # helper's ValueError escape as 500.
+    if existing.is_default:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+    if existing.owner_user_id != user.id:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+
+    new_name: str | None = None
+    if "name" in payload and payload["name"] is not None:
+        new_name = str(payload["name"]).strip()
+        if not (_HARNESS_NAME_MIN <= len(new_name) <= _HARNESS_NAME_MAX):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=[
+                    {
+                        "loc": ["body", "name"],
+                        "msg": (
+                            f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"
+                        ),
+                        "type": "value_error",
+                    }
+                ],
+            )
+
+    new_content: HarnessPolicyContent | None = None
+    if "content" in payload and payload["content"] is not None:
+        content_raw = payload["content"]
+        if not isinstance(content_raw, dict):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=[
+                    {
+                        "loc": ["body", "content"],
+                        "msg": "content must be an object",
+                        "type": "type_error",
+                    }
+                ],
+            )
+        try:
+            new_content = HarnessPolicyContent(**content_raw)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=_pydantic_errors_to_fastapi(exc),
+            )
+
+    try:
+        updated = await update_policy(
+            preset_id, name=new_name, content=new_content
+        )
+    except ValueError:
+        # Defense in depth: the explicit is_default check above should
+        # have caught this, but keep the translation in case the helper
+        # adds other ValueError paths.
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="preset_not_found",
+        )
+    return _harness_policy_to_dict(updated)
+
+
+@app.delete(
+    "/api/harness/presets/{preset_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def delete_harness_preset(
+    preset_id: str,
+    user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    from autonoma.db.harness_policies import delete_policy, get_policy_by_id
+
+    existing = await get_policy_by_id(preset_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="preset_not_found",
+        )
+    if existing.is_default or existing.owner_user_id != user.id:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+    try:
+        await delete_policy(preset_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="preset_forbidden",
+        )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
 def _cleanup_session(session_id: int) -> None:
     """Remove a session entry. Safe to call multiple times."""
     _sessions.pop(session_id, None)
@@ -1091,6 +1393,22 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     })
                 else:
                     max_rounds = msg.get("max_rounds", 30)
+
+                    # Resolve the harness policy for this run. Users may
+                    # pick a preset via ``preset_id`` and layer per-section
+                    # overrides on top (overrides REPLACE a whole section,
+                    # they don't merge per-field).
+                    policy_content, policy_err = await _resolve_start_policy(
+                        user_id=None,
+                        preset_id=msg.get("preset_id"),
+                        overrides=msg.get("overrides"),
+                    )
+                    if policy_err is not None:
+                        await manager.send_to_ws(ws, "error", {
+                            "message": policy_err,
+                        })
+                        continue
+
                     # Materialize a real room so other viewers can join via
                     # short code. ``room_id == session.session_id`` is
                     # preserved so the existing ContextVar routing keeps
@@ -1108,6 +1426,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             goal,
                             max_rounds,
                             llm_config=session.llm_config,
+                            policy=policy_content,
                         ),
                         context=ctx,
                     )

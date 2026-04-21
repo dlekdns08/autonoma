@@ -52,6 +52,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("loop.exit_condition", "max_rounds_only"),
         ("safety.code_execution", "sandbox"),
         ("safety.code_execution", "disabled"),
+        ("loop.stall_policy", "auto_unblock"),
+        ("loop.stall_policy", "wait"),
+        ("loop.stall_policy", "escalate_to_director"),
     }
 
     stubs = set(all_stubs())
