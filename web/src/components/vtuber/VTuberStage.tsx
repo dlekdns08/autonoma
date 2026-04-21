@@ -122,6 +122,21 @@ export default function VTuberStage({
     return () => clearTimeout(t);
   }, []);
 
+  // Dev warning when the cast grows past the safe-per-browser ceiling.
+  // Only the spotlight owns a Canvas (gallery tiles are 2D), so the hard
+  // ~16-context limit is fine here — but >12 agents on the gallery strip
+  // still taxes scroll and read-at-a-glance. Surface it in the console so
+  // a regression that puts a Canvas back into GalleryTile is obvious.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    if (agents.length > 12) {
+      console.warn(
+        `[VTuberStage] ${agents.length} agents — gallery strip may feel cramped; ` +
+          "keep GalleryTile free of WebGL Canvases to stay under the ~16-context ceiling.",
+      );
+    }
+  }, [agents.length]);
+
   // Sync external pin + trigger reveal flash when the forced agent changes.
   if (forcePinnedAgent != null && forcePinnedAgent !== prevForced) {
     setPrevForced(forcePinnedAgent);
