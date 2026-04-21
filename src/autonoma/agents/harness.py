@@ -389,31 +389,44 @@ HARNESS_REGISTRY: dict[str, AgentHarness] = {
 
 
 def get_harness(role_hint: str) -> AgentHarness:
-    """Match a role description to the best harness.
+    """Match a role description or agent name to the best harness.
 
     Falls back to CODER_HARNESS for unknown roles.
-    """
-    role_lower = role_hint.lower()
 
-    # Direct match
+    Matching priority:
+    1. Exact match on harness name (case-insensitive)
+    2. Keyword matching on the role string — more specific roles first to
+       prevent "test engineer" from matching "engineer" → coder before
+       "test" → tester
+    """
+    role_lower = role_hint.lower().replace("_", " ").replace("-", " ")
+
+    # Direct match against registry keys
     if role_lower in HARNESS_REGISTRY:
         return HARNESS_REGISTRY[role_lower]
 
-    # Keyword matching
-    # Order matters: more specific roles checked first to avoid
-    # "test engineer" matching "engineer" -> coder before "test" -> tester
-    keyword_map = {
-        "director": ["director", "manager", "lead", "orchestrat", "coordinat"],
-        "tester": ["tester", "test", "verif", "qa", "quality assurance", "validation"],
-        "reviewer": ["reviewer", "review", "audit", "inspect"],
-        "writer": ["writer", "document", "docs", "readme", "technical writ"],
-        "designer": ["designer", "architect", "design", "plan", "blueprint"],
-        "coder": ["coder", "engineer", "developer", "programmer", "implement", "coding", "backend", "frontend"],
-    }
+    # Keyword matching.  Each bucket lists substrings; we return the first
+    # harness whose *any* keyword appears in role_lower.
+    keyword_map: list[tuple[str, list[str]]] = [
+        # Director / orchestration — checked first (most distinct)
+        ("director", ["director", "manager", "lead", "orchestrat", "coordinat", "supervisor"]),
+        # Tester / verification — before coder so "test engineer" → tester
+        ("tester", ["tester", "testing", "test ", "verif", " qa", "quality assur", "validator", "validation", "adversar"]),
+        # Reviewer / critic — "critic", "review", "audit", "inspect", "evaluat"
+        ("reviewer", ["reviewer", "review", "critic", "audit", "inspect", "evaluat", "assess", "judge"]),
+        # Writer / documentation
+        ("writer", ["writer", "writing", "document", "docs", "readme", "technical writ", "editorial", "content creat", "narrator", "novel"]),
+        # Designer / architect — before coder so "design engineer" → designer
+        ("designer", ["designer", "architect", "design", "blueprint", "planner", "system plan", "story architect", "strategist"]),
+        # Coder — broad catch-all for implementation roles
+        ("coder", ["coder", "engineer", "developer", "programmer", "implement", "coding", "backend", "frontend", "fullstack", "builder"]),
+    ]
 
-    for harness_name, keywords in keyword_map.items():
+    for harness_name, keywords in keyword_map:
         if any(kw in role_lower for kw in keywords):
             return HARNESS_REGISTRY[harness_name]
 
-    # Default to coder
+    logger.info(
+        f"[get_harness] No keyword match for role '{role_hint}' — defaulting to CODER_HARNESS"
+    )
     return CODER_HARNESS
