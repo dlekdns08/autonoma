@@ -219,12 +219,13 @@ async def test_content_survives_json_round_trip(fresh_db) -> None:
     from autonoma.db.harness_policies import create_policy, get_policy_by_id
     from autonoma.harness.policy import default_policy_content
 
+    uid = await _make_user("dave")
     content = default_policy_content()
     content.routing.strategy = "round_robin"
     content.mood.weather_affect_probability = 0.75
     content.social.trading_post_interval = 9
 
-    created = await create_policy(owner_user_id="u", name="tweaked", content=content)
+    created = await create_policy(owner_user_id=uid, name="tweaked", content=content)
     fetched = await get_policy_by_id(created.id)
     assert fetched is not None
     assert fetched.content.routing.strategy == "round_robin"
