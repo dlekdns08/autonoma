@@ -45,4 +45,8 @@ def _permissive(agent_name: str, action_type: str, harness: Any) -> bool:
 
 @register("action.harness_enforcement", "off")
 def _off(agent_name: str, action_type: str, harness: Any) -> bool:
+    logger.debug(
+        f"[{agent_name}] harness_enforcement=off — skipping capability check "
+        f"for action '{action_type}' (harness: {harness.name})"
+    )
     return True
