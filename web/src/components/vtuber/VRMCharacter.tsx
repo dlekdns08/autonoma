@@ -944,15 +944,15 @@ function VRMModel({
     // for forearms in VRM space) should always be ≥ 0 on the left (extend
     // + flex) and ≤ 0 on the right (mirror).
     if (bones.leftLowerArm) {
-      const lLag = Math.sin(now * 0.52 + phase - 0.6) * 0.11;
-      const lFlex = Math.sin(now * 0.27 + phase + 1.4) * 0.08;
+      const lLag = Math.sin(now * 0.52 + phase - 0.6) * 0.09;
+      const lFlex = Math.sin(now * 0.27 + phase + 1.4) * 0.06;
       bones.leftLowerArm.rotation.z = Math.max(0, 0.15 + lLag + lFlex + lSecondary * 0.6);
       bones.leftLowerArm.rotation.y = Math.sin(now * 0.31 + phase + 1.0) * 0.055;
       bones.leftLowerArm.rotation.x = Math.sin(now * 0.22 + phase + 0.4) * 0.03;
     }
     if (bones.rightLowerArm) {
-      const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.10;
-      const rFlex = Math.sin(now * 0.31 + phase + 2.9) * 0.075;
+      const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.085;
+      const rFlex = Math.sin(now * 0.31 + phase + 2.9) * 0.06;
       bones.rightLowerArm.rotation.z = -Math.max(0, 0.15 + rLag + rFlex + rSecondary * 0.6);
       bones.rightLowerArm.rotation.y = -Math.sin(now * 0.36 + phase + 3.2) * 0.05;
       bones.rightLowerArm.rotation.x = Math.sin(now * 0.25 + phase + 2.4) * 0.028;
