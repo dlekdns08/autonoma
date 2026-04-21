@@ -471,7 +471,10 @@ Rules:
             return {"action": "idle", "speech": "Rate limited, waiting...", "thinking": "rate_limited"}
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"[{self.name}] Failed to parse LLM response: {e}")
-            return {"action": "idle", "speech": "Couldn't parse my thoughts...", "thinking": "parse_error"}
+            handler = _strategy_lookup(
+                "decision.on_parse_failure", self.policy.decision.on_parse_failure
+            )
+            return handler(e, self.name)
         except Exception as e:
             logger.error(f"[{self.name}] Unexpected error in decide: {e}")
             return {"action": "idle", "speech": f"Error: {str(e)[:30]}", "thinking": "error"}

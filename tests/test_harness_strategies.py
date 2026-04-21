@@ -61,6 +61,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("action.json_extraction", "direct"),
         ("action.json_extraction", "fenced_first"),
         ("action.json_extraction", "fallback_chain"),
+        ("decision.on_parse_failure", "skip_turn"),
+        ("decision.on_parse_failure", "force_idle"),
+        ("decision.on_parse_failure", "abort"),
     }
 
     stubs = set(all_stubs())
