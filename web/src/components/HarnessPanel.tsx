@@ -552,10 +552,12 @@ export default function HarnessPanel({
   );
 
   const [prevBase, setPrevBase] = useState<HarnessContent | null>(null);
-  if (schema && base !== prevBase) {
-    setPrevBase(base);
-    setWorking(base);
-  }
+  useEffect(() => {
+    if (schema && base !== prevBase) {
+      setPrevBase(base);
+      setWorking(base);
+    }
+  }, [base, schema, prevBase]);
 
   const modifiedSections = useMemo(() => {
     const out = new Set<string>();
