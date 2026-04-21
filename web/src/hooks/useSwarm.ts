@@ -1058,8 +1058,42 @@ export function useSwarm() {
     setState(INITIAL_STATE);
     setEmotes({});
     setSandboxMetrics(INITIAL_SANDBOX_METRICS);
+    setCheckpoints([]);
     voiceRef.current.reset();
   }, []);
+
+  /** Resume a previous run from a saved checkpoint. */
+  const resumeFromCheckpoint = useCallback(
+    async (sessionId: string, checkpointId: string): Promise<void> => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/session/${sessionId}/resume`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checkpoint_id: checkpointId }),
+          },
+        );
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+          const detail = (body.detail as string) ?? `HTTP ${res.status}`;
+          addToast("info", "Resume Failed", detail, "✕");
+          return;
+        }
+        // Reset local state so the resumed run starts fresh in the UI.
+        setState(INITIAL_STATE);
+        setEmotes({});
+        setSandboxMetrics(INITIAL_SANDBOX_METRICS);
+        setCheckpoints([]);
+        voiceRef.current.reset();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast("info", "Resume Failed", msg, "✕");
+      }
+    },
+    [addToast],
+  );
 
   useEffect(() => {
     connect();
