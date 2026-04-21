@@ -557,6 +557,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
       reset,
       speakText,
       markSpeakingFromText,
+      requestSpeak,
+      cleanupAgent,
     }),
     [
       pushAudioEvent,
@@ -565,6 +567,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
       reset,
       speakText,
       markSpeakingFromText,
+      requestSpeak,
+      cleanupAgent,
     ],
   );
 }
