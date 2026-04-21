@@ -628,8 +628,16 @@ function VRMModel({
           stateRef.current.gestureStart = performance.now() / 1000;
         }
       }, 400 + Math.random() * 800);
+      // First beat fires early (1.2–2.2s) so medium-length utterances get
+      // at least one gesture besides the initial wave. Subsequent beats
+      // settle into the 3–5s cadence — longer intervals keep idle arm
+      // motion visible between clips.
+      let firstBeat = true;
       const scheduleBeat = () => {
-        const delay = 3000 + Math.random() * 2000; // 3-5s
+        const delay = firstBeat
+          ? 1200 + Math.random() * 1000
+          : 3000 + Math.random() * 2000;
+        firstBeat = false;
         timer = window.setTimeout(() => {
           if (cancelled) return;
           if (Math.random() < 0.25) {
