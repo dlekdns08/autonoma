@@ -418,6 +418,113 @@ Rules:
             fallback += f"\n## 남은 이슈\n미완료 태스크 {len(tasks_open)}개\n"
         return fallback
 
+    async def _check_for_conflicts(self, project: ProjectState) -> None:
+        """Detect and resolve conflicts via DebateArena (Feature 20).
+
+        Heuristic: two different agents referenced the same file path in
+        messages sent during the same round. When such a conflict is found,
+        DebateArena resolves it and the disputed task is assigned to the winner.
+        """
+        from autonoma.world import DebateArena
+
+        # DebateArena lives on the swarm; pull it from the swarm if we can
+        # reach it, otherwise build a local one (unit-test / standalone paths).
+        arena: DebateArena | None = getattr(self, "_swarm_debate_arena", None)
+        if arena is None:
+            arena = DebateArena()
+
+        relationships = getattr(self, "_swarm_relationships", None)
+
+        # Collect file paths mentioned in the most recent messages.
+        import re as _re
+        path_pattern = _re.compile(r"[\w./\-]+\.[a-zA-Z]{1,6}")
+
+        file_to_senders: dict[str, list[str]] = {}
+        for msg in project.messages[-30:]:
+            sender = msg.sender
+            if sender == "Director":
+                continue
+            for match in path_pattern.finditer(msg.content):
+                path = match.group()
+                file_to_senders.setdefault(path, [])
+                if sender not in file_to_senders[path]:
+                    file_to_senders[path].append(sender)
+
+        # A conflict exists when 2+ different agents mention the same path.
+        for file_path, senders in file_to_senders.items():
+            if len(senders) < 2:
+                continue
+
+            proposer, opponent = senders[0], senders[1]
+            audience = senders[2:]
+
+            logger.info(
+                f"[Director] Conflict detected over '{file_path}': "
+                f"proposer={proposer}, opponent={opponent}"
+            )
+
+            await bus.emit(
+                "debate.started",
+                participants=[proposer, opponent],
+                topic=file_path,
+                round=self._round_number,
+            )
+
+            debate = arena.start_debate(
+                topic=f"Who should implement {file_path}?",
+                proposer=proposer,
+                opponent=opponent,
+                audience=audience,
+                round_number=self._round_number,
+            )
+
+            # Resolve by trust score from RelationshipGraph if available.
+            winner: str | None = None
+            if relationships is not None:
+                try:
+                    p_trust = relationships.get(proposer, "Director").trust
+                    o_trust = relationships.get(opponent, "Director").trust
+                    if p_trust >= o_trust:
+                        debate.votes[proposer] = "proposer"
+                        winner = proposer
+                    else:
+                        debate.votes[opponent] = "opponent"
+                        winner = opponent
+                except Exception:
+                    pass
+
+            if winner is None:
+                import random as _random
+                winner = _random.choice([proposer, opponent])
+                debate.votes[winner] = "proposer" if winner == proposer else "opponent"
+
+            outcome = debate.resolve()
+            logger.info(
+                f"[Director] Debate resolved: winner={winner}, outcome={outcome.value}"
+            )
+
+            await bus.emit(
+                "debate.resolved",
+                participants=[proposer, opponent],
+                topic=file_path,
+                winner=winner,
+                outcome=outcome.value,
+                round=self._round_number,
+            )
+
+            # Assign the disputed task to the winner if it's still open.
+            for task in project.tasks:
+                if (
+                    file_path in task.description
+                    and task.assigned_to in (proposer, opponent)
+                    and task.assigned_to != winner
+                ):
+                    task.assigned_to = winner
+                    logger.info(
+                        f"[Director] Disputed task '{task.title}' "
+                        f"reassigned to winner={winner}"
+                    )
+
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
         """Director's special loop: monitor, assign, and manage."""
         await self._set_state(AgentState.THINKING)
