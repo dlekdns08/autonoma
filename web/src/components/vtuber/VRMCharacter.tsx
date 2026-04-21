@@ -148,28 +148,23 @@ const GESTURES: Record<
   wave: {
     duration: 1.9,
     apply: (t, b, env) => {
-      // Classic greeting wave: upper arm raises up-and-slightly-forward,
-      // elbow bends ~90° so the hand ends near the side of the head, and
-      // the forearm oscillates side-to-side with the hand joining in so
-      // the palm reads as waving rather than the forearm just twisting.
-      // rightUpperArm base is -1.15 (arm hanging); +1.75 takes it above
-      // horizontal and well clear of the chest.
+      // |_ silhouette: upper arm stays hanging at the side, forearm
+      // flexes ~90° so it points forward, and the shoulder twists
+      // around the arm's vertical axis to sweep the hand side-to-side.
+      // Previously the oscillation lived on the forearm's own twist
+      // axis (rotation.y) which rotated the forearm around its length
+      // instead of swinging the hand — it read as "the arm is spinning"
+      // rather than "waving".
+      const osc = Math.sin(t * Math.PI * 4); // ~2 full wave cycles
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.75;
-        b.rightUpperArm.rotation.x -= env * 0.55;
+        b.rightUpperArm.rotation.z += env * 0.2; // slight outward lift
+        b.rightUpperArm.rotation.y += env * osc * 0.6; // the actual wave
       }
-      const osc = Math.sin(t * Math.PI * 4); // ~2 full waves over the clip
       if (b.rightLowerArm) {
-        // Bend the elbow so the hand is up by the head, then rock it
-        // side-to-side on the forearm twist axis.
-        b.rightLowerArm.rotation.z -= env * 0.95;
-        b.rightLowerArm.rotation.y += env * osc * 0.85;
+        b.rightLowerArm.rotation.z -= env * 1.45; // elbow to ~90°
       }
-      // Hand reinforces the oscillation — wrist roll + small abduction
-      // so the palm clearly waves instead of staying locked to the forearm.
       if (b.rightHand) {
-        b.rightHand.rotation.z += env * osc * 0.45;
-        b.rightHand.rotation.y += env * osc * 0.25;
+        b.rightHand.rotation.z += env * osc * 0.35;
       }
     },
   },
@@ -180,23 +175,20 @@ const GESTURES: Record<
   greet: {
     duration: 2.6,
     apply: (t, b, env) => {
-      if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.95;
-        b.rightUpperArm.rotation.x -= env * 0.7;
-        // Slight outward twist opens the chest to the viewer.
-        b.rightUpperArm.rotation.y -= env * 0.25;
-      }
+      // Longer, more pronounced version of `wave`. Same |_ pose
+      // principle — arm at the side, forearm raised, shoulder twist
+      // drives the swing — plus a head tilt + chest lean for energy.
       const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 0.3;
+        b.rightUpperArm.rotation.y += env * osc * 0.75;
+      }
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.z -= env * 1.1;
-        b.rightLowerArm.rotation.y += env * osc * 1.0;
+        b.rightLowerArm.rotation.z -= env * 1.6;
       }
       if (b.rightHand) {
-        b.rightHand.rotation.z += env * osc * 0.55;
-        b.rightHand.rotation.y += env * osc * 0.3;
+        b.rightHand.rotation.z += env * osc * 0.45;
       }
-      // Slight head tilt toward the waving side + a small smile-forward
-      // chest lean — sells the "hey!" energy.
       if (b.head) b.head.rotation.z -= env * 0.06;
       if (b.chest) b.chest.rotation.x -= env * 0.04;
     },
