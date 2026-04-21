@@ -1410,12 +1410,20 @@ class AgentSwarm:
             if self.boss_arena.current_boss.phase.value == "defeated":
                 boss = self.boss_arena.current_boss
                 xp_reward = boss.drops.get("xp", 50)
+                # Apply scaled rewards computed from the boss's HP difficulty.
+                scaled_rewards = self.boss_arena.get_defeat_rewards()
+                bonus_xp = scaled_rewards.get("xp_bonus", 0)
                 for name in agent_names:
                     agent = self.agents.get(name)
                     if agent:
-                        agent.stats.add_xp(xp_reward)
+                        agent.stats.add_xp(xp_reward + bonus_xp)
                         await agent._set_mood(Mood.EXCITED)
-                await bus.emit("boss.defeated", name=boss.name, xp_reward=xp_reward)
+                await bus.emit(
+                    "boss.defeated",
+                    name=boss.name,
+                    xp_reward=xp_reward + bonus_xp,
+                    rarity_boost=scaled_rewards.get("rarity_boost", 0.0),
+                )
                 self.multiverse.record_branch(
                     self._round, f"Defeated {boss.name}!",
                     "Team victory!", "Boss escaped", "boss_defeated",
