@@ -584,8 +584,15 @@ Rules:
         content = decision.get("file_content", "")
         desc = decision.get("file_description", "")
 
-        # Sanitize path - prevent directory traversal
-        path = path.lstrip("/").replace("..", "")
+        # Sanitize path — prevent directory traversal and injection.
+        import os as _os
+        # Collapse any ../ traversal sequences and strip leading slashes/dots.
+        path = _os.path.normpath(path).lstrip("/").lstrip(".")
+        # Remove null bytes and ASCII control characters.
+        path = re.sub(r'[\x00-\x1f\x7f]', '', path)
+        # Prevent deeply nested paths (cap at 5 directory levels).
+        _parts = [p for p in path.split("/") if p and p != "."]
+        path = "/".join(_parts[:5]) or "untitled.py"
 
         artifact = FileArtifact(
             path=path, content=content, created_by=self.name, description=desc
