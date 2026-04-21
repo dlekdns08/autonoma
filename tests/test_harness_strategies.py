@@ -76,6 +76,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("memory.summarization", "none"),
         ("memory.summarization", "tail_window"),
         ("memory.summarization", "rolling_summary"),
+        ("safety.enforcement_level", "strict"),
+        ("safety.enforcement_level", "permissive"),
+        ("safety.enforcement_level", "off"),
     }
 
     stubs = set(all_stubs())

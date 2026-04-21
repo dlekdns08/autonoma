@@ -26,6 +26,7 @@ from autonoma.harness import (  # noqa: F401 — triggers @register
     llm_error_strategies as _llm_error_strategies,
     memory_strategies as _memory_strategies,
     message_strategies as _message_strategies,
+    safety_enforcement_strategies as _safety_enforcement_strategies,
     safety_strategies as _safety_strategies,
 )
 from autonoma.harness.policy import HarnessPolicyContent
@@ -210,6 +211,17 @@ class AutonomousAgent:
 
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
         """Main autonomous loop: observe state, decide action, execute it."""
+        circuit = _strategy_lookup(
+            "safety.enforcement_level", self.policy.safety.enforcement_level
+        )(
+            self._consecutive_errors,
+            self.policy.safety.kill_on_repeat_failure,
+            self.name,
+        )
+        if circuit is not None:
+            await self._set_state(AgentState.ERROR)
+            return circuit
+
         await self._set_state(AgentState.THINKING)
         await self._say("Hmm, let me think...", style="italic dim")
 
