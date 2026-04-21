@@ -288,7 +288,7 @@ export default function VTuberStage({
              *           track. We switch rather than stack so the two
              *           renderings never overlap. */}
             {spotlightAgent.speech && !useSubtitles && (
-              <div className="pointer-events-none absolute inset-x-3 bottom-10 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-3 bottom-10 z-40 flex justify-center">
                 <div
                   key={`speech-${spotlightAgent.speech}`}
                   className="max-w-full rounded-xl border border-fuchsia-500/40 bg-black/80 px-3 py-2 text-center font-mono text-sm text-fuchsia-100 shadow-[0_4px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm animate-[bubble-in_280ms_ease-out]"
@@ -298,7 +298,7 @@ export default function VTuberStage({
               </div>
             )}
             {spotlightAgent.speech && useSubtitles && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-6 pb-4">
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-6 pb-4">
                 <div
                   key={`subs-${spotlightAgent.speech}`}
                   className="max-w-[min(720px,92%)] rounded-md bg-black/85 px-5 py-2.5 text-center font-mono text-[15px] leading-snug text-white shadow-[0_4px_24px_rgba(0,0,0,0.6)] backdrop-blur-sm animate-[bubble-in_240ms_ease-out]"
