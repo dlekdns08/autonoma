@@ -11,6 +11,19 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     model_config = {"env_prefix": "AUTONOMA_", "env_file": ".env"}
 
+    # ── Deployment environment ──
+    # ``development`` expands the default CORS allow-list to include
+    # localhost:3000/3478 so the local dev server and docker-compose web
+    # container both work out of the box. ``production`` ships NO
+    # defaults — the operator must supply ``cors_allow_origins`` as a
+    # comma-separated list.
+    environment: Literal["development", "production"] = "production"
+
+    # Comma-separated list of origins to allow. Always merged with the
+    # environment default above; wildcards are not supported to keep
+    # ``allow_credentials=True`` safe.
+    cors_allow_origins: str = ""
+
     # ── Admin account ──
     # Set this to enable an admin login that can use server-side API keys.
     # If empty, everyone must supply their own key.
