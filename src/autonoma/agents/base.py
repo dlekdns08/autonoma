@@ -22,6 +22,7 @@ from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — triggers @register
     action_strategies as _action_strategies,
+    enforcement_strategies as _enforcement_strategies,
     llm_error_strategies as _llm_error_strategies,
     message_strategies as _message_strategies,
     safety_strategies as _safety_strategies,
@@ -226,7 +227,10 @@ class AutonomousAgent:
         action_type = decision.get("action", "idle")
 
         # ── Harness enforcement: block disallowed actions (config-level) ──
-        if not self.harness.can_perform(action_type):
+        enforcer = _strategy_lookup(
+            "action.harness_enforcement", self.policy.action.harness_enforcement
+        )
+        if not enforcer(self.name, action_type, self.harness):
             logger.warning(
                 f"[{self.name}] Harness blocked action '{action_type}' "
                 f"(not in allowed capabilities for {self.harness.name})"

@@ -70,6 +70,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("action.llm_error_handling", "backoff"),
         ("action.llm_error_handling", "rate_limit_sleep"),
         ("action.llm_error_handling", "abort"),
+        ("action.harness_enforcement", "strict"),
+        ("action.harness_enforcement", "permissive"),
+        ("action.harness_enforcement", "off"),
     }
 
     stubs = set(all_stubs())

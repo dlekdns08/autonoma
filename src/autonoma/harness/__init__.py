@@ -30,6 +30,7 @@ from autonoma.harness import action_strategies as _action_strategies  # noqa: F4
 from autonoma.harness import decision_strategies as _decision_strategies  # noqa: F401
 from autonoma.harness import message_strategies as _message_strategies  # noqa: F401
 from autonoma.harness import llm_error_strategies as _llm_error_strategies  # noqa: F401
+from autonoma.harness import enforcement_strategies as _enforcement_strategies  # noqa: F401
 
 __all__ = [
     "ActionPolicy",
