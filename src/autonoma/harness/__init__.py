@@ -35,6 +35,7 @@ from autonoma.harness import memory_strategies as _memory_strategies  # noqa: F4
 from autonoma.harness import (  # noqa: F401
     safety_enforcement_strategies as _safety_enforcement_strategies,
 )
+from autonoma.harness import mood_strategies as _mood_strategies  # noqa: F401
 
 __all__ = [
     "ActionPolicy",

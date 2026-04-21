@@ -79,6 +79,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("safety.enforcement_level", "strict"),
         ("safety.enforcement_level", "permissive"),
         ("safety.enforcement_level", "off"),
+        ("mood.transition_strategy", "sticky"),
+        ("mood.transition_strategy", "reactive"),
+        ("mood.transition_strategy", "random_walk"),
     }
 
     stubs = set(all_stubs())
@@ -90,18 +93,13 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
     assert stubs == slots - IMPLEMENTED
 
 
-def test_stub_raises_not_implemented_when_called() -> None:
-    """Pick any slot that's still a stub (implementations land one
-    section at a time; pick one from the remaining pool so this test
-    doesn't need updating on every section)."""
-    from autonoma.harness.strategies import all_stubs, lookup
+def test_no_stubs_remain() -> None:
+    """Phase 3 is complete — every registry slot must resolve to a
+    real implementation. Any stub that sneaks back in via a new policy
+    enum value with no matching @register will fail here."""
+    from autonoma.harness.strategies import all_stubs
 
-    stubs = all_stubs()
-    assert stubs, "no stubs left — Phase 3 is done; retire this test"
-    section, value = stubs[0]
-    fn = lookup(section, value)
-    with pytest.raises(NotImplementedError, match=f"{section}.*{value}"):
-        fn()
+    assert all_stubs() == []
 
 
 def test_lookup_missing_slot_raises_keyerror() -> None:
@@ -120,29 +118,20 @@ def test_register_unknown_slot_raises() -> None:
             return None
 
 
-def test_register_replaces_stub_and_lookup_returns_impl() -> None:
-    """Phase 3 uses @register to swap stubs for real implementations.
-    Exercise the round-trip with a throwaway slot.
-
-    The registry is a module-level singleton so we restore the original
-    entry at the end to avoid bleed into other tests."""
+def test_register_replaces_entry_and_lookup_returns_new_impl() -> None:
+    """@register must overwrite the current registry entry and lookup
+    returns the new callable. Uses an arbitrary slot and restores the
+    original after, so this test doesn't bleed state into others."""
     from autonoma.harness import strategies as s
 
-    # Pick any still-stubbed slot — that way this test doesn't need
-    # updating every time a section gets implemented.
-    stubs = s.all_stubs()
-    assert stubs, "no stubs left — pick an implemented slot or retire this test"
-    slot = stubs[0]
+    slot = s.all_slots()[0]
     original = s.lookup(*slot)
     try:
         @s.register(*slot)
-        def _impl(label: str = "hit") -> str:
-            return label
+        def _impl(*args, **kwargs) -> str:
+            return "swapped"
 
-        got = s.lookup(*slot)
-        assert got("OK") == "OK"
-        assert s.is_stub(*slot) is False
+        assert s.lookup(*slot) is _impl
     finally:
-        # restore stub so this test doesn't poison the completeness check
         s._REGISTRY[slot] = original
-        assert s.is_stub(*slot) is True
+        assert s.lookup(*slot) is original

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,7 @@ from autonoma.harness import (  # noqa: F401 — triggers @register
     llm_error_strategies as _llm_error_strategies,
     memory_strategies as _memory_strategies,
     message_strategies as _message_strategies,
+    mood_strategies as _mood_strategies,
     safety_enforcement_strategies as _safety_enforcement_strategies,
     safety_strategies as _safety_strategies,
 )
@@ -165,6 +167,7 @@ class AutonomousAgent:
         self._history: list[dict[str, str]] = []
         self._total_tokens = 0
         self._consecutive_errors = 0
+        self._mood_rng = random.Random()
 
         # ── World System ──
         self.bones = AgentBones.from_role(persona.role, persona.name)
@@ -289,6 +292,11 @@ class AutonomousAgent:
             self.mood = Mood.FRUSTRATED
             self.memory.remember(f"Error in {action_type}: {str(e)[:60]}", "failure", self._round_number)
             result = {"agent": self.name, "action": "error", "error": str(e)}
+
+        mood_fn = _strategy_lookup(
+            "mood.transition_strategy", self.policy.mood.transition_strategy
+        )
+        self.mood = mood_fn(self.mood, result, self._mood_rng)
 
         return result
 
