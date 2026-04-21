@@ -656,8 +656,19 @@ TIER_EMOJIS = {
 
 
 def check_achievements(stats: AgentStats) -> list[str]:
+    """Check which achievements are newly earned and award XP.
+
+    Double-call safety: `stats.achievements` is mutated in-place before
+    this function returns, so a subsequent call on the **same** stats
+    object (e.g. from both _update_world_stats in swarm.py and
+    _check_and_emit_achievements in base.py) will find each ach_id
+    already present and skip it.  This prevents double-XP as long as
+    both callers share the same AgentStats instance (which they do —
+    agent.stats is a single object per agent).
+    """
     newly_earned: list[str] = []
     for ach_id, ach in ACHIEVEMENTS.items():
+        # Guard: skip achievements already recorded on this stats object.
         if ach_id not in stats.achievements and ach["check"](stats):
             stats.achievements.append(ach_id)
             newly_earned.append(ach_id)
