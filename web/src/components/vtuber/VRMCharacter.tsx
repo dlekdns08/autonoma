@@ -161,16 +161,14 @@ const GESTURES: Record<
       // the body instead of up toward the head.
       const osc = Math.sin(t * Math.PI * 4); // ~2 full wave cycles
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.75;
-        // Positive-x tilts the raised upper arm FORWARD (toward the
-        // viewer). Negative-x tilts it behind the shoulder, which when
-        // combined with positive forearm flex sends the whole wave
-        // motion behind the character's head.
-        b.rightUpperArm.rotation.x += env * 0.55;
-        // Negative sign so the shoulder twist sweeps the raised forearm
-        // forward (toward the viewer) on the positive half of the osc,
-        // matching the direction of a natural "hello" wave. Positive
-        // here swung the hand backward behind the shoulder.
+        // Shoulder flexion (rotation.x) is the primary raise axis for a
+        // greeting wave — the arm lifts FORWARD and up from the hip,
+        // not sideways. rotation.z (abduction) is kept small, just
+        // enough to clear the arm from the torso. The previous version
+        // swapped these which produced a T-pose-style sideways raise
+        // instead of a front-facing hello.
+        b.rightUpperArm.rotation.z += env * 0.35;
+        b.rightUpperArm.rotation.x += env * 1.35;
         b.rightUpperArm.rotation.y -= env * osc * 0.5;
       }
       if (b.rightLowerArm) {
@@ -200,11 +198,10 @@ const GESTURES: Record<
       // bigger shoulder-twist sweep, plus a head tilt and chest lean.
       const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.95;
-        // See `wave` — positive-x tilts the raised arm forward.
-        b.rightUpperArm.rotation.x += env * 0.7;
-        // See `wave` — negative so the swing goes forward on the positive
-        // half of the oscillation.
+        // See `wave` — shoulder flexion (x) is the primary raise axis;
+        // abduction (z) is minimal.
+        b.rightUpperArm.rotation.z += env * 0.45;
+        b.rightUpperArm.rotation.x += env * 1.5;
         b.rightUpperArm.rotation.y -= env * osc * 0.65;
       }
       if (b.rightLowerArm) {
