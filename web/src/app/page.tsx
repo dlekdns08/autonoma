@@ -113,6 +113,7 @@ function Dashboard() {
     emotes, getMouthAmplitude,
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
+    lastRunFieldPaths,
   } = useSwarm();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
   // Pixel → VTuber transition state
@@ -150,7 +151,11 @@ function Dashboard() {
         <Starfield intensity={0.3} />
         <Header projectName="" round={0} maxRounds={0} sky="" connected={connected} />
         <main className="flex-1 relative z-10">
-          <IdleScreen connected={connected && !needsAuth} onStart={startSwarm} />
+          <IdleScreen
+            connected={connected && !needsAuth}
+            onStart={startSwarm}
+            lastRunFieldPaths={lastRunFieldPaths}
+          />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         {needsAuth && authState.status !== "unknown" && (
