@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import HarnessPanel, { type HarnessStartPayload } from "@/components/HarnessPanel";
+import TemplateSelector from "@/components/TemplateSelector";
 
 const FACES = ["(^_^)", "(o.o)", "(-_-)", "(>.<)", "(*^*)"];
 const SPARKLES = ["✦", "✧", "★", "☆", "♥", "♡", "♪"];
 
 interface Props {
   connected: boolean;
-  onStart: (goal: string, opts?: HarnessStartPayload) => void;
+  onStart: (goal: string, opts?: HarnessStartPayload & { template_id?: string }) => void;
   /** Field paths that were active in the previous run — the Pipeline
    *  view pulses these nodes so users can see what the last run touched
    *  before they tweak settings for the next one. */
@@ -25,6 +26,7 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
   // customised, and so hitting Enter after closing the panel still
   // applies the pending tweaks on start.
   const [pendingHarness, setPendingHarness] = useState<HarnessStartPayload>({});
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setFrame((f) => f + 1), 1000);
@@ -35,8 +37,8 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
     const trimmed = goal.trim();
     if (!trimmed || !connected) return;
     setStarting(true);
-    onStart(trimmed, pendingHarness);
-  }, [goal, connected, onStart, pendingHarness]);
+    onStart(trimmed, { ...pendingHarness, ...(selectedTemplate ? { template_id: selectedTemplate } : {}) });
+  }, [goal, connected, onStart, pendingHarness, selectedTemplate]);
 
   const handleApplyHarness = useCallback((payload: HarnessStartPayload) => {
     setPendingHarness(payload);
@@ -49,9 +51,9 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
     const trimmed = goal.trim();
     if (trimmed && connected) {
       setStarting(true);
-      onStart(trimmed, payload);
+      onStart(trimmed, { ...payload, ...(selectedTemplate ? { template_id: selectedTemplate } : {}) });
     }
-  }, [goal, connected, onStart]);
+  }, [goal, connected, onStart, selectedTemplate]);
 
   const face = FACES[frame % FACES.length];
   const sparkle = SPARKLES[frame % SPARKLES.length];
@@ -74,6 +76,13 @@ export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Pr
       <div className="text-6xl font-mono text-fuchsia-300 animate-bounce">{face}</div>
 
       <div className="w-full max-w-lg px-4">
+        <div className="mb-2 flex justify-start">
+          <TemplateSelector
+            selectedId={selectedTemplate}
+            onSelect={setSelectedTemplate}
+            disabled={!connected || starting}
+          />
+        </div>
         <div className="flex gap-2">
           <input
             type="text"
