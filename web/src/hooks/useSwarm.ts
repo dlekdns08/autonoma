@@ -366,6 +366,12 @@ export function useSwarm() {
             addToast("fortune", "Fortune Cookie!", `${name}: ${data.fortune}`, "🥠");
             break;
           }
+          case "fortune.pickup": {
+            const name = data.agent as string | undefined;
+            if (!name) break;
+            addToast("fortune", "Fortune Opened!", `${name}: ${data.fortune}`, "🥠");
+            break;
+          }
           case "ghost.appears":
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
             break;
@@ -639,6 +645,18 @@ export function useSwarm() {
               );
               break;
             }
+
+            case "fortune.pickup": {
+              const agentName = data.agent as string | undefined;
+              const bonus = (data.bonus_xp as number) || 0;
+              if (!agentName || !bonus) break;
+              next.agents = prev.agents.map((a) =>
+                a.name === agentName
+                  ? { ...a, xp: Math.min(a.xp + bonus, a.xp_to_next) }
+                  : a,
+              );
+              break;
+            }
           }
 
           return next;
@@ -707,22 +725,33 @@ export function useSwarm() {
     setAuthState((prev) => ({ ...prev, status: "required", isAdmin: false, provider: null, model: null, error: null }));
   }, []);
 
-  /** Locally mark a fortune cookie as collected when the agent reaches it. */
-  const collectCookie = useCallback((recipient: string) => {
-    setState((prev) => {
-      if (!prev.cookies.find((c) => c.recipient === recipient && c.openedAt === undefined)) {
-        return prev;
-      }
-      return {
-        ...prev,
-        cookies: prev.cookies.map((c) =>
-          c.recipient === recipient && c.openedAt === undefined
-            ? { ...c, openedAt: Date.now() }
-            : c,
-        ),
-      };
-    });
+  const pickupCookie = useCallback((recipient: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ command: "pickup_cookie", recipient }));
   }, []);
+
+  /** Locally mark a fortune cookie as collected when the agent reaches it. */
+  const collectCookie = useCallback(
+    (recipient: string) => {
+      // Notify the server first so the bus event fires even if the optimistic
+      // local state update is superseded by a race with fortune.fulfilled.
+      pickupCookie(recipient);
+      setState((prev) => {
+        if (!prev.cookies.find((c) => c.recipient === recipient && c.openedAt === undefined)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          cookies: prev.cookies.map((c) =>
+            c.recipient === recipient && c.openedAt === undefined
+              ? { ...c, openedAt: Date.now() }
+              : c,
+          ),
+        };
+      });
+    },
+    [pickupCookie],
+  );
 
   const sendMessage = useCallback((message: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
