@@ -468,8 +468,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
       // cancels the pending timer) usually wins the race on setups that
       // have server TTS configured.
       const prior = pendingWebSpeechRef.current.get(agentName);
-      if (prior) clearTimeout(prior);
-      const t = setTimeout(() => {
+      if (prior !== undefined) window.clearTimeout(prior);
+      const t = window.setTimeout(() => {
         pendingWebSpeechRef.current.delete(agentName);
         speakText(agentName, text);
       }, 400);
