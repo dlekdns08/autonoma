@@ -1029,6 +1029,7 @@ export function useSwarm() {
       opts?: {
         preset_id?: string;
         overrides?: Record<string, Record<string, unknown>>;
+        template_id?: string;
       },
     ) => {
       if (wsRef.current?.readyState !== WebSocket.OPEN) return;
@@ -1037,6 +1038,7 @@ export function useSwarm() {
       if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
         payload.overrides = opts.overrides;
       }
+      if (opts?.template_id) payload.template_id = opts.template_id;
       wsRef.current.send(JSON.stringify(payload));
     },
     [],
@@ -1177,5 +1179,7 @@ export function useSwarm() {
     joinRoom,
     lastRunFieldPaths,
     sandboxMetrics,
+    checkpoints,
+    resumeFromCheckpoint,
   };
 }
