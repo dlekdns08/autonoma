@@ -101,12 +101,27 @@ const INITIAL_AUTH: AuthState = {
   serverModel: null,
 };
 
+interface SandboxMetrics {
+  runs: number;
+  failures: number;
+  timeouts: number;
+  totalDurationMs: number;
+}
+
+const INITIAL_SANDBOX_METRICS: SandboxMetrics = {
+  runs: 0,
+  failures: 0,
+  timeouts: 0,
+  totalDurationMs: 0,
+};
+
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authState, setAuthState] = useState<AuthState>(INITIAL_AUTH);
+  const [sandboxMetrics, setSandboxMetrics] = useState<SandboxMetrics>(INITIAL_SANDBOX_METRICS);
   // Per-connection session id issued by the backend on auth.status. Every
   // HTTP download route requires it so concurrent users stay isolated.
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -388,6 +403,7 @@ export function useSwarm() {
           const agent = (data.agent as string) || "Agent";
           const language = (data.language as string) || "code";
           addToast("info", "Running Code", `${agent} is running ${language} code...`, "▶");
+          setSandboxMetrics((prev) => ({ ...prev, runs: prev.runs + 1 }));
           return;
         }
 
@@ -397,7 +413,14 @@ export function useSwarm() {
           const exitCode = (data.exit_code as number) ?? 0;
           const ok = !!(data.ok);
           const timedOut = !!(data.timed_out);
+          const duration = typeof data.duration === "number" ? data.duration : 0;
           void language;
+          setSandboxMetrics((prev) => ({
+            ...prev,
+            failures: prev.failures + (!ok ? 1 : 0),
+            timeouts: prev.timeouts + (timedOut ? 1 : 0),
+            totalDurationMs: prev.totalDurationMs + duration * 1000,
+          }));
           if (ok) {
             addToast("info", "Code Finished", `${agent} code ran OK`, "✓");
           } else if (timedOut) {
@@ -1010,6 +1033,7 @@ export function useSwarm() {
     // backend until the next auth.status round-trip.
     setState(INITIAL_STATE);
     setEmotes({});
+    setSandboxMetrics(INITIAL_SANDBOX_METRICS);
     voiceRef.current.reset();
   }, []);
 
@@ -1094,5 +1118,6 @@ export function useSwarm() {
     setDisplayName,
     joinRoom,
     lastRunFieldPaths,
+    sandboxMetrics,
   };
 }
