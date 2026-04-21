@@ -384,6 +384,17 @@ class CodeSandbox:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(proc.wait(), timeout=1.5)
 
+        # Proc exited, but the drain tasks may still be reading buffered
+        # pipe data that the kernel hasn't surfaced yet. Give them a
+        # bounded grace period to reach EOF before cancelling — otherwise
+        # fast commands like `echo hi` race the cancel and we lose their
+        # output on a loaded CI runner.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.gather(drain_out, drain_err, return_exceptions=True),
+                timeout=2.0,
+            )
+
         for task in (drain_out, drain_err):
             if not task.done():
                 task.cancel()
