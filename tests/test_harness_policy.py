@@ -200,11 +200,13 @@ async def test_list_for_user_returns_own_plus_default(fresh_db) -> None:
     )
 
     await ensure_default_policy()
-    await create_policy(owner_user_id="alice", name="alice-one")
-    await create_policy(owner_user_id="alice", name="alice-two")
-    await create_policy(owner_user_id="bob", name="bob-private")
+    alice_id = await _make_user("alice2")
+    bob_id = await _make_user("bob2")
+    await create_policy(owner_user_id=alice_id, name="alice-one")
+    await create_policy(owner_user_id=alice_id, name="alice-two")
+    await create_policy(owner_user_id=bob_id, name="bob-private")
 
-    alice_list = await list_policies_for_user("alice")
+    alice_list = await list_policies_for_user(alice_id)
     names = [p.name for p in alice_list]
     # default is sorted first (is_default DESC), then by created_at.
     assert names[0] == "default"
