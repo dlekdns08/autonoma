@@ -2443,6 +2443,13 @@ class PostOffice:
         )
         self.mailbox.setdefault(recipient, []).append(letter)
         self.all_letters.append(letter)
+        _fire_event(
+            "letter.sent",
+            sender=sender,
+            recipient=recipient,
+            letter_type=letter_type,
+            round=round_number,
+        )
         return letter
 
     def send_challenge(self, sender: str, recipient: str, sender_species: str, round_number: int) -> Letter:
@@ -2453,6 +2460,13 @@ class PostOffice:
                         content=content, round_number=round_number)
         self.mailbox.setdefault(recipient, []).append(letter)
         self.all_letters.append(letter)
+        _fire_event(
+            "letter.sent",
+            sender=sender,
+            recipient=recipient,
+            letter_type="challenge",
+            round=round_number,
+        )
         return letter
 
     def get_mail(self, agent_name: str) -> list[Letter]:
