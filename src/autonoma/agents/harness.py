@@ -443,7 +443,16 @@ def get_harness(role_hint: str) -> AgentHarness:
         if any(kw in role_lower for kw in keywords):
             return HARNESS_REGISTRY[harness_name]
 
-    logger.info(
-        f"[get_harness] No keyword match for role '{role_hint}' — defaulting to CODER_HARNESS"
+    # Unknown roles almost always signal an upstream bug — a typo in a
+    # Director prompt, a new role added without a keyword, or a stale
+    # persona persisted from a previous schema. Log loudly so operators
+    # can catch the drift; the CODER fallback keeps the swarm running
+    # rather than crashing mid-session.
+    logger.warning(
+        "[get_harness] Unknown role %r (normalized=%r) — no keyword match; "
+        "defaulting to CODER_HARNESS. Add a keyword to keyword_map or rename "
+        "the role if this is unexpected.",
+        role_hint,
+        role_lower,
     )
     return CODER_HARNESS
