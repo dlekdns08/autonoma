@@ -289,7 +289,11 @@ class AutonomousAgent:
             await self._set_state(AgentState.ERROR)
             await self._say(f"Oops: {str(e)[:40]}", style="bold red")
             self.stats.errors += 1
-            self.mood = Mood.FRUSTRATED
+            # Route through _set_mood so the transition emits the
+            # agent.mood event (and updates swarm bookkeeping) — previously
+            # a direct assignment here bypassed the emitter and left the
+            # UI on the pre-error mood until the next mood-tick caught up.
+            await self._set_mood(Mood.FRUSTRATED)
             self.memory.remember(f"Error in {action_type}: {str(e)[:60]}", "failure", self._round_number)
             result = {"agent": self.name, "action": "error", "error": str(e)}
 
@@ -548,10 +552,14 @@ Rules:
                         self.current_task = task
                         started = True
             # Emit events outside the lock to avoid holding it across awaits.
+            # Claim path goes straight to IN_PROGRESS, so the UI needs to
+            # see both "assigned" and "started" in that case — otherwise
+            # fresh claims never drove the "now working" UI transition.
             if task is not None and claimed:
                 await bus.emit(
                     "task.assigned", agent=self.name, task_id=task.id, title=task.title,
                 )
+                await bus.emit("task.started", agent=self.name, task_id=task.id)
             elif task is not None and started:
                 await bus.emit("task.started", agent=self.name, task_id=task.id)
 
