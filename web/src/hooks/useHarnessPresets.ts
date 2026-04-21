@@ -40,6 +40,33 @@ export interface HarnessSchema {
   sections: Record<string, Record<string, HarnessFieldSpec>>;
 }
 
+// ── Pipeline layout (driven by GET /api/harness/pipeline) ─────────────
+
+export interface HarnessPipelineGroup {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface HarnessPipelineNode {
+  id: string;
+  label: string;
+  group: string;
+  field_path: string;
+  admin_sensitive: boolean;
+}
+
+export interface HarnessPipelineEdge {
+  from: string;
+  to: string;
+}
+
+export interface HarnessPipeline {
+  groups: HarnessPipelineGroup[];
+  nodes: HarnessPipelineNode[];
+  edges: HarnessPipelineEdge[];
+}
+
 // ── Result discriminated unions ───────────────────────────────────────
 
 export type PresetMutationReason =
@@ -65,6 +92,7 @@ export type DeleteResult =
 export interface UseHarnessPresetsReturn {
   presets: HarnessPreset[];
   schema: HarnessSchema | null;
+  pipeline: HarnessPipeline | null;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -103,6 +131,7 @@ export function useHarnessPresets(options?: {
 
   const [presets, setPresets] = useState<HarnessPreset[]>([]);
   const [schema, setSchema] = useState<HarnessSchema | null>(null);
+  const [pipeline, setPipeline] = useState<HarnessPipeline | null>(null);
   const [loading, setLoading] = useState<boolean>(enabled);
   const [error, setError] = useState<string | null>(null);
 
