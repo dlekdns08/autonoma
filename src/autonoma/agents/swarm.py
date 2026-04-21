@@ -780,13 +780,13 @@ class AgentSwarm:
 
         if event.event_type == WorldEventType.MORALE_BOOST:
             for agent in self.agents.values():
-                agent.mood = Mood.HAPPY
+                await agent._set_mood(Mood.HAPPY)
                 agent.memory.remember("Team morale boost!", "observation", self._round)
             event.resolved = True
 
         elif event.event_type == WorldEventType.COFFEE_BREAK:
             for agent in self.agents.values():
-                agent.mood = Mood.RELAXED
+                await agent._set_mood(Mood.RELAXED)
                 agent.stats.add_xp(5)
             event.resolved = True
 
@@ -795,28 +795,28 @@ class AgentSwarm:
                 target = self.agents.get(event.affects[0])
                 if target:
                     target.stats.add_xp(25)
-                    target.mood = Mood.EXCITED
+                    await target._set_mood(Mood.EXCITED)
                     target.memory.remember("Flash of inspiration! Bonus XP!", "success", self._round)
             event.resolved = True
 
         elif event.event_type == WorldEventType.CHALLENGE:
             for agent in self.agents.values():
-                agent.mood = Mood.DETERMINED
+                await agent._set_mood(Mood.DETERMINED)
             event.resolved = True
 
         elif event.event_type == WorldEventType.THUNDERSTORM:
             for agent in self.agents.values():
                 if agent.bones and agent.bones.stats.get("patience", 5) < 4:
-                    agent.mood = Mood.FRUSTRATED
+                    await agent._set_mood(Mood.FRUSTRATED)
                 else:
-                    agent.mood = Mood.WORRIED
+                    await agent._set_mood(Mood.WORRIED)
                 agent.memory.remember("A thunderstorm struck!", "observation", self._round)
             event.resolved = True
 
         elif event.event_type == WorldEventType.LUCKY_STAR:
             for agent in self.agents.values():
                 agent.stats.add_xp(10)
-                agent.mood = Mood.HAPPY
+                await agent._set_mood(Mood.HAPPY)
             event.resolved = True
 
         elif event.event_type == WorldEventType.MENTORSHIP:
@@ -837,7 +837,7 @@ class AgentSwarm:
                 target = self.agents.get(event.affects[0])
                 if target:
                     target.stats.add_xp(50)
-                    target.mood = Mood.EXCITED
+                    await target._set_mood(Mood.EXCITED)
             event.resolved = True
 
         elif event.event_type == WorldEventType.FRIENDSHIP_DAY:
@@ -845,7 +845,7 @@ class AgentSwarm:
                 if rel.familiarity > 0:
                     rel.record_interaction("Friendship Day boost!", positive=True)
             for agent in self.agents.values():
-                agent.mood = Mood.HAPPY
+                await agent._set_mood(Mood.HAPPY)
             event.resolved = True
 
         else:
@@ -1104,14 +1104,26 @@ class AgentSwarm:
             agent.stats.rounds_active += 1
 
             # Check achievements
+            # Note: check_achievements() guards against double-earning via the
+            # `ach_id not in stats.achievements` check inside it, so calling it
+            # from both here and _check_and_emit_achievements() is safe — the
+            # second call will return an empty list for already-earned achievements.
             newly_earned = check_achievements(agent.stats)
             for ach_id in newly_earned:
                 from autonoma.world import ACHIEVEMENTS as ACH
                 title = ACH[ach_id]["title"]
                 self.narrative.narrate_achievement(name, title, self._round)
-                # Emit for TUI
-                bus._loop = None  # sync emit not available, log instead
                 logger.info(f"[Achievement] {name} earned '{title}'")
+                # Emit achievement event for the frontend using create_task so we
+                # can fire-and-forget from this sync method without blocking.
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(
+                            bus.emit("achievement.earned", agent=name, achievement_id=ach_id, title=title)
+                        )
+                except Exception as _exc:
+                    logger.warning(f"[Achievement] Could not emit event for '{title}': {_exc}")
 
             # Check evolution
             if agent.bones:
@@ -1158,7 +1170,7 @@ class AgentSwarm:
         if agent is None:
             return
         agent.stats.add_xp(5)
-        agent.mood = Mood.EXCITED
+        await agent._set_mood(Mood.EXCITED)
         agent.memory.remember(
             f"🥠 Opened fortune cookie: {cookie.fortune}", "observation", self._round,
         )
@@ -1184,7 +1196,7 @@ class AgentSwarm:
             agent = self.agents.get(agent_name)
             if agent:
                 agent.stats.add_xp(cookie.bonus_xp)
-                agent.mood = Mood.EXCITED
+                await agent._set_mood(Mood.EXCITED)
                 agent.memory.remember(
                     f"Fortune fulfilled! +{cookie.bonus_xp}XP!", "success", self._round,
                 )
