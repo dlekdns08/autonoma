@@ -16,7 +16,9 @@ from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.db.registry import CharacterRegistry
 from autonoma.event_bus import bus
+from autonoma.harness import routing_strategies as _routing_strategies  # noqa: F401 — triggers @register
 from autonoma.harness.policy import HarnessPolicyContent
+from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import LLMConfig
 from autonoma.tracing import finish_run, start_run
 from autonoma.models import (
@@ -86,6 +88,9 @@ class AgentSwarm:
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
+        # Scratchpad the routing strategy uses for state that must
+        # persist across calls (e.g. round-robin cursor).
+        self._routing_state: dict[str, Any] = {}
 
         # Persistent character registry. When None we use a disabled one,
         # which short-circuits every DB call so tests and one-shot scripts
@@ -873,18 +878,22 @@ class AgentSwarm:
     # ── Message Routing ────────────────────────────────────────────────
 
     def _route_messages(self, project: ProjectState) -> None:
-        """Deliver only new (unrouted) messages to agent inboxes."""
+        """Deliver only new (unrouted) messages to agent inboxes.
+
+        Recipient selection is delegated to the registered
+        ``routing.strategy`` implementation; the swarm just hands the
+        chosen agents the message.
+        """
+        strategy = _strategy_lookup("routing.strategy", self.policy.routing.strategy)
+        agent_names = list(self.agents.keys())
         for msg in project.messages:
             if msg.id in self._routed_message_ids:
                 continue
             self._routed_message_ids.add(msg.id)
-
-            if msg.recipient == "all":
-                for agent in self.agents.values():
-                    if agent.name != msg.sender:
-                        agent.receive_message(msg)
-            elif msg.recipient in self.agents:
-                self.agents[msg.recipient].receive_message(msg)
+            for name in strategy(msg, agent_names, self._routing_state):
+                agent = self.agents.get(name)
+                if agent is not None:
+                    agent.receive_message(msg)
 
     def _tick_animations(self) -> None:
         for agent in self.agents.values():

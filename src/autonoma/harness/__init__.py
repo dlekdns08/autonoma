@@ -19,6 +19,10 @@ from autonoma.harness.policy import (
     default_policy_content,
 )
 
+# Importing the strategy impl modules triggers ``@register`` decorators
+# so the registry is populated whenever the package is loaded.
+from autonoma.harness import routing_strategies as _routing_strategies  # noqa: F401
+
 __all__ = [
     "ActionPolicy",
     "DecisionPolicy",

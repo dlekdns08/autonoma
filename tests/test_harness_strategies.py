@@ -36,20 +36,39 @@ def test_registry_has_entry_for_every_literal_value() -> None:
     )
 
 
-def test_all_entries_start_as_phase2_stubs() -> None:
-    """At the end of Phase 2, nothing is implemented yet — every slot
-    is still a stub. This test flips to listing *remaining* stubs once
-    Phase 3 starts landing real implementations."""
+def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
+    """Phase 3 replaces stubs section-by-section. Each section landed
+    here should appear in ``IMPLEMENTED`` and be absent from
+    ``all_stubs()``. Grow this set as more sections land; once it equals
+    ``all_slots()`` the registry is fully implemented."""
     from autonoma.harness.strategies import all_slots, all_stubs
 
-    assert set(all_slots()) == set(all_stubs())
+    IMPLEMENTED: set[tuple[str, str]] = {
+        ("routing.strategy", "priority"),
+        ("routing.strategy", "round_robin"),
+        ("routing.strategy", "broadcast"),
+    }
+
+    stubs = set(all_stubs())
+    slots = set(all_slots())
+
+    assert IMPLEMENTED.isdisjoint(stubs), (
+        f"these should be implemented but are still stubs: {IMPLEMENTED & stubs}"
+    )
+    assert stubs == slots - IMPLEMENTED
 
 
 def test_stub_raises_not_implemented_when_called() -> None:
-    from autonoma.harness.strategies import lookup
+    """Pick any slot that's still a stub (implementations land one
+    section at a time; pick one from the remaining pool so this test
+    doesn't need updating on every section)."""
+    from autonoma.harness.strategies import all_stubs, lookup
 
-    fn = lookup("routing.strategy", "priority")
-    with pytest.raises(NotImplementedError, match="routing.strategy.*priority"):
+    stubs = all_stubs()
+    assert stubs, "no stubs left — Phase 3 is done; retire this test"
+    section, value = stubs[0]
+    fn = lookup(section, value)
+    with pytest.raises(NotImplementedError, match=f"{section}.*{value}"):
         fn()
 
 
@@ -73,11 +92,15 @@ def test_register_replaces_stub_and_lookup_returns_impl() -> None:
     """Phase 3 uses @register to swap stubs for real implementations.
     Exercise the round-trip with a throwaway slot.
 
-    The registry is a module-level singleton so we restore the stub at
-    the end to avoid bleed into other tests."""
+    The registry is a module-level singleton so we restore the original
+    entry at the end to avoid bleed into other tests."""
     from autonoma.harness import strategies as s
 
-    slot = ("routing.strategy", "round_robin")
+    # Pick any still-stubbed slot — that way this test doesn't need
+    # updating every time a section gets implemented.
+    stubs = s.all_stubs()
+    assert stubs, "no stubs left — pick an implemented slot or retire this test"
+    slot = stubs[0]
     original = s.lookup(*slot)
     try:
         @s.register(*slot)
