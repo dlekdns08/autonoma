@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "@/hooks/useSwarm";
+import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AuthState, LLMProvider, UserCredentials } from "@/lib/types";
 
 interface Props {
@@ -31,6 +32,7 @@ export default function ModelSettingsModal({
   onAuthenticate,
   onClose,
 }: Props) {
+  const dialogRef = useModalA11y<HTMLDivElement>({ onEscape: onClose });
   const [provider, setProvider] = useState<LLMProvider>(
     (authState.provider as LLMProvider | null) ?? "anthropic",
   );
@@ -161,12 +163,19 @@ export default function ModelSettingsModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="model-settings-title"
         className="w-full max-w-md rounded-2xl border border-fuchsia-500/30 bg-slate-950/95 p-6 shadow-2xl shadow-fuchsia-500/10"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-base font-mono font-bold text-white/90">
+          <h2
+            id="model-settings-title"
+            className="text-base font-mono font-bold text-white/90"
+          >
             모델 설정
           </h2>
           <button
