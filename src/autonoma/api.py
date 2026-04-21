@@ -1488,6 +1488,22 @@ async def get_harness_metrics(
     return {"counters": get_global_counters()}
 
 
+@app.get("/api/harness/metrics/summary")
+async def get_harness_metrics_summary(
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Aggregated harness metrics for the current (or most recently completed)
+    run. Admin-only.
+
+    Returns preset usage breakdown, LLM parse success rate, average stalls
+    per run, top blocked actions, and LLM error categories.
+    """
+    from autonoma.harness.observability import get_metrics_summary
+
+    num_runs = max(1, len(_sessions))
+    return get_metrics_summary(num_runs=num_runs)
+
+
 @app.get("/api/session/{session_id}/metadata")
 async def get_session_harness_metadata(
     session_id: int,
@@ -2137,6 +2153,79 @@ async def download_zip(session: int | None = Query(default=None)) -> Response:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{project_name}.zip"'},
     )
+
+
+@app.get("/api/templates")
+async def list_templates() -> dict[str, Any]:
+    """Return all scaffold templates (name, description, file count)."""
+    from autonoma.templates import SCAFFOLD_TEMPLATES
+
+    return {
+        "templates": [
+            {
+                "id": tid,
+                "name": tmpl["name"],
+                "description": tmpl["description"],
+                "file_count": len(tmpl["files"]),
+            }
+            for tid, tmpl in SCAFFOLD_TEMPLATES.items()
+        ]
+    }
+
+
+@app.post("/api/templates/{template_id}/apply")
+async def apply_template(
+    template_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a scaffold template to a running session.
+
+    Queues placeholder file tasks for Coder agents to fill in.
+    ``payload`` must include ``session_id`` of the running session.
+    """
+    from autonoma.templates import SCAFFOLD_TEMPLATES
+
+    tmpl = SCAFFOLD_TEMPLATES.get(template_id)
+    if tmpl is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Template '{template_id}' not found",
+        )
+
+    session_id = payload.get("session_id")
+    session = _sessions.get(session_id) if isinstance(session_id, int) else None
+
+    created: list[str] = []
+    if session is not None and session.project is not None:
+        from autonoma.models import FileArtifact
+
+        for file_spec in tmpl["files"]:
+            path = file_spec["path"]
+            description = file_spec["description"]
+            # Only add if not already present
+            if not any(f.path == path for f in session.project.files):
+                artifact = FileArtifact(
+                    path=path,
+                    content=f"# {description}\n# TODO: implement\n",
+                    created_by="scaffold",
+                    description=description,
+                )
+                session.project.files.append(artifact)
+                created.append(path)
+                await bus.emit(
+                    "file.created",
+                    path=path,
+                    size=len(artifact.content),
+                    description=description,
+                    agent="scaffold",
+                )
+
+    return {
+        "template_id": template_id,
+        "name": tmpl["name"],
+        "files_created": created,
+        "total_files": len(tmpl["files"]),
+    }
 
 
 @app.get("/api/health")
