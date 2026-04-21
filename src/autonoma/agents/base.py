@@ -20,7 +20,9 @@ from typing import Any
 from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.harness import safety_strategies as _safety_strategies  # noqa: F401 — triggers @register
 from autonoma.harness.policy import HarnessPolicyContent
+from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import (
     BaseLLMClient,
     LLMConfig,
@@ -658,6 +660,20 @@ Rules:
 
     async def _action_run_code(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         """Execute LLM-authored code in a sandbox and feed the result back to the agent."""
+        allow_fn = _strategy_lookup(
+            "safety.code_execution", self.policy.safety.code_execution
+        )
+        if not allow_fn():
+            # Gate checked before any sandbox work so ``disabled`` means
+            # nothing reaches CodeSandbox at all. The error string is
+            # stable so agents / UI can surface a specific hint.
+            await self._set_state(AgentState.THINKING)
+            return {
+                "agent": self.name,
+                "action": "run_code",
+                "error": "code_execution_disabled",
+            }
+
         code = (decision.get("code_body") or "").strip()
         lang_raw = (decision.get("code_language") or "python").strip().lower()
 
