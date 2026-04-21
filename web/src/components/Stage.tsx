@@ -243,10 +243,15 @@ function BossSprite({ boss, attackingAgents = [] }: { boss: BossData; attackingA
     };
   }, []);
 
-  // Backend hit: shake + damage number
+  // Backend hit: shake + damage number. setState lives inside the
+  // effect (not set-during-render) because each hit also schedules a
+  // setTimeout whose cleanup is tracked in popTimersRef — moving the
+  // timer scheduling into render would fire side effects on every
+  // render pass.
   useEffect(() => {
     if (boss.hitSeq === 0 || boss.hitSeq === lastHitRef.current) return;
     lastHitRef.current = boss.hitSeq;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setShakeKey((k) => k + 1);
     if (boss.lastDamage > 0) {
       const id = ++popIdRef.current;
