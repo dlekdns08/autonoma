@@ -387,18 +387,13 @@ function applyStateOverlay(
       const celebOsc = Math.sin(now * 2.2 + phase) * 0.08;
       if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= (0.85 + celebOsc) * w;
       if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += (0.85 - celebOsc) * w;
-      // Forearm bend is a fixed target pose — lerp from whatever idle
-      // set earlier toward the celebration bend using weight `w`.
-      if (bones.leftLowerArm) {
-        const target = 0; // extended
-        bones.leftLowerArm.rotation.z =
-          bones.leftLowerArm.rotation.z * (1 - w) + target * w;
-      }
-      if (bones.rightLowerArm) {
-        const target = 0;
-        bones.rightLowerArm.rotation.z =
-          bones.rightLowerArm.rotation.z * (1 - w) + target * w;
-      }
+      // Extend the forearms as an additive delta so the idle arm sway
+      // keeps showing through — previously we lerped them to a fixed 0,
+      // which locked the elbows at w=1 and killed the micro-motion for
+      // the whole celebrating state. 0.15 rad closes most of the idle
+      // fold while leaving the oscillation intact.
+      if (bones.leftLowerArm) bones.leftLowerArm.rotation.z -= 0.15 * w;
+      if (bones.rightLowerArm) bones.rightLowerArm.rotation.z -= 0.15 * w;
       break;
     }
     case "spawning": {
