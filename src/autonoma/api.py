@@ -522,6 +522,70 @@ async def _run_swarm(
     checkpoint_task = _start_checkpoint_task(session_id, policy)
     _apply_policy_side_effects(session_id, policy)
 
+    # ── Feature 9: register file.created bus handler to capture history ──
+    # Defined inline so it closes over ``session_id`` and the DB helper.
+    async def _on_file_created(**kwargs: Any) -> None:
+        # Only intercept events belonging to this session (bus emits have
+        # session id on the ContextVar).
+        from autonoma.context import current_session_id as _csi
+        if _csi.get() != session_id:
+            return
+        path = kwargs.get("path", "")
+        agent = kwargs.get("agent", "")
+        # Retrieve content from the live project — the bus payload only
+        # carries path/size/description to keep the event compact.
+        sess = _sessions.get(session_id)
+        if sess is None or sess.project is None:
+            return
+        artifact = next(
+            (f for f in sess.project.files if f.path == path), None
+        )
+        if artifact is not None:
+            await _insert_file_history(
+                session_id=session_id,
+                path=path,
+                content=artifact.content,
+                created_by=agent,
+            )
+
+    bus.on("file.created", _on_file_created)
+
+    # ── Feature 30: Periodic ProjectState checkpoint every 5 rounds ──────
+    # Runs as a background task alongside the swarm loop.
+    async def _checkpoint_loop() -> None:
+        last_round = -1
+        try:
+            while True:
+                await asyncio.sleep(30)  # poll every 30 s
+                sess = _sessions.get(session_id)
+                if sess is None or sess.swarm is None or sess.project is None:
+                    continue
+                current_round = getattr(sess.swarm, "_round", 0)
+                # Save every 5 rounds (and avoid saving the same round twice)
+                if current_round > 0 and current_round % 5 == 0 and current_round != last_round:
+                    last_round = current_round
+                    try:
+                        state_json = sess.project.to_json()
+                        await _upsert_checkpoint(session_id, current_round, state_json)
+                        logger.debug(
+                            "[checkpoint:%s] saved at round %s", session_id, current_round
+                        )
+                    except Exception as cp_exc:
+                        logger.warning("[checkpoint:%s] failed: %s", session_id, cp_exc)
+        except asyncio.CancelledError:
+            # On clean shutdown, save a final checkpoint.
+            sess = _sessions.get(session_id)
+            if sess is not None and sess.project is not None:
+                try:
+                    current_round = getattr(sess.swarm, "_round", 0) if sess.swarm else 0
+                    state_json = sess.project.to_json()
+                    await _upsert_checkpoint(session_id, current_round, state_json)
+                except Exception:
+                    pass
+            raise
+
+    state_checkpoint_task = asyncio.create_task(_checkpoint_loop())
+
     try:
         await swarm.initialize(project)
 
@@ -548,8 +612,51 @@ async def _run_swarm(
         if sess is not None:
             await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
     finally:
+        # Cancel the two background tasks.
         if checkpoint_task is not None:
             checkpoint_task.cancel()
+        state_checkpoint_task.cancel()
+        try:
+            await state_checkpoint_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+        # Un-register the per-run file.created handler.
+        bus.off("file.created", _on_file_created)
+
+        # ── Feature 12: persist run summary ──────────────────────────────
+        try:
+            tasks_done = sum(
+                1 for t in project.tasks if t.status.value == "done"
+            )
+            tasks_failed = sum(
+                1 for t in project.tasks if t.status.value == "blocked"
+            )
+            import hashlib as _hl
+            import json as _json
+            policy_hash = (
+                _hl.md5(
+                    _json.dumps(
+                        policy.model_dump(mode="json"), sort_keys=True
+                    ).encode()
+                ).hexdigest()
+                if policy is not None
+                else ""
+            )
+            await _record_run_summary(
+                session_id=session_id,
+                goal=goal,
+                agent_count=len(swarm.agents),
+                task_count=len(project.tasks),
+                tasks_done=tasks_done,
+                tasks_failed=tasks_failed,
+                total_rounds=swarm._round,
+                llm_calls=0,  # placeholder — token tracking pending
+                preset_id=preset_id or "",
+                policy_hash=policy_hash,
+            )
+        except Exception as rs_exc:
+            logger.warning("[run_summary] could not persist: %s", rs_exc)
 
         # Seal per-run observability before taking the room down.
         from autonoma.harness.observability import (
