@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BossData } from "@/lib/types";
 
 interface Props {
@@ -9,15 +9,20 @@ interface Props {
 
 export default function BossOverlay({ boss }: Props) {
   const [shake, setShake] = useState(false);
+  const prevHpRef = useRef(boss.hp);
   const hpPct = boss.max_hp > 0 ? (boss.hp / boss.max_hp) * 100 : 0;
   const hpColor = hpPct > 60 ? "from-green-500 to-emerald-400" : hpPct > 30 ? "from-yellow-500 to-orange-400" : "from-red-500 to-rose-400";
 
-  // Shake on damage
+  if (prevHpRef.current !== boss.hp) {
+    prevHpRef.current = boss.hp;
+    if (!shake) setShake(true);
+  }
+
   useEffect(() => {
-    setShake(true);
+    if (!shake) return;
     const t = setTimeout(() => setShake(false), 300);
     return () => clearTimeout(t);
-  }, [boss.hp]);
+  }, [shake]);
 
   return (
     <div className="absolute inset-x-0 top-0 z-20 flex justify-center">
