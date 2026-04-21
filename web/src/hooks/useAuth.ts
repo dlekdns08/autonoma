@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 
 // ── User account model ────────────────────────────────────────────────────
@@ -31,8 +39,6 @@ export type SignupResult =
   | { ok: true }
   | { ok: false; reason: SignupReason };
 
-// ── Hook return type ──────────────────────────────────────────────────────
-
 export interface UseAuthReturn {
   user: AuthUser | null;
   loading: boolean;
@@ -43,22 +49,18 @@ export interface UseAuthReturn {
   refresh: () => Promise<void>;
 }
 
-// Shared fetch defaults — cookie sessions require credentials: "include",
-// and the API expects JSON bodies. Keeping them here avoids drift across
-// the various endpoints.
 const JSON_HEADERS: HeadersInit = { "Content-Type": "application/json" };
 
-/**
- * useAuth — session-aware auth hook backed by cookie auth at `API_BASE_URL`.
- *
- * On mount it calls `GET /api/auth/me` once to hydrate. The returned
- * `login`/`signup` functions are discriminated so callers can render
- * specific error messages without parsing free-form strings.
- */
-export function useAuth(): UseAuthReturn {
+// ── Context ───────────────────────────────────────────────────────────────
+// The whole app shares ONE auth state. Before this, each useAuth() call
+// created its own state tree — a successful login inside AuthModal didn't
+// notify the gate in page.tsx, leaving the user stuck on the login screen
+// after a 200 response. Context collapses all call sites onto one state.
+
+const AuthCtx = createContext<UseAuthReturn | null>(null);
+
+function useAuthStore(): UseAuthReturn {
   const [user, setUser] = useState<AuthUser | null>(null);
-  // Starts `true` so consumers can render a loading screen during the
-  // initial hydrate. `refresh()` also flips it.
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,15 +77,12 @@ export function useAuth(): UseAuthReturn {
         const data = (await res.json()) as { user: AuthUser };
         setUser(data.user ?? null);
       } else if (res.status === 401) {
-        // Not logged in — this is a normal state, not an error.
         setUser(null);
       } else {
         setUser(null);
         setError(`unexpected status ${res.status}`);
       }
     } catch (err) {
-      // Network-level failures shouldn't wipe an existing user unless
-      // the browser is truly offline; the caller can retry via refresh().
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       setUser(null);
@@ -92,9 +91,6 @@ export function useAuth(): UseAuthReturn {
     }
   }, []);
 
-  // Hydrate once on mount. We deliberately avoid refetching on every
-  // dependency change — login/signup/logout handlers update state
-  // optimistically and explicitly.
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -114,13 +110,8 @@ export function useAuth(): UseAuthReturn {
           setUser(data.user ?? null);
           return { ok: true, user: data.user };
         }
-        if (res.status === 401) {
-          return { ok: false, reason: "bad_credentials" };
-        }
-        if (res.status === 403) {
-          // Server signals the account exists but is pending/disabled/denied.
-          return { ok: false, reason: "not_active" };
-        }
+        if (res.status === 401) return { ok: false, reason: "bad_credentials" };
+        if (res.status === 403) return { ok: false, reason: "not_active" };
         return { ok: false, reason: "network" };
       } catch {
         return { ok: false, reason: "network" };
@@ -139,17 +130,9 @@ export function useAuth(): UseAuthReturn {
           headers: JSON_HEADERS,
           body: JSON.stringify({ username, password }),
         });
-        if (res.status === 201) {
-          // Successful signup does NOT log the user in — they still need
-          // admin approval. Leave `user` null.
-          return { ok: true };
-        }
-        if (res.status === 409) {
-          return { ok: false, reason: "username_taken" };
-        }
-        if (res.status === 400) {
-          return { ok: false, reason: "invalid" };
-        }
+        if (res.status === 201) return { ok: true };
+        if (res.status === 409) return { ok: false, reason: "username_taken" };
+        if (res.status === 400) return { ok: false, reason: "invalid" };
         return { ok: false, reason: "network" };
       } catch {
         return { ok: false, reason: "network" };
@@ -165,12 +148,25 @@ export function useAuth(): UseAuthReturn {
         credentials: "include",
       });
     } catch {
-      // Swallow network errors — the local state flip below still lets
-      // the user out of the UI; the cookie will expire server-side.
+      // Network-level failures shouldn't trap the user in a logged-in UI;
+      // the server cookie will expire on its own.
     } finally {
       setUser(null);
     }
   }, []);
 
   return { user, loading, error, login, signup, logout, refresh };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const value = useAuthStore();
+  return createElement(AuthCtx.Provider, { value }, children);
+}
+
+export function useAuth(): UseAuthReturn {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) {
+    throw new Error("useAuth must be used inside <AuthProvider>");
+  }
+  return ctx;
 }
