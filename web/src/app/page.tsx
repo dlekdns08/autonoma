@@ -110,6 +110,13 @@ function UserChip({
           >
             memory
           </a>
+          <span className="text-white/20">|</span>
+          <a
+            href="/admin/runs"
+            className="text-amber-300/70 hover:text-amber-200 transition-colors underline underline-offset-2"
+          >
+            runs
+          </a>
         </>
       )}
       <span className="text-white/20">|</span>
@@ -134,6 +141,8 @@ function Dashboard() {
     speakingAgents,
     lastRunFieldPaths,
     sandboxMetrics,
+    checkpoints,
+    resumeFromCheckpoint,
   } = useSwarm();
   const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
@@ -260,7 +269,9 @@ function Dashboard() {
             sessionId={sessionId}
             completed={state.completed}
             incompleteReason={state.incompleteReason}
+            checkpoints={checkpoints}
             onReset={resetSwarm}
+            onResumeFromCheckpoint={resumeFromCheckpoint}
           />
         </main>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
