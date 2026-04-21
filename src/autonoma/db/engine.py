@@ -112,10 +112,21 @@ async def _migration_003_harness_policies(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_004_feature_tables(conn) -> None:
+    """Create feature tables: file_history, run_summary, session_checkpoint.
+
+    Feature 9  — file_history: per-session file version history.
+    Feature 12 — run_summary: cross-run analytics.
+    Feature 30 — session_checkpoint: ProjectState snapshots for resume.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
     (3, _migration_003_harness_policies),
+    (4, _migration_004_feature_tables),
 ]
 
 
