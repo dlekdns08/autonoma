@@ -27,6 +27,102 @@ from typing import Any, Literal, get_args, get_origin
 from autonoma.harness.policy import HarnessPolicyContent
 
 
+# ── Per-run metrics accumulator ──────────────────────────────────────────
+# Tracks harness-level events within the *current* run. Reset each time a
+# new run starts (``record_run_start`` calls ``_RUN_METRICS.reset()``).
+# Populated by ``record_*`` helpers that the swarm/agent call at event
+# time — no bus coupling needed, all callers are in-process.
+
+@dataclass
+class _RunMetrics:
+    """Mutable accumulator for a single run's harness signals.
+
+    All fields are reset by ``reset()``. Thread-safety is not required
+    because the swarm loop is single-threaded asyncio.
+    """
+    preset_id: str | None = None
+    parse_attempts: int = 0
+    parse_failures: int = 0
+    stall_count: int = 0
+    # Maps action name → block count
+    blocked_actions: Counter = field(default_factory=Counter)
+    # Maps llm_error_type → count ("timeout", "rate_limit", "other")
+    llm_errors: Counter = field(default_factory=Counter)
+
+    def reset(self) -> None:
+        self.preset_id = None
+        self.parse_attempts = 0
+        self.parse_failures = 0
+        self.stall_count = 0
+        self.blocked_actions.clear()
+        self.llm_errors.clear()
+
+
+_RUN_METRICS: _RunMetrics = _RunMetrics()
+
+
+def record_parse_attempt(*, success: bool) -> None:
+    """Called by agents each time they try to extract JSON from an LLM response."""
+    _RUN_METRICS.parse_attempts += 1
+    if not success:
+        _RUN_METRICS.parse_failures += 1
+
+
+def record_stall() -> None:
+    """Called by the swarm loop when a stall is detected."""
+    _RUN_METRICS.stall_count += 1
+
+
+def record_blocked_action(action: str) -> None:
+    """Called by the harness enforcement layer when an action is blocked."""
+    _RUN_METRICS.blocked_actions[action] += 1
+
+
+def record_llm_error(error_type: str) -> None:
+    """Called by agents when an LLM call fails.
+
+    ``error_type`` should be one of ``"timeout"``, ``"rate_limit"``, or
+    ``"other"`` to keep the breakdown bucketed without unbounded keys.
+    """
+    _RUN_METRICS.llm_errors[error_type] += 1
+
+
+def get_metrics_summary(*, num_runs: int = 1) -> dict[str, Any]:
+    """Build the structured summary consumed by ``GET /api/harness/metrics/summary``.
+
+    ``num_runs`` is used to divide raw stall/parse counts into per-run
+    averages. The caller (the API endpoint) can pass the number of
+    completed sessions it's aware of from ``_SESSIONS`` length.
+    """
+    parse_rate = (
+        round(
+            (_RUN_METRICS.parse_attempts - _RUN_METRICS.parse_failures)
+            / max(1, _RUN_METRICS.parse_attempts),
+            4,
+        )
+        if _RUN_METRICS.parse_attempts > 0
+        else 1.0
+    )
+    avg_stalls = round(_RUN_METRICS.stall_count / max(1, num_runs), 2)
+    top_blocked = [
+        {"action": action, "count": count}
+        for action, count in _RUN_METRICS.blocked_actions.most_common(10)
+    ]
+    # Aggregate preset usage from the global session registry
+    by_preset: Counter = Counter()
+    for meta in _SESSIONS.values():
+        key = meta.preset_id or "default"
+        by_preset[key] += 1
+
+    return {
+        "by_preset": dict(by_preset),
+        "parse_success_rate": parse_rate,
+        "avg_stalls_per_run": avg_stalls,
+        "top_blocked_actions": top_blocked,
+        "llm_error_breakdown": dict(_RUN_METRICS.llm_errors),
+    }
+
+
 @dataclass
 class SessionMetadata:
     """What we recorded for one ``start`` → ``finished`` span."""
@@ -101,6 +197,9 @@ def record_run_start(
         started_at=time(),
         strategy_picks=per_run,
     )
+    # Reset the per-run metrics accumulator so each new run starts clean.
+    _RUN_METRICS.reset()
+    _RUN_METRICS.preset_id = preset_id
 
 
 def record_run_end(session_id: int) -> None:
