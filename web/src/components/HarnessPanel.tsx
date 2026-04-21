@@ -285,6 +285,36 @@ function SectionBlock({
   );
 }
 
+// ── Policy validation (Feature 28) ───────────────────────────────────
+
+function validatePolicy(working: HarnessContent): string[] {
+  const warnings: string[] = [];
+
+  const action = working.action ?? {};
+  const spawn = working.spawn ?? {};
+  const safety = working.safety ?? {};
+  const loop = working.loop ?? {};
+
+  if (action.harness_enforcement === "off") {
+    warnings.push("⚠️ Harness enforcement is off — agents can use any action regardless of role");
+  }
+
+  if (spawn.approval_mode === "automatic" && safety.enforcement_level === "off") {
+    warnings.push("🔴 Automatic spawning with no safety enforcement is dangerous");
+  }
+
+  if (action.code_execution === "disabled" && action.harness_enforcement === "off") {
+    warnings.push("⚠️ Code execution disabled but enforcement is off — the restriction won't be applied");
+  }
+
+  const maxAgents = typeof loop.max_agents === "number" ? loop.max_agents : 0;
+  if (maxAgents > 16) {
+    warnings.push("⚠️ More than 16 agents may cause performance issues");
+  }
+
+  return warnings;
+}
+
 // ── Pipeline overview (read-only visual) ──────────────────────────────
 
 function valueAtPath(content: HarnessContent, fieldPath: string): unknown {
