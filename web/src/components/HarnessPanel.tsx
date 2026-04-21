@@ -214,6 +214,244 @@ function SectionBlock({
   );
 }
 
+// ── Pipeline view ─────────────────────────────────────────────────────
+//
+// 16 nodes rendered as three horizontal lanes (groups A/B/C). Clicking a
+// node opens a focused drawer with just that field's editor. Edges are
+// straight horizontal connectors within each lane — the grouping carries
+// the real structural meaning, so a fancier layout would just add noise.
+
+function valueAtPath(content: HarnessContent, fieldPath: string): unknown {
+  const [section, field] = fieldPath.split(".");
+  if (!section || !field) return undefined;
+  return content[section]?.[field];
+}
+
+function specAtPath(
+  schema: HarnessSchema,
+  fieldPath: string,
+): HarnessFieldSpec | null {
+  const [section, field] = fieldPath.split(".");
+  if (!section || !field) return null;
+  return schema.sections[section]?.[field] ?? null;
+}
+
+function defaultForPath(
+  schema: HarnessSchema,
+  fieldPath: string,
+): unknown {
+  return specAtPath(schema, fieldPath)?.default;
+}
+
+interface PipelineViewProps {
+  pipeline: HarnessPipeline;
+  schema: HarnessSchema;
+  base: HarnessContent;
+  working: HarnessContent;
+  onFieldChange: (section: string, field: string, next: unknown) => void;
+  activeFieldPaths?: ReadonlySet<string>;
+}
+
+function PipelineView({
+  pipeline,
+  schema,
+  base,
+  working,
+  onFieldChange,
+  activeFieldPaths,
+}: PipelineViewProps) {
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  const nodesByGroup = useMemo(() => {
+    const map = new Map<string, HarnessPipelineNode[]>();
+    for (const n of pipeline.nodes) {
+      const bucket = map.get(n.group) ?? [];
+      bucket.push(n);
+      map.set(n.group, bucket);
+    }
+    return map;
+  }, [pipeline.nodes]);
+
+  const isModified = useCallback(
+    (path: string): boolean => {
+      const b = valueAtPath(base, path);
+      const w = valueAtPath(working, path);
+      return JSON.stringify(b) !== JSON.stringify(w);
+    },
+    [base, working],
+  );
+
+  const selected = selectedPath
+    ? pipeline.nodes.find((n) => n.field_path === selectedPath) ?? null
+    : null;
+  const selectedSpec = selectedPath ? specAtPath(schema, selectedPath) : null;
+
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+        {pipeline.groups.map((group) => {
+          const groupNodes = nodesByGroup.get(group.id) ?? [];
+          return (
+            <div
+              key={group.id}
+              className="rounded-xl border border-white/10 bg-slate-900/40 p-3"
+            >
+              <div className="mb-2 flex items-baseline gap-3">
+                <span className="text-sm font-mono font-bold text-fuchsia-300">
+                  {group.id}. {group.label}
+                </span>
+                <span className="text-[10px] font-mono text-white/40">
+                  {group.description}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto">
+                {groupNodes.map((node, idx) => {
+                  const isActive = activeFieldPaths?.has(node.field_path) ?? false;
+                  const modified = isModified(node.field_path);
+                  const current = valueAtPath(working, node.field_path);
+                  return (
+                    <div key={node.id} className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPath(node.field_path)}
+                        className={`group relative flex min-w-[140px] flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-all ${
+                          selectedPath === node.field_path
+                            ? "border-cyan-400/70 bg-cyan-500/10"
+                            : modified
+                              ? "border-fuchsia-500/50 bg-fuchsia-500/10"
+                              : "border-white/10 bg-slate-950/60 hover:border-white/30"
+                        } ${isActive ? "ring-2 ring-amber-300/70 ring-offset-1 ring-offset-slate-950" : ""}`}
+                      >
+                        <span className="text-[11px] font-mono font-bold text-white/90 truncate w-full">
+                          {node.label}
+                        </span>
+                        <span className="text-[10px] font-mono text-white/50 truncate w-full">
+                          {formatValue(current)}
+                        </span>
+                        <div className="absolute top-1 right-1 flex gap-1">
+                          {node.admin_sensitive && (
+                            <span
+                              title="admin-sensitive field"
+                              className="text-[9px] text-amber-300"
+                            >
+                              🔒
+                            </span>
+                          )}
+                          {modified && (
+                            <span
+                              title="modified from preset"
+                              className="text-[9px] text-fuchsia-300"
+                            >
+                              ●
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      {idx < groupNodes.length - 1 && (
+                        <span className="text-white/20 text-xs">→</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {selected && selectedSpec && (
+        <aside className="w-80 shrink-0 border-l border-white/10 bg-slate-950/80 px-4 py-4 overflow-y-auto">
+          <div className="mb-3 flex items-start justify-between">
+            <div>
+              <h3 className="text-sm font-mono font-bold text-cyan-300">
+                {selected.label}
+              </h3>
+              <p className="text-[10px] font-mono text-white/40">
+                {selected.field_path}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedPath(null)}
+              className="text-xs text-white/40 hover:text-white/80"
+            >
+              ✕
+            </button>
+          </div>
+          {selected.admin_sensitive && (
+            <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] font-mono text-amber-200">
+              🔒 일부 값은 관리자 권한이 필요합니다.
+            </div>
+          )}
+          <FieldRow
+            name={selected.field_path.split(".")[1] ?? selected.field_path}
+            spec={selectedSpec}
+            value={valueAtPath(working, selected.field_path)}
+            onChange={(next) => {
+              const [section, field] = selected.field_path.split(".");
+              if (section && field) onFieldChange(section, field, next);
+            }}
+          />
+          <div className="mt-3 flex items-center justify-between text-[10px] font-mono text-white/40">
+            <span>
+              default:{" "}
+              <code className="text-white/60">
+                {formatValue(defaultForPath(schema, selected.field_path))}
+              </code>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const [section, field] = selected.field_path.split(".");
+                if (section && field) {
+                  onFieldChange(section, field, defaultForPath(schema, selected.field_path));
+                }
+              }}
+              className="rounded border border-white/10 bg-slate-900/60 px-2 py-0.5 text-[10px] hover:border-white/30"
+            >
+              reset
+            </button>
+          </div>
+        </aside>
+      )}
+    </div>
+  );
+}
+
+function formatValue(v: unknown): string {
+  if (v === undefined || v === null) return "—";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "number") return v.toLocaleString();
+  return String(v);
+}
+
+function TabButton({
+  active,
+  onClick,
+  disabled,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-t-md px-3 py-1.5 text-[11px] font-mono font-bold transition-colors ${
+        active
+          ? "border-b-2 border-fuchsia-400 text-white"
+          : "text-white/40 hover:text-white/70"
+      } disabled:opacity-30 disabled:cursor-not-allowed`}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────────────
 
 function defaultContentFromSchema(schema: HarnessSchema): HarnessContent {
@@ -245,10 +483,18 @@ function basePresetContent(
   return schema ? defaultContentFromSchema(schema) : {};
 }
 
-export default function HarnessPanel({ open, onClose, onApply }: Props) {
+type ViewTab = "pipeline" | "sections";
+
+export default function HarnessPanel({
+  open,
+  onClose,
+  onApply,
+  activeFieldPaths,
+}: Props) {
   const {
     presets,
     schema,
+    pipeline,
     loading,
     error,
     createPreset,
@@ -259,6 +505,7 @@ export default function HarnessPanel({ open, onClose, onApply }: Props) {
   const [saveName, setSaveName] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<ViewTab>("pipeline");
 
   const base = useMemo(
     () => (schema ? basePresetContent(presets, schema, selectedId) : {}),
@@ -375,20 +622,52 @@ export default function HarnessPanel({ open, onClose, onApply }: Props) {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
-              {Object.entries(schema.sections).map(([section, fields]) => (
-                <SectionBlock
-                  key={section}
-                  sectionName={section}
-                  fields={fields}
-                  value={working[section] ?? {}}
-                  onChange={(next) =>
-                    setWorking((prev) => ({ ...prev, [section]: next }))
-                  }
-                  modified={modifiedSections.has(section)}
-                />
-              ))}
+            <div className="border-b border-white/10 px-5 pt-1 flex gap-1">
+              <TabButton
+                active={tab === "pipeline"}
+                onClick={() => setTab("pipeline")}
+                disabled={!pipeline}
+              >
+                Pipeline
+              </TabButton>
+              <TabButton
+                active={tab === "sections"}
+                onClick={() => setTab("sections")}
+              >
+                Sections
+              </TabButton>
             </div>
+
+            {tab === "pipeline" && pipeline ? (
+              <PipelineView
+                pipeline={pipeline}
+                schema={schema}
+                base={base}
+                working={working}
+                onFieldChange={(section, field, next) =>
+                  setWorking((prev) => ({
+                    ...prev,
+                    [section]: { ...(prev[section] ?? {}), [field]: next },
+                  }))
+                }
+                activeFieldPaths={activeFieldPaths}
+              />
+            ) : (
+              <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
+                {Object.entries(schema.sections).map(([section, fields]) => (
+                  <SectionBlock
+                    key={section}
+                    sectionName={section}
+                    fields={fields}
+                    value={working[section] ?? {}}
+                    onChange={(next) =>
+                      setWorking((prev) => ({ ...prev, [section]: next }))
+                    }
+                    modified={modifiedSections.has(section)}
+                  />
+                ))}
+              </div>
+            )}
 
             <div className="border-t border-white/10 px-5 py-3 flex flex-col gap-3">
               <div className="flex items-center gap-2">
