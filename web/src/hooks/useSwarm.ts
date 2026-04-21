@@ -112,6 +112,13 @@ export function useSwarm() {
   });
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const chatSeqRef = useRef(0);
+  // Pipeline-view highlight state. Populated from the last session's
+  // ``session.metadata`` payload — keys in ``strategy_picks`` look like
+  // ``"section.field=value"``, and the pipeline view needs just the
+  // ``section.field`` prefix so matching is value-agnostic.
+  const [lastRunFieldPaths, setLastRunFieldPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   // Set once at mount — the room param is attempt-to-join-as-spectator.
   // Stays in a ref so reconnects can re-attempt without surviving page
   // navigation that wipes the URL (which is the right behavior).
@@ -332,6 +339,16 @@ export function useSwarm() {
             error: (data.message as string) ?? "로그인이 필요합니다.",
           }));
           return;
+        }
+
+        if (event === "session.metadata") {
+          const picks = (data.strategy_picks as Record<string, number> | undefined) ?? {};
+          const paths = new Set<string>();
+          for (const key of Object.keys(picks)) {
+            const dot = key.indexOf("=");
+            paths.add(dot > 0 ? key.slice(0, dot) : key);
+          }
+          setLastRunFieldPaths(paths);
         }
 
         // Generate toasts for important events
@@ -892,5 +909,6 @@ export function useSwarm() {
     sendChat,
     setDisplayName,
     joinRoom,
+    lastRunFieldPaths,
   };
 }

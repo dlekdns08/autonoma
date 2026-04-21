@@ -9,9 +9,13 @@ const SPARKLES = ["✦", "✧", "★", "☆", "♥", "♡", "♪"];
 interface Props {
   connected: boolean;
   onStart: (goal: string, opts?: HarnessStartPayload) => void;
+  /** Field paths that were active in the previous run — the Pipeline
+   *  view pulses these nodes so users can see what the last run touched
+   *  before they tweak settings for the next one. */
+  lastRunFieldPaths?: ReadonlySet<string>;
 }
 
-export default function IdleScreen({ connected, onStart }: Props) {
+export default function IdleScreen({ connected, onStart, lastRunFieldPaths }: Props) {
   const [frame, setFrame] = useState(0);
   const [goal, setGoal] = useState("");
   const [starting, setStarting] = useState(false);
@@ -113,6 +117,7 @@ export default function IdleScreen({ connected, onStart }: Props) {
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
         onApply={handleApplyHarness}
+        activeFieldPaths={lastRunFieldPaths}
       />
     </div>
   );
