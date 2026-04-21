@@ -8,6 +8,7 @@ services:
       - "3479:8000"
     environment:
       - AUTONOMA_ADMIN_PASSWORD=${AUTONOMA_ADMIN_PASSWORD:-}
+      - AUTONOMA_SESSION_SECRET=${AUTONOMA_SESSION_SECRET:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AUTONOMA_PROVIDER=${AUTONOMA_PROVIDER:-anthropic}
@@ -20,6 +21,9 @@ services:
       # in the GitHub Actions runner workspace. A bind mount here causes
       # root-owned files on the host and breaks actions/checkout cleanup.
       - autonoma_output:/app/output
+      # Persist the SQLite database (users, harness presets, characters) across
+      # container restarts. Without this, all auth data is lost on every restart.
+      - autonoma_db:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -33,7 +37,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_WS_URL: wss://autonoma.koala.ai.kr/api/ws
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://autonoma.koala.ai.kr/api/ws}
     ports:
       - "3478:3000"
     depends_on:
@@ -48,3 +52,4 @@ services:
 
 volumes:
   autonoma_output:
+  autonoma_db:
