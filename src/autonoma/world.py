@@ -2181,6 +2181,15 @@ class TradingPost:
             self.balances[trade.receiver].get(trade.requested_stat, 0) - trade.requested_amount
         )
 
+        _fire_event(
+            "trade.completed",
+            trader=trade.trader,
+            receiver=trade.receiver,
+            offered_stat=trade.offered_stat,
+            offered_amount=trade.offered_amount,
+            requested_stat=trade.requested_stat,
+            requested_amount=trade.requested_amount,
+        )
         return True
 
     def get_bonus(self, agent_name: str, stat: str) -> int:
