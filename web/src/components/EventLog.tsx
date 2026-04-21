@@ -33,35 +33,35 @@ function formatEvent(entry: EventLogEntry): { icon: string; color: string; text:
 
   switch (entry.event) {
     case "agent.spawned":
-      return { ...style, text: `New agent: ${d.emoji} ${d.name} (${d.role})` };
+      return { ...style, text: `New agent: ${d.emoji ?? "🤖"} ${d.name ?? "unknown"} (${d.role ?? "agent"})` };
     case "agent.speech":
-      return { ...style, text: `${d.agent}: ${d.text}` };
+      return { ...style, text: `${d.agent ?? "?"}: ${d.text ?? ""}` };
     case "agent.level_up":
-      return { ...style, text: `${d.agent} LEVELED UP to Lv${d.level}!` };
+      return { ...style, text: `${d.agent ?? "?"} LEVELED UP to Lv${d.level ?? "?"}!` };
     case "agent.dream":
-      return { icon: d.dream_type === "nightmare" ? "👻" : "💤", color: style.color, text: `${d.agent} dreams: ${d.dream}` };
+      return { icon: d.dream_type === "nightmare" ? "👻" : "💤", color: style.color, text: `${d.agent ?? "?"} dreams: ${d.dream ?? ""}` };
     case "task.completed":
-      return { ...style, text: `${d.agent} done: ${d.title}` };
+      return { ...style, text: `${d.agent ?? "?"} done: ${d.title ?? ""}` };
     case "file.created":
-      return { ...style, text: `${d.agent} → ${d.path}` };
+      return { ...style, text: `${d.agent ?? "?"} → ${d.path ?? ""}` };
     case "world.event":
-      return { ...style, text: `WORLD EVENT: ${d.title}` };
+      return { ...style, text: `WORLD EVENT: ${d.title ?? ""}` };
     case "guild.formed":
-      return { ...style, text: `Guild formed: ${d.name} (${(d.members as string[])?.join(", ")})` };
+      return { ...style, text: `Guild formed: ${d.name ?? "?"} (${(d.members as string[] | undefined)?.join(", ") ?? ""})` };
     case "campfire.complete":
-      return { ...style, text: `Campfire! ${d.stories} stories shared~` };
+      return { ...style, text: `Campfire! ${d.stories ?? 0} stories shared~` };
     case "fortune.given":
-      return { ...style, text: `${d.agent}: ${d.fortune}` };
+      return { ...style, text: `${d.agent ?? "?"}: ${d.fortune ?? ""}` };
     case "boss.appeared":
-      return { ...style, text: `BOSS: ${d.name} (Lv${d.level}, ${d.hp}HP)` };
+      return { ...style, text: `BOSS: ${d.name ?? "???"} (Lv${d.level ?? "?"}, ${d.hp ?? "?"}HP)` };
     case "boss.defeated":
-      return { ...style, text: `BOSS DEFEATED: ${d.name}! +${d.xp_reward}XP!` };
+      return { ...style, text: `BOSS DEFEATED: ${d.name ?? "???"}! +${d.xp_reward ?? 0}XP!` };
     case "boss.damage":
-      return { ...style, text: `${d.message}` };
+      return { ...style, text: `${d.message ?? ""}` };
     case "ghost.appears":
-      return { ...style, text: `${d.message}` };
+      return { ...style, text: `${d.message ?? ""}` };
     case "swarm.round":
-      return { ...style, text: `Round ${d.round}` };
+      return { ...style, text: `Round ${d.round ?? 0}` };
     default:
       return { ...style, text: `${entry.event}: ${JSON.stringify(d).slice(0, 60)}` };
   }
