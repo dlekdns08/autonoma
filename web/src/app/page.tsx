@@ -133,6 +133,7 @@ function Dashboard() {
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
     lastRunFieldPaths,
+    sandboxMetrics,
   } = useSwarm();
   const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
