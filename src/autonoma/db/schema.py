@@ -334,3 +334,22 @@ session_checkpoint = Table(
 )
 
 Index("ix_checkpoint_session", session_checkpoint.c.session_id)
+
+
+# ── world_event_log ───────────────────────────────────────────────────────
+# Feature 10: Persistent log of world events processed by WorldEventLedger.
+# Complements the in-memory ledger with durable queryability across sessions.
+world_event_log = Table(
+    "world_event_log",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("event_type", String(64), nullable=False, default=""),
+    Column("title", String(256), nullable=False, default=""),
+    Column("description", Text, nullable=False, default=""),
+    Column("round", Integer, nullable=False, default=0),
+    Column("triggered_by", String(64), nullable=False, default="system"),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+Index("ix_world_event_log_round", world_event_log.c.round)
+Index("ix_world_event_log_type", world_event_log.c.event_type)
