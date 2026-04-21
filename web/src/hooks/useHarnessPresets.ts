@@ -158,6 +158,17 @@ export function useHarnessPresets(options?: {
     return (await res.json()) as HarnessSchema;
   }, []);
 
+  const fetchPipeline = useCallback(async (): Promise<HarnessPipeline | null> => {
+    const res = await fetch(`${API_BASE_URL}/api/harness/pipeline`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 401) return null;
+    if (!res.ok) throw new Error(`pipeline status ${res.status}`);
+    return (await res.json()) as HarnessPipeline;
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!enabled) return;
     setLoading(true);
