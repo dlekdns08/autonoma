@@ -95,6 +95,11 @@ class SessionState:
     ws: WebSocket
     session_id: int
     llm_config: LLMConfig | None = None
+    # True when this WS authenticated via the admin password path (or
+    # an admin cookie, once wired). Governs which harness policy
+    # knobs the session is allowed to flip at start time — see
+    # ``_resolve_start_policy``'s ``is_admin`` parameter.
+    is_admin: bool = False
     # Defaults to a "private room of one" with id == session_id; updated
     # when the session creates a real room (via ``start``) or joins one
     # via short code. Always non-None so handlers can rely on it.
@@ -394,6 +399,7 @@ async def _resolve_start_policy(
     user_id: str | None,
     preset_id: Any,
     overrides: Any,
+    is_admin: bool = False,
 ) -> tuple[HarnessPolicyContent | None, str | None]:
     """Build the final HarnessPolicyContent for a ``start`` command.
 
@@ -403,10 +409,15 @@ async def _resolve_start_policy(
     wired per-session auth (the WS path) can skip ownership checks —
     when supplied, a non-default preset owned by another user yields
     ``"preset not accessible"``.
+
+    ``is_admin`` governs admin-only rules: non-admins cannot set
+    ``safety.enforcement_level=off`` etc. Dangerous cross-section combos
+    are rejected for everyone regardless of role.
     """
     from pydantic import ValidationError
 
     from autonoma.db.harness_policies import get_policy_by_id
+    from autonoma.harness.validation import check_content
 
     if preset_id is None:
         base = default_policy_content().model_dump(mode="json")
@@ -435,9 +446,19 @@ async def _resolve_start_policy(
             base[section] = value
 
     try:
-        return HarnessPolicyContent(**base), None
+        content = HarnessPolicyContent(**base)
     except ValidationError:
         return None, "invalid policy content"
+
+    issues = check_content(content, is_admin=is_admin)
+    if issues:
+        # Surface the first issue's message — WS callers stream one
+        # error at a time. HTTP callers use the richer validation path
+        # below (see create/update preset endpoints) to get the full
+        # list.
+        return None, issues[0].message
+
+    return content, None
 
 
 async def _run_swarm(
@@ -951,6 +972,47 @@ def _pydantic_errors_to_fastapi(exc: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _reject_invalid_harness_content(
+    content: HarnessPolicyContent, *, is_admin: bool
+) -> None:
+    """Raise HTTPException when semantic validation rejects ``content``.
+
+    Admin-only violations surface as 403 (the caller lacks the role),
+    dangerous-combo violations as 422 (the content is illegal for
+    everyone). Field-level ``path`` ("safety.code_execution") is exposed
+    via ``loc`` so the frontend can highlight the offending control.
+    """
+    from autonoma.harness.validation import check_content
+
+    issues = check_content(content, is_admin=is_admin)
+    if not issues:
+        return
+    admin_only = [i for i in issues if i.admin_only]
+    if admin_only:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail=[
+                {
+                    "loc": ["body", "content", *i.path.split(".")],
+                    "msg": i.message,
+                    "type": "admin_only",
+                }
+                for i in admin_only
+            ],
+        )
+    raise HTTPException(
+        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=[
+            {
+                "loc": ["body", "content"],
+                "msg": i.message,
+                "type": "dangerous_combo",
+            }
+            for i in issues
+        ],
+    )
+
+
 def _harness_policy_to_dict(policy: Any) -> dict[str, Any]:
     return policy.model_dump(mode="json")
 
@@ -1094,6 +1156,7 @@ async def create_harness_preset(
             status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_pydantic_errors_to_fastapi(exc),
         )
+    _reject_invalid_harness_content(content, is_admin=(user.role == "admin"))
     created = await create_policy(
         owner_user_id=user.id,
         name=name,
@@ -1172,6 +1235,9 @@ async def update_harness_preset(
                 status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_pydantic_errors_to_fastapi(exc),
             )
+        _reject_invalid_harness_content(
+            new_content, is_admin=(user.role == "admin")
+        )
 
     try:
         updated = await update_policy(
@@ -1358,6 +1424,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             })
                         else:
                             session.llm_config = llm_cfg
+                            session.is_admin = True
                             logger.info(
                                 f"[WS:{session.session_id}] Admin authenticated "
                                 f"(provider={llm_cfg.provider})"
@@ -1453,6 +1520,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         user_id=None,
                         preset_id=msg.get("preset_id"),
                         overrides=msg.get("overrides"),
+                        is_admin=session.is_admin,
                     )
                     if policy_err is not None:
                         await manager.send_to_ws(ws, "error", {
