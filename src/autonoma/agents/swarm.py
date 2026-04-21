@@ -51,8 +51,10 @@ from autonoma.world import (
     RelationshipGraph,
     TradingPost,
     WorldClock,
+    WorldEventLedger,
     WorldEventQueue,
     WorldEventType,
+    apply_mood_contagion,
     check_achievements,
 )
 
@@ -117,7 +119,7 @@ class AgentSwarm:
 
         # ── World Systems ──
         self.relationships = RelationshipGraph()
-        self.world_events = WorldEventQueue()
+        self.world_events = WorldEventLedger()
         self.guilds = GuildRegistry()
         self.gossip = GossipNetwork()
         self.campfire = Campfire()
@@ -508,6 +510,9 @@ class AgentSwarm:
             # Fan out mood changes accumulated since the previous tick
             # (direct ``agent.mood = …`` assignments don't self-emit).
             await self._emit_mood_changes()
+            # Spread mood contagion: agents whose mood changed this tick may
+            # influence nearby agents.
+            await self._apply_mood_contagion()
 
             if recorder is not None:
                 recorder.checkpoint(self._round, project)
@@ -649,6 +654,38 @@ class AgentSwarm:
 
     def stop(self) -> None:
         self._running = False
+
+    # ── Feature 27: Graceful Agent Shutdown ───────────────────────────
+
+    async def cancel_agent(self, name: str, reason: str = "shutdown") -> None:
+        """Cancel a specific agent and emit an agent.cancelled bus event."""
+        agent = self.agents.get(name)
+        if agent is None:
+            logger.warning(f"[Swarm] cancel_agent: no agent named '{name}'")
+            return
+        agent.cancel(reason)
+        await bus.emit("agent.cancelled", agent=name, reason=reason)
+        logger.info(f"[Swarm] Agent '{name}' cancelled: {reason}")
+
+    async def graceful_shutdown(self, timeout_rounds: int = 2) -> None:
+        """Cancel all agents and wait for their current rounds to complete (or timeout).
+
+        Cancels every agent (including the Director), stops the swarm loop,
+        then waits up to ``timeout_rounds * 0.1s`` for in-flight tasks to drain.
+        """
+        logger.info(f"[Swarm] Graceful shutdown initiated (timeout_rounds={timeout_rounds})")
+        # Cancel all agents
+        for name, agent in self.agents.items():
+            agent.cancel("graceful_shutdown")
+            await bus.emit("agent.cancelled", agent=name, reason="graceful_shutdown")
+
+        # Signal the run loop to stop
+        self._running = False
+
+        # Wait proportional to timeout_rounds (each round is ~0.1s sleep)
+        wait_seconds = timeout_rounds * 0.1
+        await asyncio.sleep(wait_seconds)
+        logger.info(f"[Swarm] Graceful shutdown complete after {wait_seconds}s wait")
 
     async def inject_human_message(
         self,
@@ -973,6 +1010,42 @@ class AgentSwarm:
                         mood=current_mood.value,
                     )
 
+    async def _apply_mood_contagion(self) -> None:
+        """Spread mood changes from agents that changed mood this tick.
+
+        For each agent whose mood changed (tracked in ``_last_moods``),
+        apply ``apply_mood_contagion`` to potentially affect nearby agents.
+        Only moods with non-zero contagion strength produce any effect.
+        """
+        all_agents = list(self.agents.values())
+        # Collect agents whose mood was recently set (present in _last_moods)
+        # and apply contagion from each changed mood.
+        for name, agent in self.agents.items():
+            current_mood = getattr(agent, "mood", None)
+            if current_mood is None:
+                continue
+            affected = apply_mood_contagion(
+                source_mood=current_mood,
+                agents=all_agents,
+                source_agent_name=name,
+                rng=random.Random(),
+            )
+            if not affected:
+                continue
+            affected_names = []
+            for target_name, new_mood in affected:
+                target = self.agents.get(target_name)
+                if target is not None:
+                    await target._set_mood(new_mood)
+                    affected_names.append(target_name)
+            if affected_names:
+                await bus.emit(
+                    "mood.contagion",
+                    source_agent=name,
+                    mood=current_mood.value,
+                    affected_agents=affected_names,
+                )
+
     async def _on_spawn_request(
         self,
         requester: str = "",
@@ -1120,7 +1193,7 @@ class AgentSwarm:
             # `ach_id not in stats.achievements` check inside it, so calling it
             # from both here and _check_and_emit_achievements() is safe — the
             # second call will return an empty list for already-earned achievements.
-            newly_earned = check_achievements(agent.stats)
+            newly_earned = check_achievements(agent.stats, agent_name=name)
             for ach_id in newly_earned:
                 from autonoma.world import ACHIEVEMENTS as ACH
                 title = ACH[ach_id]["title"]
@@ -1158,6 +1231,10 @@ class AgentSwarm:
                     name, agent.stats, agent.bones,
                     self.relationships, self.gossip, self.debate_arena,
                 )
+
+        # Decay all relationship trust values slightly each round so that
+        # long-inactive pairs drift toward 0 over time.
+        self.relationships.decay_all()
 
     # ── Fortune Cookies ───────────────────────────────────────────────
 
@@ -1292,7 +1369,7 @@ class AgentSwarm:
                 self.agents[n].stats.level for n in agent_names if n in self.agents
             ) // max(1, len(agent_names))
 
-            boss = self.boss_arena.maybe_spawn_boss(self._round, avg_level)
+            boss = self.boss_arena.maybe_spawn_boss(self._round, avg_level, agent_count=len(agent_names))
             if boss:
                 # Boss always appears at the centre of the War Room (the
                 # middle HQ room). Percent-space coords the frontend Stage
