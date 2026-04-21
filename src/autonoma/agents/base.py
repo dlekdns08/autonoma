@@ -597,7 +597,7 @@ Rules:
 
         self.stats.files_created += 1
         self.stats.add_xp(15)
-        self.mood = Mood.PROUD
+        await self._set_mood(Mood.PROUD)
         self.memory.remember(f"Created file: {path}", "success", self._round_number)
 
         await bus.emit(
@@ -625,7 +625,7 @@ Rules:
         project.messages.append(msg)
         self.stats.messages_sent += 1
         self.stats.add_xp(5)
-        self.mood = Mood.HAPPY if self.mood != Mood.FRUSTRATED else Mood.DETERMINED
+        await self._set_mood(Mood.HAPPY if self.mood != Mood.FRUSTRATED else Mood.DETERMINED)
         await bus.emit(
             "message.sent",
             sender=self.name,
@@ -697,7 +697,7 @@ Rules:
 
                 self.stats.tasks_completed += 1
                 leveled_up = self.stats.add_xp(30)
-                self.mood = Mood.EXCITED if leveled_up else Mood.PROUD
+                await self._set_mood(Mood.EXCITED if leveled_up else Mood.PROUD)
                 self.memory.remember(
                     f"Completed task: {task.title}", "success", self._round_number
                 )
