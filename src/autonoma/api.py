@@ -1843,6 +1843,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             "message": "You're already the host of this room.",
                         })
                     else:
+                        # Fetch the snapshot BEFORE joining the room so the
+                        # client receives a consistent state baseline before
+                        # any live events from the room can reach it.
+                        # (Setting session.room_id first would let bus events
+                        # fan-out to this viewer during the async snapshot
+                        # fetch, causing events to arrive before the snapshot.)
+                        snap = await _get_snapshot_coalesced(target_room_id)
+
                         # Leave any prior room (and notify it) before
                         # joining the new one. The "private" default room
                         # has no other viewers so this is a no-op there.
@@ -1852,10 +1860,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             "code": code,
                             "is_owner": False,
                         })
-                        # Snapshot the live scene so the new viewer gets
-                        # the current state immediately, not on the next
-                        # frame.
-                        snap = await _get_snapshot_coalesced(target_room_id)
+                        # Send the pre-fetched snapshot immediately after
+                        # join confirmation so the client can render the
+                        # current scene before the live event stream starts.
                         await manager.send_to_ws(ws, "snapshot", snap)
                         await _notify_room_membership(target_room_id)
                         if prev_room_id != target_room_id:
