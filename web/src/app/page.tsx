@@ -495,6 +495,11 @@ function Dashboard() {
           </button>
         </div>
         <div className="flex items-center gap-3">
+          {sandboxMetrics.runs > 0 && (
+            <span className="text-white/35 font-mono" title="Sandbox code runs: total / success / failure / timeout">
+              Code runs: {sandboxMetrics.runs} ✓{sandboxMetrics.runs - sandboxMetrics.failures} ✗{sandboxMetrics.failures} ⏱{sandboxMetrics.timeouts}
+            </span>
+          )}
           {room.code && (
             <span className="text-white/25 font-mono">
               room:{room.code.slice(0, 6)}
