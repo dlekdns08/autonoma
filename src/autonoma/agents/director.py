@@ -32,6 +32,8 @@ from autonoma.models import (
     Task,
     TaskPriority,
     TaskStatus,
+    compute_critical_path,
+    overdue_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,40 @@ DIRECTOR_PERSONA = AgentPersona(
     skills=["planning", "task decomposition", "team management", "architecture"],
     color="yellow",
 )
+
+
+# ── Feature 2: Skill-Based Task Matching helpers ───────────────────────────
+
+def skill_similarity(task_title: str, task_description: str, agent_skills: list[str]) -> float:
+    """Compute a simple skill-match score for a task against an agent's skills.
+
+    Tokenizes the task title + description and counts how many agent skills
+    appear as substrings. Returns count / max(1, len(agent_skills)), capped at 1.0.
+    """
+    if not agent_skills:
+        return 0.0
+    combined = (task_title + " " + task_description).lower()
+    matches = sum(1 for skill in agent_skills if skill.lower() in combined)
+    return min(1.0, matches / len(agent_skills))
+
+
+def find_best_agent_for_task(task: Task, agents: list) -> str | None:
+    """Return the agent name with the highest skill_similarity score, or None.
+
+    ``agents`` should be a list of AgentPersona objects.
+    Used as a hint comment in the Director's situation string; actual
+    assignment is still made by the LLM.
+    """
+    best_name: str | None = None
+    best_score: float = -1.0
+    for agent in agents:
+        if agent.name == "Director":
+            continue
+        score = skill_similarity(task.title, task.description, agent.skills)
+        if score > best_score:
+            best_score = score
+            best_name = agent.name
+    return best_name if best_score > 0 else None
 
 
 class DirectorAgent(AutonomousAgent):
@@ -66,6 +102,62 @@ class DirectorAgent(AutonomousAgent):
             policy=policy,
         )
         self._stall_counter = 0
+
+    def _build_situation(self, project: "ProjectState") -> str:
+        """Director-enhanced situation report with critical path, skill matching, and overdue tasks."""
+        from autonoma.models import TaskStatus as _TS
+
+        # Build base situation from parent
+        base = super()._build_situation(project)
+
+        # ── Feature 1: Critical path ──
+        critical_path = compute_critical_path(project.tasks)
+        task_map = {t.id: t for t in project.tasks}
+        cp_titles: list[str] = []
+        for cp_id in critical_path[:3]:
+            t = task_map.get(cp_id)
+            if t:
+                cp_titles.append(t.title)
+        cp_line = (
+            f"Critical path tasks (prioritize these): {', '.join(cp_titles)}"
+            if cp_titles else "No dependency chain detected."
+        )
+
+        # ── Feature 2: Available agents with skill match scores ──
+        open_tasks = [t for t in project.tasks if t.status in (_TS.OPEN, _TS.ASSIGNED)]
+        worker_personas = [a for a in project.agents if a.name != "Director"]
+        agent_lines: list[str] = []
+        for agent in worker_personas:
+            # Compute average match across all open tasks
+            if open_tasks:
+                avg_score = sum(
+                    skill_similarity(t.title, t.description, agent.skills)
+                    for t in open_tasks
+                ) / len(open_tasks)
+            else:
+                avg_score = 0.0
+            agent_lines.append(
+                f"  - {agent.name} ({agent.role}): skills={agent.skills}, match={avg_score:.0%}"
+            )
+        agents_section = "\n".join(agent_lines) if agent_lines else "  None"
+
+        # ── Feature 5: Overdue tasks ──
+        current_overdue = overdue_tasks(project.tasks, self._round_number)
+        overdue_section = ""
+        if current_overdue:
+            overdue_titles = ", ".join(t.title for t in current_overdue)
+            overdue_section = (
+                f"\n⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}\n"
+            )
+
+        director_addendum = f"""
+== DIRECTOR INTELLIGENCE ==
+{cp_line}
+{overdue_section}
+AVAILABLE AGENTS (with skill match scores for open tasks):
+{agents_section}
+"""
+        return base + director_addendum
 
     async def decompose_goal(self, project: ProjectState) -> list[Task]:
         """Break down the project description into actionable tasks."""
@@ -338,6 +430,17 @@ Rules:
             await bus.emit("project.completed", agent="Director")
             return {"agent": "Director", "action": "project_complete"}
 
+        # ── Feature 1: Critical path computation ──
+        critical_path = compute_critical_path(project.tasks)
+
+        # ── Feature 5: Overdue task detection ──
+        current_overdue = overdue_tasks(project.tasks, self._round_number)
+        if current_overdue:
+            overdue_titles = ", ".join(t.title for t in current_overdue)
+            logger.warning(
+                f"[Director] Overdue tasks at round {self._round_number}: {overdue_titles}"
+            )
+
         # Assign unassigned tasks to available agents (respecting dependencies).
         # Hold TASKS_LOCK across the read-select + write so agents running
         # concurrently in _action_work can't race us into the same OPEN task.
@@ -372,11 +475,20 @@ Rules:
         for task, agent_name in pending_assignments:
             await self._say(f"{agent_name}, handle '{task.title}'!", style="bold")
 
+            # Feature 2: compute skill match score for the assignment message
+            agent_persona = next((a for a in project.agents if a.name == agent_name), None)
+            agent_skills = agent_persona.skills if agent_persona else []
+            match_score = skill_similarity(task.title, task.description, agent_skills)
+
             msg = AgentMessage(
                 sender="Director",
                 recipient=agent_name,
                 msg_type=MessageType.TASK_ASSIGN,
-                content=f"Task: {task.title}\n{task.description}\nPriority: {task.priority.value}",
+                content=(
+                    f"Task: {task.title}\n{task.description}\n"
+                    f"Priority: {task.priority.value}\n"
+                    f"Skill match: {match_score:.0%}"
+                ),
                 data={"task_id": task.id},
             )
             project.messages.append(msg)
@@ -402,18 +514,24 @@ Rules:
         # auto-approve any REVIEW tasks so the project can finish.
         review_stuck = bool(in_review) and assigned_count == 0 and in_progress == 0
 
+        # Feature 5: overdue tasks trigger escalation the same as stalls
+        has_overdue = bool(current_overdue)
+
         if (
             assigned_count == 0
             and in_progress == 0
             and done < total
-        ) or review_stuck:
+        ) or review_stuck or has_overdue:
             self._stall_counter += 1
+            overdue_note = (
+                f", overdue={len(current_overdue)}" if current_overdue else ""
+            )
             logger.warning(
                 f"[Director] Stall detected (counter={self._stall_counter}/3): "
                 f"done={done}/{total}, in_progress=0, assigned_this_round=0, "
                 f"available_agents={len(available_agents)}, "
                 f"blocked={blocked}, review={in_review}, "
-                f"open_ready={len(open_tasks)}"
+                f"open_ready={len(open_tasks)}{overdue_note}"
             )
             if self._stall_counter >= 3:
                 review_tasks = [t for t in project.tasks if t.status == TaskStatus.REVIEW]
@@ -480,10 +598,47 @@ Rules:
             self._stall_counter = 0
 
         if total > 0:
+            overdue_suffix = f", {len(current_overdue)} overdue" if current_overdue else ""
             await self._say(
-                f"Progress: {done}/{total} done, {in_progress} active",
+                f"Progress: {done}/{total} done, {in_progress} active{overdue_suffix}",
                 style="bold yellow",
             )
+
+        # Build enriched situation notes for the LLM (Features 1, 2, 5)
+        situation_notes: list[str] = []
+
+        # Feature 1: critical path hint
+        if critical_path:
+            cp_titles = []
+            task_map = {t.id: t for t in project.tasks}
+            for cp_id in critical_path[:3]:
+                t = task_map.get(cp_id)
+                if t:
+                    cp_titles.append(t.title)
+            if cp_titles:
+                situation_notes.append(
+                    f"Critical path tasks (prioritize these): {', '.join(cp_titles)}"
+                )
+
+        # Feature 5: overdue task warning
+        if current_overdue:
+            overdue_titles = ", ".join(t.title for t in current_overdue)
+            situation_notes.append(
+                f"⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}"
+            )
+
+        # Feature 2: best agent hints for open tasks
+        worker_personas = [a for a in project.agents if a.name != "Director"]
+        for t in open_tasks[:3]:
+            best = find_best_agent_for_task(t, worker_personas)
+            if best:
+                situation_notes.append(
+                    f"Best agent for '{t.title}': {best} (skill match)"
+                )
+
+        if situation_notes:
+            notes_text = "\n".join(f"  {note}" for note in situation_notes)
+            logger.debug(f"[Director] Situation notes:\n{notes_text}")
 
         return {
             "agent": "Director",
@@ -491,4 +646,7 @@ Rules:
             "done": done,
             "total": total,
             "assigned": assigned_count,
+            "critical_path": critical_path[:3],
+            "overdue_count": len(current_overdue),
+            "situation_notes": situation_notes,
         }
