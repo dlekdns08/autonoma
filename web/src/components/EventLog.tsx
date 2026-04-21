@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import type { EventLogEntry } from "@/lib/types";
 
 const EVENT_STYLES: Record<string, { icon: string; color: string }> = {
@@ -71,27 +71,46 @@ interface Props {
   events: EventLogEntry[];
 }
 
-export default function EventLog({ events }: Props) {
+const MAX_VISIBLE = 50;
+
+function EventLogImpl({ events }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Only the last MAX_VISIBLE non-clock entries are ever rendered, so keep
+  // the filter/slice memoised on identity of `events` — otherwise every
+  // unrelated parent re-render walked the full (potentially thousands)
+  // event list twice.
+  const visible = useMemo(() => {
+    const filtered: EventLogEntry[] = [];
+    for (let i = events.length - 1; i >= 0 && filtered.length < MAX_VISIBLE; i--) {
+      const ev = events[i];
+      if (ev.event !== "world.clock") filtered.push(ev);
+    }
+    filtered.reverse();
+    return filtered;
+  }, [events]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [events.length]);
-
-  // Filter out noisy clock events
-  const filtered = events.filter((e) => e.event !== "world.clock");
+  }, [visible.length]);
 
   return (
     <div className="flex flex-col gap-2 rounded-xl p-3 h-full" style={{ border: "1px solid rgba(255,255,255,0.06)", background: "rgba(12,11,29,0.7)" }}>
       <h3 className="text-[10px] font-bold font-mono tracking-widest uppercase" style={{ color: "#a78bfa" }}>◈ Activity</h3>
 
-      <div ref={scrollRef} className="flex flex-col gap-0.5 max-h-52 overflow-y-auto scrollbar-thin">
-        {filtered.length === 0 ? (
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        className="flex flex-col gap-0.5 max-h-52 overflow-y-auto scrollbar-thin"
+      >
+        {visible.length === 0 ? (
           <p className="text-xs text-white/30 font-mono">(^_^) Waiting for activity...</p>
         ) : (
-          filtered.slice(-50).map((entry) => {
+          visible.map((entry) => {
             const { icon, color, text } = formatEvent(entry);
             return (
               <div key={entry.id} className={`flex items-start gap-1.5 text-[11px] font-mono ${color}`}>
@@ -105,3 +124,6 @@ export default function EventLog({ events }: Props) {
     </div>
   );
 }
+
+const EventLog = memo(EventLogImpl);
+export default EventLog;
