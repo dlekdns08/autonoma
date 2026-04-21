@@ -23,6 +23,8 @@ import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
 import KeyboardHelpModal from "@/components/KeyboardHelpModal";
+import ReviewQueue from "@/components/ReviewQueue";
+import ExecutionTimeline from "@/components/ExecutionTimeline";
 import type { AgentData } from "@/lib/types";
 
 // ── Top-level gate ─────────────────────────────────────────────────────
