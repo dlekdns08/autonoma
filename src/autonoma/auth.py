@@ -26,9 +26,9 @@ import logging
 import secrets
 from typing import Final
 
+import bcrypt
 from fastapi import Cookie, HTTPException, Request, status
 from itsdangerous import BadSignature, URLSafeSerializer
-from passlib.context import CryptContext
 
 from autonoma.config import settings
 from autonoma.db.users import User, get_user_by_id
@@ -64,21 +64,37 @@ _serializer: Final[URLSafeSerializer] = URLSafeSerializer(
     _SESSION_SECRET, salt=_SESSION_SALT
 )
 
-# bcrypt via passlib. ``deprecated="auto"`` lets us rotate schemes later
-# without breaking existing hashes.
-_pwd_context: Final[CryptContext] = CryptContext(
-    schemes=["bcrypt"], deprecated="auto"
-)
-
 
 # ── Password helpers ──────────────────────────────────────────────────
+# We use the ``bcrypt`` library directly rather than going through
+# ``passlib`` because current passlib releases don't play cleanly with
+# bcrypt >= 4 (they try to introspect ``bcrypt.__about__`` which was
+# removed upstream). A thin wrapper here keeps the call sites ergonomic
+# while avoiding that compatibility trap.
+
+
+# bcrypt's hashpw has a hard 72-byte limit on the password. We encode
+# with UTF-8 and truncate just in case — still 72 bytes of entropy is
+# well over what bcrypt's security model needs.
+_BCRYPT_MAX_BYTES: Final[int] = 72
+
+
+def _encode_password(password: str) -> bytes:
+    pw = password.encode("utf-8")
+    return pw[:_BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    """Return a bcrypt hash of ``password``. Raises ValueError if empty."""
+    """Return a bcrypt hash of ``password`` (ascii string).
+
+    Raises ValueError if the password is empty — bcrypt accepts empty
+    input but we reject it here as a policy decision.
+    """
     if not password:
         raise ValueError("password must not be empty")
-    return _pwd_context.hash(password)
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(_encode_password(password), salt)
+    return hashed.decode("ascii")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -86,9 +102,11 @@ def verify_password(password: str, password_hash: str) -> bool:
     if not password or not password_hash:
         return False
     try:
-        return _pwd_context.verify(password, password_hash)
-    except Exception:
-        # Malformed hash or unsupported scheme → treat as mismatch.
+        return bcrypt.checkpw(
+            _encode_password(password), password_hash.encode("ascii")
+        )
+    except (ValueError, TypeError):
+        # Malformed hash → treat as mismatch rather than 500ing.
         return False
 
 
