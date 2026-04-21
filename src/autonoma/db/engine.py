@@ -92,8 +92,20 @@ async def _migration_001_baseline(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_002_users(conn) -> None:
+    """Create the ``users`` table for cookie-session auth.
+
+    Split from the baseline so existing deployments (already at version
+    1) pick up the new table instead of silently skipping it.
+    ``create_all(checkfirst=True)`` iterates all tables registered on
+    ``metadata`` so this is safe to run on a DB that already has them.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
+    (2, _migration_002_users),
 ]
 
 
@@ -121,6 +133,12 @@ async def init_db() -> None:
     counter, and tables are created with checkfirst=True.
     """
     global _initialized
+    # Side-effect import: registers the ``users`` table on the shared
+    # ``metadata`` before the baseline migration runs. Done here (rather
+    # than at module top) to avoid a circular import — ``db.users``
+    # depends on ``db.engine``.
+    from autonoma.db import users as _users_module  # noqa: F401
+
     async with _init_lock:
         if _initialized:
             return
