@@ -97,7 +97,13 @@ class AgentHarness:
                 f"(not a recognized AgentCapability). Likely an LLM typo."
             )
             return False
-        return cap in self.get_effective_capabilities()
+        allowed = cap in self.get_effective_capabilities()
+        if not allowed:
+            logger.warning(
+                f"[Harness:{self.name}] action '{action}' is a valid capability "
+                f"but is not granted to this harness (check allowed_capabilities / disallowed_capabilities)."
+            )
+        return allowed
 
     def build_system_prompt(self, agent_name: str, skills: list[str]) -> str:
         """Build the full system prompt with failure mode inoculation and constraints."""
