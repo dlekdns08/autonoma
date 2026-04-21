@@ -16,6 +16,7 @@ from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.db.registry import CharacterRegistry
 from autonoma.event_bus import bus
+from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.llm import LLMConfig
 from autonoma.tracing import finish_run, start_run
 from autonoma.models import (
@@ -72,10 +73,16 @@ class AgentSwarm:
         self,
         llm_config: LLMConfig | None = None,
         registry: CharacterRegistry | None = None,
+        policy: HarnessPolicyContent | None = None,
     ) -> None:
         self._llm_config = llm_config
+        # Per-session policy snapshot. ``HarnessPolicyContent()`` is
+        # behavior-equivalent to the pre-harness hardcoded defaults, so
+        # legacy callers that construct a swarm without a policy keep
+        # the previous semantics.
+        self.policy: HarnessPolicyContent = policy or HarnessPolicyContent()
         self.agents: dict[str, AutonomousAgent] = {}
-        self.director = DirectorAgent(llm_config=llm_config)
+        self.director = DirectorAgent(llm_config=llm_config, policy=self.policy)
         self._running = False
         self._round = 0
         self._routed_message_ids: set[str] = set()
@@ -683,7 +690,12 @@ class AgentSwarm:
             skills=skills or harness.default_skills,
             color=color,
         )
-        agent = AutonomousAgent(persona, harness=harness, llm_config=self._llm_config)
+        agent = AutonomousAgent(
+            persona,
+            harness=harness,
+            llm_config=self._llm_config,
+            policy=self.policy,
+        )
 
         # Assign spawn position
         idx = len(self.agents) - 1  # -1 for Director

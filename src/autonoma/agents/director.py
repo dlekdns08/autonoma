@@ -18,6 +18,7 @@ from autonoma.agents.base import (
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.llm import LLMConfig
 from autonoma.tracing import traced_messages_create
 from autonoma.models import (
@@ -51,8 +52,17 @@ class DirectorAgent(AutonomousAgent):
     5. Declares the project complete
     """
 
-    def __init__(self, llm_config: LLMConfig | None = None) -> None:
-        super().__init__(DIRECTOR_PERSONA, harness=DIRECTOR_HARNESS, llm_config=llm_config)
+    def __init__(
+        self,
+        llm_config: LLMConfig | None = None,
+        policy: HarnessPolicyContent | None = None,
+    ) -> None:
+        super().__init__(
+            DIRECTOR_PERSONA,
+            harness=DIRECTOR_HARNESS,
+            llm_config=llm_config,
+            policy=policy,
+        )
         self._stall_counter = 0
 
     async def decompose_goal(self, project: ProjectState) -> list[Task]:

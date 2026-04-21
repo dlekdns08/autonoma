@@ -20,6 +20,7 @@ from typing import Any
 from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.llm import (
     BaseLLMClient,
     LLMConfig,
@@ -151,9 +152,14 @@ class AutonomousAgent:
         persona: AgentPersona,
         harness: AgentHarness | None = None,
         llm_config: LLMConfig | None = None,
+        policy: HarnessPolicyContent | None = None,
     ) -> None:
         self.persona = persona
         self.harness = harness or get_harness(persona.role)
+        # Runtime policy: per-session snapshot of every behavior knob.
+        # ``HarnessPolicyContent()`` reproduces the pre-harness hardcoded
+        # behavior exactly, so callers that don't care can pass ``None``.
+        self.policy: HarnessPolicyContent = policy or HarnessPolicyContent()
         self.state = AgentState.IDLE
         self.position = Position(x=0, y=0)
         self.target_position: Position | None = None
