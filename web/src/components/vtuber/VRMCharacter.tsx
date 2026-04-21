@@ -224,7 +224,11 @@ const GESTURES: Record<
         b.rightUpperArm.rotation.x -= env * 0.55;
       }
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.z += env * 1.0;
+        // Right forearm bends in negative-z to flex the elbow (same
+        // direction as the `wave` / `greet` clips). Using positive-z
+        // here makes the elbow hyperextend backward — the "grotesque"
+        // bend that reads as broken.
+        b.rightLowerArm.rotation.z -= env * 1.0;
       }
       if (b.head) {
         b.head.rotation.z -= env * 0.08;
@@ -378,7 +382,11 @@ function applyStateOverlay(
         bones.rightUpperArm.rotation.z += 0.18 * w;
         bones.rightUpperArm.rotation.x -= 0.12 * w;
       }
-      if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.25 * w;
+      // Right elbow flex is negative-z (consistent with wave/greet/think
+      // gesture clips and the idle right forearm baseline). Using +=
+      // here hyperextended the elbow backward — the same grotesque bend
+      // this file was fixing in the think gesture above.
+      if (bones.rightLowerArm) bones.rightLowerArm.rotation.z -= 0.25 * w;
       // Head tilt — additive during cross-fade. Idle set rotation.z = 0.
       if (bones.head) bones.head.rotation.z += -0.04 * w;
       break;
@@ -390,10 +398,13 @@ function applyStateOverlay(
       // Extend the forearms as an additive delta so the idle arm sway
       // keeps showing through — previously we lerped them to a fixed 0,
       // which locked the elbows at w=1 and killed the micro-motion for
-      // the whole celebrating state. 0.15 rad closes most of the idle
-      // fold while leaving the oscillation intact.
+      // the whole celebrating state. The idle bend sits at +0.15 on
+      // the left and −0.15 on the right (mirror signs), so straightening
+      // uses OPPOSITE sign deltas. Using the same sign on both bent the
+      // right forearm further instead of extending it — the source of
+      // the asymmetric grotesque arm during celebrating.
       if (bones.leftLowerArm) bones.leftLowerArm.rotation.z -= 0.15 * w;
-      if (bones.rightLowerArm) bones.rightLowerArm.rotation.z -= 0.15 * w;
+      if (bones.rightLowerArm) bones.rightLowerArm.rotation.z += 0.15 * w;
       break;
     }
     case "spawning": {
@@ -909,31 +920,31 @@ function VRMModel({
     // Left and right use deliberately different frequencies so they never
     // sync up — that's what makes idle hands look robotic when they do.
 
-    const lPrimary   = Math.sin(now * 0.52 + phase) * 0.22
-                     + Math.sin(now * 0.19 + phase * 1.3) * 0.085;
-    const lSway      = Math.sin(now * 0.37 + phase + 0.8) * 0.11;
-    const lSecondary = Math.sin(now * 1.3  + phase * 0.8) * 0.018;
-    const rPrimary   = Math.sin(now * 0.67 + phase + 2.1) * 0.22
-                     + Math.sin(now * 0.24 + phase * 0.7) * 0.075;
-    const rSway      = Math.sin(now * 0.41 + phase + 3.4) * 0.10;
-    const rSecondary = Math.sin(now * 1.1  + phase * 1.2) * 0.016;
+    const lPrimary   = Math.sin(now * 0.52 + phase) * 0.10
+                     + Math.sin(now * 0.19 + phase * 1.3) * 0.038;
+    const lSway      = Math.sin(now * 0.37 + phase + 0.8) * 0.05;
+    const lSecondary = Math.sin(now * 1.3  + phase * 0.8) * 0.012;
+    const rPrimary   = Math.sin(now * 0.67 + phase + 2.1) * 0.10
+                     + Math.sin(now * 0.24 + phase * 0.7) * 0.034;
+    const rSway      = Math.sin(now * 0.41 + phase + 3.4) * 0.045;
+    const rSecondary = Math.sin(now * 1.1  + phase * 1.2) * 0.011;
 
     // Upper arms breathe with the chest — they hang from it.
-    const chestCoupling = breathe * 0.035;
+    const chestCoupling = breathe * 0.018;
 
     if (bones.leftUpperArm) {
       bones.leftUpperArm.rotation.z = 1.15 + lPrimary + lSway + lSecondary + chestCoupling;
       // Forward/back swing — visible pendulum motion.
-      bones.leftUpperArm.rotation.x = Math.sin(now * 0.43 + phase + 0.9) * 0.09
-                                    + Math.sin(now * 0.23 + phase) * 0.04;
+      bones.leftUpperArm.rotation.x = Math.sin(now * 0.43 + phase + 0.9) * 0.045
+                                    + Math.sin(now * 0.23 + phase) * 0.02;
       // Shoulder rotation around the body axis (twist) — subtle roll.
-      bones.leftUpperArm.rotation.y = Math.sin(now * 0.29 + phase + 1.7) * 0.05;
+      bones.leftUpperArm.rotation.y = Math.sin(now * 0.29 + phase + 1.7) * 0.028;
     }
     if (bones.rightUpperArm) {
       bones.rightUpperArm.rotation.z = -1.15 - rPrimary - rSway + rSecondary - chestCoupling;
-      bones.rightUpperArm.rotation.x = Math.sin(now * 0.38 + phase + 2.5) * 0.085
-                                     + Math.sin(now * 0.21 + phase + 1.1) * 0.04;
-      bones.rightUpperArm.rotation.y = Math.sin(now * 0.33 + phase + 2.9) * 0.05;
+      bones.rightUpperArm.rotation.x = Math.sin(now * 0.38 + phase + 2.5) * 0.042
+                                     + Math.sin(now * 0.21 + phase + 1.1) * 0.02;
+      bones.rightUpperArm.rotation.y = Math.sin(now * 0.33 + phase + 2.9) * 0.028;
     }
 
     // Forearms lag ~120ms behind the upper arm (physics approximation).
@@ -944,18 +955,18 @@ function VRMModel({
     // for forearms in VRM space) should always be ≥ 0 on the left (extend
     // + flex) and ≤ 0 on the right (mirror).
     if (bones.leftLowerArm) {
-      const lLag = Math.sin(now * 0.52 + phase - 0.6) * 0.09;
-      const lFlex = Math.sin(now * 0.27 + phase + 1.4) * 0.06;
-      bones.leftLowerArm.rotation.z = Math.max(0, 0.15 + lLag + lFlex + lSecondary * 0.6);
-      bones.leftLowerArm.rotation.y = Math.sin(now * 0.31 + phase + 1.0) * 0.055;
-      bones.leftLowerArm.rotation.x = Math.sin(now * 0.22 + phase + 0.4) * 0.03;
+      const lLag = Math.sin(now * 0.52 + phase - 0.6) * 0.04;
+      const lFlex = Math.sin(now * 0.27 + phase + 1.4) * 0.03;
+      bones.leftLowerArm.rotation.z = Math.max(0, 0.12 + lLag + lFlex + lSecondary * 0.6);
+      bones.leftLowerArm.rotation.y = Math.sin(now * 0.31 + phase + 1.0) * 0.03;
+      bones.leftLowerArm.rotation.x = Math.sin(now * 0.22 + phase + 0.4) * 0.018;
     }
     if (bones.rightLowerArm) {
-      const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.085;
-      const rFlex = Math.sin(now * 0.31 + phase + 2.9) * 0.06;
-      bones.rightLowerArm.rotation.z = -Math.max(0, 0.15 + rLag + rFlex + rSecondary * 0.6);
-      bones.rightLowerArm.rotation.y = -Math.sin(now * 0.36 + phase + 3.2) * 0.05;
-      bones.rightLowerArm.rotation.x = Math.sin(now * 0.25 + phase + 2.4) * 0.028;
+      const rLag = Math.sin(now * 0.67 + phase + 2.1 - 0.6) * 0.04;
+      const rFlex = Math.sin(now * 0.31 + phase + 2.9) * 0.03;
+      bones.rightLowerArm.rotation.z = -Math.max(0, 0.12 + rLag + rFlex + rSecondary * 0.6);
+      bones.rightLowerArm.rotation.y = -Math.sin(now * 0.36 + phase + 3.2) * 0.03;
+      bones.rightLowerArm.rotation.x = Math.sin(now * 0.25 + phase + 2.4) * 0.018;
     }
 
     // Wrist subtle rotation — hand roll and small flexion so they don't
