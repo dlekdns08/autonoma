@@ -655,7 +655,9 @@ export function useAgentMotion({
         } else if (state === "working") {
           m.jumpOffset = Math.sin(now / 400) * 0.6;
         } else {
-          m.jumpOffset *= 0.85;
+          // Frame-rate-independent exponential decay: 0.85 is the target
+          // decay per 16ms (60fps baseline). pow() scales it to actual dt.
+          m.jumpOffset *= Math.pow(0.85, dt / 16);
           if (Math.abs(m.jumpOffset) < 0.05) m.jumpOffset = 0;
         }
       });

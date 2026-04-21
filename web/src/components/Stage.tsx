@@ -702,7 +702,9 @@ function AgentOnMap({
         width: `${CHAR_W_PCT}%`,
         height: `${CHAR_H_PCT}%`,
         transform: `translate(-50%, -100%) translateY(${-motion.jumpOffset}px)`,
-        transition: blooming ? "none" : "top 120ms linear",
+        // 64ms matches the RAF dt cap in useAgentMotion so the CSS
+        // transition never fights the motion loop or causes catch-up snaps.
+        transition: blooming ? "none" : "top 64ms linear, left 64ms linear",
         transformOrigin: "center bottom",
         zIndex: blooming ? 20 : undefined,
       }}
