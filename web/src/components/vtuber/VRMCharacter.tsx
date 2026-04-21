@@ -42,7 +42,16 @@ import {
   VRMUtils,
 } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Suspense, useEffect, useMemo, useRef, type ComponentRef } from "react";
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode,
+} from "react";
 import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AgentData, AgentEmote } from "@/lib/types";
@@ -141,6 +150,27 @@ interface Bones {
   rightHand: THREE.Object3D | null;
 }
 
+// Gesture rotation deltas are composed via quaternion multiplication
+// rather than component-wise Euler addition. Three.js defaults each bone
+// to "XYZ" order, which hits a gimbal-lock pole when the base pose
+// combines with a large gesture delta (e.g. wave's rightUpperArm.z ≈ 1.55
+// on top of the idle rotation.z = -1.4). Composing as a single quaternion
+// with "YXZ" ordering — twist last, on top of flex/abduct — matches
+// shoulder biomechanics and avoids the decomposition singularity.
+const _gestureEuler = new THREE.Euler(0, 0, 0, "YXZ");
+const _gestureQuat = new THREE.Quaternion();
+function addBoneRotation(
+  bone: THREE.Object3D,
+  x: number,
+  y: number,
+  z: number,
+): void {
+  if (x === 0 && y === 0 && z === 0) return;
+  _gestureEuler.set(x, y, z, "YXZ");
+  _gestureQuat.setFromEuler(_gestureEuler);
+  bone.quaternion.multiply(_gestureQuat);
+}
+
 const GESTURES: Record<
   GestureName,
   { duration: number; apply: (t: number, b: Bones, env: number) => void }
@@ -153,38 +183,15 @@ const GESTURES: Record<
       // is driven by the UPPER arm's twist axis (rotation.y) — with the
       // arm raised, twisting around its long axis sweeps the bent
       // forearm and hand through the air in a clean horizontal arc.
-      // Oscillating the forearm's own twist axis (the old version) just
-      // rotated the forearm around its length instead of swinging the
-      // hand, which read as "the arm is spinning" rather than "waving".
-      // Without the upper-arm lift, the forearm's flex axis points
-      // backward in world space — the elbow bend swings the hand behind
-      // the body instead of up toward the head.
       const osc = Math.sin(t * Math.PI * 4); // ~2 full wave cycles
       if (b.rightUpperArm) {
-        // In this rig (Euler XYZ), rotation.z (abduction) must do most
-        // of the arm raise — relying on rotation.x alone to lift the
-        // arm forward pushes the shoulder joint past its skinned range
-        // and the mesh tears at the shoulder seam. We keep z as the
-        // primary raise (less than the original 1.75 so the arm isn't
-        // straight out to the side) and use rotation.x for a moderate
-        // forward tilt, finishing the front-facing greeting look.
-        b.rightUpperArm.rotation.z += env * 1.55;
-        b.rightUpperArm.rotation.x += env * 0.8;
-        b.rightUpperArm.rotation.y -= env * osc * 0.5;
+        addBoneRotation(b.rightUpperArm, env * 0.8, -env * osc * 0.5, env * 1.55);
       }
       if (b.rightLowerArm) {
-        // Positive-z here — with the upper arm raised above horizontal,
-        // this rotates the forearm UP from the elbow so the hand ends
-        // near the head. Negative-z (the direction used by the `think`
-        // clip) only reads as natural flex when the upper arm hangs
-        // low; with a raised arm it drops the forearm downward into a
-        // V-shape instead of up into the waving ∧-shape.
-        b.rightLowerArm.rotation.z += env * 0.95;
+        addBoneRotation(b.rightLowerArm, 0, 0, env * 0.95);
       }
       if (b.rightHand) {
-        // Mirror the shoulder-twist direction so wrist roll reinforces
-        // the wave instead of fighting it.
-        b.rightHand.rotation.z -= env * osc * 0.4;
+        addBoneRotation(b.rightHand, 0, 0, -env * osc * 0.4);
       }
     },
   },
@@ -199,18 +206,13 @@ const GESTURES: Record<
       // bigger shoulder-twist sweep, plus a head tilt and chest lean.
       const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
       if (b.rightUpperArm) {
-        // See `wave` — abduction (z) does the primary raise, flexion (x)
-        // adds moderate forward tilt without tearing the shoulder seam.
-        b.rightUpperArm.rotation.z += env * 1.75;
-        b.rightUpperArm.rotation.x += env * 0.95;
-        b.rightUpperArm.rotation.y -= env * osc * 0.65;
+        addBoneRotation(b.rightUpperArm, env * 0.95, -env * osc * 0.65, env * 1.75);
       }
       if (b.rightLowerArm) {
-        // See `wave` — flex sign is positive because the arm is raised.
-        b.rightLowerArm.rotation.z += env * 1.1;
+        addBoneRotation(b.rightLowerArm, 0, 0, env * 1.1);
       }
       if (b.rightHand) {
-        b.rightHand.rotation.z -= env * osc * 0.5;
+        addBoneRotation(b.rightHand, 0, 0, -env * osc * 0.5);
       }
       if (b.head) b.head.rotation.z -= env * 0.06;
       if (b.chest) b.chest.rotation.x -= env * 0.04;
@@ -221,12 +223,10 @@ const GESTURES: Record<
     apply: (_t, b, env) => {
       // Both arms up briefly — the "YES!!" moment.
       if (b.leftUpperArm) {
-        b.leftUpperArm.rotation.z -= env * 1.55;
-        b.leftUpperArm.rotation.x -= env * 0.2;
+        addBoneRotation(b.leftUpperArm, -env * 0.2, 0, -env * 1.55);
       }
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.55;
-        b.rightUpperArm.rotation.x -= env * 0.2;
+        addBoneRotation(b.rightUpperArm, -env * 0.2, 0, env * 1.55);
       }
     },
   },
@@ -235,15 +235,12 @@ const GESTURES: Record<
     apply: (_t, b, env) => {
       // Right hand to chin with a small head tilt — reads as "hmm".
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 0.85;
-        b.rightUpperArm.rotation.x -= env * 0.55;
+        addBoneRotation(b.rightUpperArm, -env * 0.55, 0, env * 0.85);
       }
       if (b.rightLowerArm) {
-        // Right forearm bends in negative-z to flex the elbow (same
-        // direction as the `wave` / `greet` clips). Using positive-z
-        // here makes the elbow hyperextend backward — the "grotesque"
-        // bend that reads as broken.
-        b.rightLowerArm.rotation.z -= env * 1.0;
+        // Negative-z flex — same sign as wave/greet (elbow closes
+        // naturally). Positive-z hyperextends the elbow backward.
+        addBoneRotation(b.rightLowerArm, 0, 0, -env * 1.0);
       }
       if (b.head) {
         b.head.rotation.z -= env * 0.08;
@@ -265,12 +262,15 @@ const GESTURES: Record<
     duration: 0.55,
     apply: (t, b, env) => {
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 0.6;
-        b.rightUpperArm.rotation.x -= env * 0.14;
+        addBoneRotation(b.rightUpperArm, -env * 0.14, 0, env * 0.6);
       }
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.y +=
-          env * Math.sin(t * Math.PI * 3) * 0.22;
+        addBoneRotation(
+          b.rightLowerArm,
+          0,
+          env * Math.sin(t * Math.PI * 3) * 0.22,
+          0,
+        );
       }
     },
   },
@@ -874,9 +874,12 @@ function VRMModel({
     if (st.blinking && em) {
       // Contemplative blink is slow and heavy; normal is crisp.
       const blinkSpeed = isThinking ? 4 : 10;
-      // Cap per-frame increment so a large delta spike can't skip the
-      // whole blink in one frame. 16ms at 60fps = 0.016s baseline.
-      st.blinkT += Math.min(delta, 0.016) * blinkSpeed;
+      // Use the real delta so blink duration is frame-rate-independent.
+      // Cap at 100 ms so a one-off stall (tab backgrounded, GC pause)
+      // can't fast-forward through the whole blink in a single frame —
+      // but 30fps frames (33 ms) no longer get artificially slowed to
+      // the old 16 ms ceiling.
+      st.blinkT += Math.min(delta, 0.1) * blinkSpeed;
       const t = st.blinkT;
       let v: number;
       if (st.doubleBlink) {
@@ -1140,7 +1143,12 @@ function VRMModel({
       if (st.stateBlend < 1) {
         const tau = 0.35;
         st.stateBlend = Math.min(1, st.stateBlend + delta / tau);
-        if (st.stateBlend >= 1) st.prevState = null;
+        // Snap below a tiny epsilon to 1 so float drift can't leave the
+        // previous overlay mixed in at sub-perceptual weight forever.
+        if (st.stateBlend >= 0.999) {
+          st.stateBlend = 1;
+          st.prevState = null;
+        }
       }
       const newW = st.stateBlend;
       const oldW = 1 - newW;
@@ -1222,6 +1230,56 @@ function VRMModel({
   );
 }
 
+// ── Error boundary for VRM load failures ──────────────────────────────
+//
+// ``useLoader`` throws when a .vrm 404s, is corrupt, or the parser plugin
+// rejects it. Without this boundary the whole Canvas would freeze on a
+// stale frame (Suspense doesn't catch thrown errors — only thrown
+// Promises), which in OBS mode is indistinguishable from a dead stream.
+// The boundary swaps in a neutral placeholder capsule so the spotlight
+// stays alive, and surfaces the failure to the parent DOM so a toast or
+// banner can be shown.
+
+class VRMLoadErrorBoundary extends Component<
+  { children: ReactNode; onError: (message: string) => void },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error): void {
+    this.props.onError(error.message || "VRM model failed to load");
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return <VRMPlaceholderMesh />;
+    }
+    return this.props.children;
+  }
+}
+
+function VRMPlaceholderMesh() {
+  // Low-poly capsule roughly character-sized so the spotlight still
+  // reads as "someone's here" rather than a blank backdrop.
+  return (
+    <group position={[0, 1.0, 0]}>
+      <mesh>
+        <capsuleGeometry args={[0.22, 0.7, 4, 12]} />
+        <meshStandardMaterial
+          color="#94a3b8"
+          roughness={0.8}
+          transparent
+          opacity={0.55}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 // ── Outer component: Canvas + lighting + fallback ─────────────────────
 
 export default function VRMCharacter({
@@ -1235,6 +1293,13 @@ export default function VRMCharacter({
 }: Props) {
   const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
   const url = `/vrm/${file}`;
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Reset the error state when the underlying file changes — a different
+  // agent might have a working asset even if the previous one failed.
+  useEffect(() => {
+    setLoadError(null);
+  }, [url]);
 
   return (
     <div
@@ -1255,6 +1320,14 @@ export default function VRMCharacter({
         // of applying tone mapping.
         flat
         camera={{ fov: spotlight ? 30 : 32, near: 0.1, far: 10 }}
+        // ``alpha: true`` + transparent clear color lets OBS chromakey
+        // (and any non-OBS gradient behind the stage) show through the
+        // canvas's empty pixels. Without these the renderer paints the
+        // whole tile opaque black and streams lose the character cut-out.
+        gl={{ alpha: true, premultipliedAlpha: false }}
+        onCreated={({ gl }) => {
+          gl.setClearColor(0x000000, 0);
+        }}
       >
         {/* Four-point lighting: ambient + key + fill + backlight rim.
             The backlight (-z, slightly above) catches the hair and
@@ -1263,19 +1336,30 @@ export default function VRMCharacter({
         <directionalLight position={[1.2, 2, 1.5]} intensity={1.25} />
         <directionalLight position={[-1.5, 1.2, -1]} intensity={0.35} />
         <directionalLight position={[0, 1.8, -2.2]} intensity={0.55} color="#c4b5fd" />
-        <Suspense fallback={null}>
-          <VRMModel
-            url={url}
-            agentName={agent.name}
-            mood={agent.mood}
-            state={state ?? agent.state ?? "idle"}
-            getMouthAmplitude={getMouthAmplitude}
-            spotlight={spotlight}
-            cameraResetNonce={cameraResetNonce}
-            emote={emote}
-          />
-        </Suspense>
+        <VRMLoadErrorBoundary onError={setLoadError}>
+          <Suspense fallback={null}>
+            <VRMModel
+              url={url}
+              agentName={agent.name}
+              mood={agent.mood}
+              state={state ?? agent.state ?? "idle"}
+              getMouthAmplitude={getMouthAmplitude}
+              spotlight={spotlight}
+              cameraResetNonce={cameraResetNonce}
+              emote={emote}
+            />
+          </Suspense>
+        </VRMLoadErrorBoundary>
       </Canvas>
+      {loadError && spotlight && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none absolute inset-x-0 bottom-0 bg-rose-900/70 px-3 py-1.5 text-center text-[11px] font-medium text-rose-50 backdrop-blur"
+        >
+          캐릭터 모델을 불러올 수 없습니다 — {agent.name}
+        </div>
+      )}
     </div>
   );
 }
