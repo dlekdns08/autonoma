@@ -144,6 +144,59 @@ class MoodPolicy(BaseModel):
         return self
 
 
+class SystemPolicy(BaseModel):
+    """Shapes the persona system prompt rendered for each agent.
+
+    ``prompt_variant`` picks the overall tone/length; the full prompt is
+    still generated from the persona + world state, this just scales how
+    much flavor text gets appended before the task list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_variant: Literal["balanced", "concise", "elaborate"] = "balanced"
+
+
+class CachePolicy(BaseModel):
+    """Provider-side prompt-cache behavior.
+
+    Anthropic supports explicit ``cache_control`` blocks; other providers
+    no-op on this flag. Keeping it enabled reduces cost and latency on
+    repeated system-prompt blocks, which dominate token usage in long
+    swarm runs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_cache: Literal["enabled", "disabled"] = "enabled"
+
+
+class BudgetPolicy(BaseModel):
+    """Soft / hard cap on total tokens a single run is allowed to spend.
+
+    ``enforcement=soft_warn`` emits a warning event when the cap is
+    crossed; ``hard_stop`` halts new turns; ``off`` disables the check
+    entirely (still tracks usage for observability).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tokens_per_run: int = Field(default=500_000, ge=10_000, le=10_000_000)
+    enforcement: Literal["soft_warn", "hard_stop", "off"] = "soft_warn"
+
+
+class CheckpointPolicy(BaseModel):
+    """Periodic ``session.checkpoint`` event cadence.
+
+    Zero disables the timer; non-zero emits a snapshot event every N
+    seconds so an external durable store (or the UI) can persist a
+    restore point."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interval_seconds: int = Field(default=60, ge=0, le=600)
+    include_full_state: Literal["on", "off"] = "off"
+
+
 class SocialPolicy(BaseModel):
     """Relationship thresholds and periodic social-event cadences."""
 
@@ -183,6 +236,10 @@ class HarnessPolicyContent(BaseModel):
     safety: SafetyPolicy = Field(default_factory=SafetyPolicy)
     mood: MoodPolicy = Field(default_factory=MoodPolicy)
     social: SocialPolicy = Field(default_factory=SocialPolicy)
+    system: SystemPolicy = Field(default_factory=SystemPolicy)
+    cache: CachePolicy = Field(default_factory=CachePolicy)
+    budget: BudgetPolicy = Field(default_factory=BudgetPolicy)
+    checkpoint: CheckpointPolicy = Field(default_factory=CheckpointPolicy)
 
 
 class HarnessPolicy(BaseModel):
