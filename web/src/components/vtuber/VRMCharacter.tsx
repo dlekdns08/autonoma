@@ -163,7 +163,11 @@ const GESTURES: Record<
       if (b.rightUpperArm) {
         b.rightUpperArm.rotation.z += env * 1.75;
         b.rightUpperArm.rotation.x -= env * 0.55;
-        b.rightUpperArm.rotation.y += env * osc * 0.5;
+        // Negative sign so the shoulder twist sweeps the raised forearm
+        // forward (toward the viewer) on the positive half of the osc,
+        // matching the direction of a natural "hello" wave. Positive
+        // here swung the hand backward behind the shoulder.
+        b.rightUpperArm.rotation.y -= env * osc * 0.5;
       }
       if (b.rightLowerArm) {
         // Positive-z here — with the upper arm raised above horizontal,
@@ -175,7 +179,9 @@ const GESTURES: Record<
         b.rightLowerArm.rotation.z += env * 0.95;
       }
       if (b.rightHand) {
-        b.rightHand.rotation.z += env * osc * 0.4;
+        // Mirror the shoulder-twist direction so wrist roll reinforces
+        // the wave instead of fighting it.
+        b.rightHand.rotation.z -= env * osc * 0.4;
       }
     },
   },
@@ -192,14 +198,16 @@ const GESTURES: Record<
       if (b.rightUpperArm) {
         b.rightUpperArm.rotation.z += env * 1.95;
         b.rightUpperArm.rotation.x -= env * 0.7;
-        b.rightUpperArm.rotation.y += env * osc * 0.65;
+        // See `wave` — negative so the swing goes forward on the positive
+        // half of the oscillation.
+        b.rightUpperArm.rotation.y -= env * osc * 0.65;
       }
       if (b.rightLowerArm) {
         // See `wave` — flex sign is positive because the arm is raised.
         b.rightLowerArm.rotation.z += env * 1.1;
       }
       if (b.rightHand) {
-        b.rightHand.rotation.z += env * osc * 0.5;
+        b.rightHand.rotation.z -= env * osc * 0.5;
       }
       if (b.head) b.head.rotation.z -= env * 0.06;
       if (b.chest) b.chest.rotation.x -= env * 0.04;
