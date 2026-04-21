@@ -112,10 +112,11 @@ async def test_create_and_round_trip_preset(fresh_db) -> None:
     from autonoma.db.harness_policies import create_policy, get_policy_by_id
     from autonoma.harness.policy import default_policy_content
 
+    uid = await _make_user("alice")
     content = default_policy_content()
     content.loop.max_rounds = 75
     created = await create_policy(
-        owner_user_id="user-uuid-1",
+        owner_user_id=uid,
         name="faster",
         content=content,
     )
@@ -163,8 +164,9 @@ async def test_update_policy_bumps_updated_at(fresh_db) -> None:
 
     from autonoma.db.harness_policies import create_policy, update_policy
 
+    uid = await _make_user("bob")
     created = await create_policy(
-        owner_user_id="user-uuid-2",
+        owner_user_id=uid,
         name="orig",
     )
     # Sleep a hair so the timestamps differ even on fast machines.
@@ -183,7 +185,8 @@ async def test_delete_policy_removes_row(fresh_db) -> None:
         get_policy_by_id,
     )
 
-    created = await create_policy(owner_user_id="u", name="to_delete")
+    uid = await _make_user("carol")
+    created = await create_policy(owner_user_id=uid, name="to_delete")
     assert await delete_policy(created.id) is True
     assert await get_policy_by_id(created.id) is None
 
