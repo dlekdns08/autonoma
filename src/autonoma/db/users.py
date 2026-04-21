@@ -27,7 +27,6 @@ from typing import Literal
 from sqlalchemy import (
     Column,
     DateTime,
-    Index,
     String,
     Table,
     func,
@@ -65,8 +64,6 @@ users = Table(
         server_default=func.current_timestamp(),
     ),
 )
-
-Index("ix_users_username", users.c.username)
 
 
 @dataclass
