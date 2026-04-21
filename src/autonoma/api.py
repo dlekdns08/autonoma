@@ -286,6 +286,7 @@ FORWARDED_EVENTS = [
     "campfire.complete",
     "fortune.given",
     "fortune.fulfilled",
+    "fortune.pickup",
     "boss.appeared",
     "boss.defeated",
     "boss.damage",
@@ -919,6 +920,34 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await manager.send_to_ws(
                     ws, "snapshot", await _get_snapshot_coalesced(session.session_id)
                 )
+
+            # ── pickup_cookie ─────────────────────────────────────────
+            elif cmd == "pickup_cookie":
+                recipient = (msg.get("recipient") or "").strip()
+                if (
+                    recipient
+                    and session.swarm is not None
+                    and session.task is not None
+                    and not session.task.done()
+                ):
+                    # The ws loop runs outside the swarm task's ContextVar
+                    # context, so set the session id token here before awaiting
+                    # so bus events emitted during pickup reach this room.
+                    token = _current_session_id.set(session.session_id)
+                    try:
+                        await session.swarm.pickup_fortune_cookie(recipient)
+                    except (AttributeError, RuntimeError) as e:
+                        logger.warning(
+                            f"[WS:{session.session_id}] "
+                            f"pickup_fortune_cookie race (swarm stale): {e!r}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[WS:{session.session_id}] "
+                            f"Failed to pickup cookie: {e!r}"
+                        )
+                    finally:
+                        _current_session_id.reset(token)
 
             # ── message ───────────────────────────────────────────────
             elif cmd == "message":

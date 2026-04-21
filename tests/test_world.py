@@ -1275,6 +1275,23 @@ class TestFortuneCookies:
         assert jar.get_active_fortune("Alice") is not None
         assert jar.get_active_fortune("Bob") is None
 
+    def test_fortune_cookie_open_sets_picked_up_flag(self):
+        jar = FortuneCookieJar()
+        given = jar.give_cookie("Alice", 1)
+        assert given is not None
+        assert given.picked_up is False
+
+        opened = jar.open_cookie("Alice")
+        assert opened is given
+        assert opened.picked_up is True
+        # Still active so action-based fulfilment can still fire
+        assert jar.get_active_fortune("Alice") is opened
+
+        # Idempotent: opening again returns None
+        assert jar.open_cookie("Alice") is None
+        # Opening a non-existent agent's cookie returns None
+        assert jar.open_cookie("Bob") is None
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Agent Ghosts
