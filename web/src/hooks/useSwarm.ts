@@ -618,7 +618,7 @@ export function useSwarm() {
               if (next.boss) {
                 let hp = next.boss.hp;
                 let maxHp = next.boss.max_hp;
-                let damage = (data.damage as number) || 0;
+                const damage = (data.damage as number) || 0;
                 if (typeof data.hp === "number") hp = data.hp as number;
                 if (typeof data.max_hp === "number") maxHp = data.max_hp as number;
                 if (!damage && typeof data.message === "string") {
