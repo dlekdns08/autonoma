@@ -790,11 +790,24 @@ export function useSwarm() {
     );
   }, []);
 
-  const startSwarm = useCallback((goal: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ command: "start", goal }));
-    }
-  }, []);
+  const startSwarm = useCallback(
+    (
+      goal: string,
+      opts?: {
+        preset_id?: string;
+        overrides?: Record<string, Record<string, unknown>>;
+      },
+    ) => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+      const payload: Record<string, unknown> = { command: "start", goal };
+      if (opts?.preset_id) payload.preset_id = opts.preset_id;
+      if (opts?.overrides && Object.keys(opts.overrides).length > 0) {
+        payload.overrides = opts.overrides;
+      }
+      wsRef.current.send(JSON.stringify(payload));
+    },
+    [],
+  );
 
   const resetSwarm = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
