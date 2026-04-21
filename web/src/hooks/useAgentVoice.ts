@@ -392,22 +392,17 @@ export function useAgentVoice(): UseAgentVoiceResult {
 
   // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
   // each call can cancel the prior timer/interval without rerendering.
+  // `number` matches the DOM-typed `window.setTimeout` / `setInterval`
+  // return types; avoid `ReturnType<typeof setTimeout>` which resolves to
+  // `NodeJS.Timeout` when @types/node is present and fails the assignment.
   const fallbackTimersRef = useRef<
-    Map<
-      string,
-      {
-        clear: ReturnType<typeof window.setTimeout>;
-        amp: ReturnType<typeof window.setInterval>;
-      }
-    >
+    Map<string, { clear: number; amp: number }>
   >(new Map());
 
   // Pending Web Speech kick-off timers — keyed by agent. Lets
   // ``pushAudioEvent`` cancel the browser TTS the instant server TTS
   // audio arrives, avoiding double-speak.
-  const pendingWebSpeechRef = useRef<
-    Map<string, ReturnType<typeof window.setTimeout>>
-  >(new Map());
+  const pendingWebSpeechRef = useRef<Map<string, number>>(new Map());
 
   const markSpeakingFromText = useCallback(
     (agentName: string, text: string) => {
