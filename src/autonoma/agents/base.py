@@ -112,15 +112,31 @@ MOOD_EMOTE: dict[str, str] = {
 # must acquire this lock before mutating Task.status / Task.assigned_to to
 # avoid two agents claiming the same OPEN task in the same round.
 #
-# The swarm only runs one project at a time in-process, so a module-level
-# lock is sufficient; if that assumption changes, move this onto ProjectState.
-TASKS_LOCK: asyncio.Lock = asyncio.Lock()
+# The lock is created lazily on first access. ``asyncio.Lock`` since 3.10
+# is loop-agnostic, but test runners that spin up one ``asyncio.run`` per
+# test share no state anyway, so ``reset_tasks_lock_for_tests`` gives the
+# suite an explicit knob to start fresh when needed.
+_TASKS_LOCK_SINGLETON: asyncio.Lock | None = None
+
+
+def get_tasks_lock() -> asyncio.Lock:
+    """Return the shared TASKS lock, creating it on first use."""
+    global _TASKS_LOCK_SINGLETON
+    if _TASKS_LOCK_SINGLETON is None:
+        _TASKS_LOCK_SINGLETON = asyncio.Lock()
+    return _TASKS_LOCK_SINGLETON
+
+
+def reset_tasks_lock_for_tests() -> None:
+    """Drop the cached lock so the next ``get_tasks_lock()`` creates a new one."""
+    global _TASKS_LOCK_SINGLETON
+    _TASKS_LOCK_SINGLETON = None
 
 
 def _atomic_claim_task(task: Task, agent_name: str) -> None:
     """Atomically mark a task as IN_PROGRESS and assigned to ``agent_name``.
 
-    Must be called while holding ``TASKS_LOCK``. Keeps ``status`` and
+    Must be called while holding ``get_tasks_lock()``. Keeps ``status`` and
     ``assigned_to`` in sync so callers never see a half-updated task.
     """
     task.assigned_to = agent_name
@@ -359,10 +375,34 @@ class AutonomousAgent:
     def receive_message(self, msg: AgentMessage) -> None:
         self.inbox.append(msg)
         if len(self.inbox) > MAX_INBOX_SIZE:
-            trimmer = _strategy_lookup(
-                "decision.message_priority", self.policy.decision.message_priority
-            )
-            self.inbox = trimmer(self.inbox, MAX_INBOX_SIZE, _msg_priority)
+            # Critical coordination messages (task assignment, help/review
+            # requests — priority ≤ 3) are always preserved in arrival
+            # order, regardless of inbox pressure. Chat-level messages
+            # (priority ≥ 5) are trimmed via the usual strategy down to
+            # whatever budget is left after keeping the critical tail.
+            # Without this split, a flood of incoming chat could evict an
+            # in-flight TASK_ASSIGN and the agent would never execute it.
+            critical = [m for m in self.inbox if _msg_priority(m) <= 3]
+            non_critical = [m for m in self.inbox if _msg_priority(m) > 3]
+            budget = max(0, MAX_INBOX_SIZE - len(critical))
+            if non_critical and budget < len(non_critical):
+                trimmer = _strategy_lookup(
+                    "decision.message_priority", self.policy.decision.message_priority
+                )
+                non_critical = trimmer(non_critical, budget, _msg_priority)
+            # Rebuild in arrival order so downstream consumers that rely
+            # on FIFO semantics (e.g. conversation threading) aren't
+            # reordered. If critical messages alone exceed the cap we
+            # keep them all and accept the temporary overflow — that's
+            # the lesser evil vs. dropping assignments.
+            keep_ids = {id(m) for m in critical} | {id(m) for m in non_critical}
+            self.inbox = [m for m in self.inbox if id(m) in keep_ids]
+            if len(critical) > MAX_INBOX_SIZE:
+                logger.warning(
+                    "[%s] critical inbox overflow: %d critical messages "
+                    "(cap=%d) — agent is falling behind coordination",
+                    self.name, len(critical), MAX_INBOX_SIZE,
+                )
 
     # ── Decision Engine (Harness-Aware) ───────────────────────────────
 
@@ -611,15 +651,15 @@ Rules:
     async def _action_work(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         """Pick up or continue working on a task.
 
-        Uses ``TASKS_LOCK`` so the status/assigned_to double-write is atomic
-        with respect to the Director's assignment loop — prevents two agents
-        claiming the same OPEN task in the same round.
+        Uses the shared tasks lock so the status/assigned_to double-write is
+        atomic with respect to the Director's assignment loop — prevents two
+        agents claiming the same OPEN task in the same round.
         """
         await self._set_state(AgentState.WORKING)
 
         task_id = decision.get("target_task_id")
         if task_id:
-            async with TASKS_LOCK:
+            async with get_tasks_lock():
                 task = next((t for t in project.tasks if t.id == task_id), None)
                 claimed = False
                 started = False
