@@ -955,6 +955,57 @@ def _harness_policy_to_dict(policy: Any) -> dict[str, Any]:
     return policy.model_dump(mode="json")
 
 
+@app.get("/api/harness/schema")
+async def get_harness_schema(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Field-by-field schema so the frontend can build a form without
+    mirroring the Pydantic model. Returns a flattened shape:
+
+    ``{"sections": {"<section>": {"<field>": {type, default, options?,
+    min?, max?}}}}``
+
+    The frontend builds a drop-down for ``type == "enum"`` and a number
+    input with ``min``/``max`` for ``type == "int"`` / ``"float"``.
+    Stays in lockstep with ``HarnessPolicyContent`` automatically — when
+    a Literal gains a value or a Field changes bounds, this endpoint
+    reflects it on the next request without a code change here.
+    """
+    from typing import Literal, get_args, get_origin
+
+    content_cls = HarnessPolicyContent
+    sections: dict[str, dict[str, Any]] = {}
+    default_content = default_policy_content().model_dump(mode="json")
+
+    for section_name, section_field in content_cls.model_fields.items():
+        sub_model = section_field.annotation
+        fields: dict[str, Any] = {}
+        for field_name, field_info in sub_model.model_fields.items():
+            annot = field_info.annotation
+            default = default_content[section_name].get(field_name)
+            spec: dict[str, Any] = {"default": default}
+            if get_origin(annot) is Literal:
+                spec["type"] = "enum"
+                spec["options"] = list(get_args(annot))
+            elif annot is bool:
+                spec["type"] = "bool"
+            elif annot is int:
+                spec["type"] = "int"
+            elif annot is float:
+                spec["type"] = "float"
+            else:
+                spec["type"] = "unknown"
+            # Pydantic stores ge/le on constraint metadata.
+            for meta in field_info.metadata:
+                if hasattr(meta, "ge"):
+                    spec["min"] = meta.ge
+                if hasattr(meta, "le"):
+                    spec["max"] = meta.le
+            fields[field_name] = spec
+        sections[section_name] = fields
+    return {"sections": sections}
+
+
 @app.get("/api/harness/presets")
 async def list_harness_presets(
     user: User = Depends(require_active_user),
