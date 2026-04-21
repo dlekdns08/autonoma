@@ -12,7 +12,6 @@ The system-wide ``default`` preset has ``is_default=True`` and
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime
 
