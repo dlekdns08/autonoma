@@ -47,6 +47,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("routing.strategy", "priority"),
         ("routing.strategy", "round_robin"),
         ("routing.strategy", "broadcast"),
+        ("loop.exit_condition", "all_tasks_done"),
+        ("loop.exit_condition", "director_decides"),
+        ("loop.exit_condition", "max_rounds_only"),
     }
 
     stubs = set(all_stubs())

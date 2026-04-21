@@ -16,7 +16,10 @@ from autonoma.agents.harness import get_harness
 from autonoma.config import settings
 from autonoma.db.registry import CharacterRegistry
 from autonoma.event_bus import bus
-from autonoma.harness import routing_strategies as _routing_strategies  # noqa: F401 — triggers @register
+from autonoma.harness import (  # noqa: F401 — imports trigger @register
+    loop_strategies as _loop_strategies,
+    routing_strategies as _routing_strategies,
+)
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import LLMConfig
@@ -405,9 +408,16 @@ class AgentSwarm:
                 logger.warning("[Swarm] Director timed out")
                 director_result = {"action": "timeout"}
 
-            if director_result.get("action") == "project_complete":
-                exit_reason = "project_complete"
-                logger.info(f"[Swarm] Director declared project_complete at round {self._round}")
+            exit_fn = _strategy_lookup(
+                "loop.exit_condition", self.policy.loop.exit_condition
+            )
+            should_exit, reason = exit_fn(project, director_result.get("action"))
+            if should_exit:
+                exit_reason = reason
+                logger.info(
+                    f"[Swarm] exit_condition={self.policy.loop.exit_condition} "
+                    f"triggered at round {self._round} (reason={reason})"
+                )
                 break
 
             # All other agents act concurrently with individual timeouts
@@ -493,14 +503,23 @@ class AgentSwarm:
             if recorder is not None:
                 recorder.checkpoint(self._round, project)
 
-            if project.completed:
-                # Narrate project completion
-                agent_names = list(self.agents.keys())
-                self.narrative.narrate_project_complete(
-                    project.description or "the project", agent_names, self._round,
+            should_exit, reason = exit_fn(project, None)
+            if should_exit:
+                # Narrate project completion before breaking. The existing
+                # narration only fires on the completed-flag path so we
+                # guard the call accordingly.
+                if project.completed:
+                    agent_names = list(self.agents.keys())
+                    self.narrative.narrate_project_complete(
+                        project.description or "the project",
+                        agent_names,
+                        self._round,
+                    )
+                exit_reason = reason
+                logger.info(
+                    f"[Swarm] exit_condition={self.policy.loop.exit_condition} "
+                    f"end-of-round exit (reason={reason})"
                 )
-                exit_reason = "completed_flag"
-                logger.info(f"[Swarm] project.completed flag set at round {self._round}")
                 break
 
             await asyncio.sleep(0.1)
