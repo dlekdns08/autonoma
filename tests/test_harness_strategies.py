@@ -82,6 +82,16 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("mood.transition_strategy", "sticky"),
         ("mood.transition_strategy", "reactive"),
         ("mood.transition_strategy", "random_walk"),
+        ("system.prompt_variant", "balanced"),
+        ("system.prompt_variant", "concise"),
+        ("system.prompt_variant", "elaborate"),
+        ("cache.provider_cache", "enabled"),
+        ("cache.provider_cache", "disabled"),
+        ("budget.enforcement", "soft_warn"),
+        ("budget.enforcement", "hard_stop"),
+        ("budget.enforcement", "off"),
+        ("checkpoint.include_full_state", "on"),
+        ("checkpoint.include_full_state", "off"),
     }
 
     stubs = set(all_stubs())
