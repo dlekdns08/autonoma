@@ -949,12 +949,39 @@ class AgentSwarm:
 
     # ── Message Routing ────────────────────────────────────────────────
 
+    # Channel → role keyword mappings for group routing (Feature 19).
+    CHANNEL_ROLES: dict[str, list[str]] = {
+        "api-team": ["backend", "api", "server"],
+        "frontend": ["frontend", "ui", "design"],
+        "docs": ["writer", "documentation"],
+    }
+
+    def _resolve_channel_recipients(self, channel: str) -> list[str]:
+        """Return agent names whose role matches the channel's keywords.
+
+        Falls back to all non-Director agents when no agents match so
+        the message is never silently dropped.
+        """
+        keywords = self.CHANNEL_ROLES.get(channel, [])
+        matched = [
+            name for name, agent in self.agents.items()
+            if name != "Director" and any(kw in agent.persona.role.lower() for kw in keywords)
+        ]
+        if not matched:
+            # Fallback to broadcast — no registered agent speaks this channel.
+            matched = [n for n in self.agents if n != "Director"]
+        return matched
+
     def _route_messages(self, project: ProjectState) -> None:
         """Deliver only new (unrouted) messages to agent inboxes.
 
         Recipient selection is delegated to the registered
         ``routing.strategy`` implementation; the swarm just hands the
         chosen agents the message.
+
+        When ``msg.channel`` is set, the message is additionally fanned
+        out to all agents whose role matches the channel's keywords,
+        regardless of the normal routing strategy.
         """
         strategy = _strategy_lookup("routing.strategy", self.policy.routing.strategy)
         agent_names = list(self.agents.keys())
@@ -963,11 +990,20 @@ class AgentSwarm:
                 continue
             self._routed_message_ids.add(msg.id)
             delivered = False
-            for name in strategy(msg, agent_names, self._routing_state):
+
+            # Channel routing takes precedence over normal strategy when set.
+            channel = getattr(msg, "channel", None)
+            if channel and channel != "all":
+                recipients = self._resolve_channel_recipients(channel)
+            else:
+                recipients = list(strategy(msg, agent_names, self._routing_state))
+
+            for name in recipients:
                 agent = self.agents.get(name)
                 if agent is not None:
                     agent.receive_message(msg)
                     delivered = True
+
             # Warn when a targeted message (not "all") finds no recipient.
             # "all" broadcasts are expected to be delivered to all current
             # agents so a miss there is not actionable at the routing layer.
