@@ -136,6 +136,17 @@ class AgentHarness:
             parts.append("")
 
         # Capability constraints in prompt (dual enforcement)
+        # Show both allowed and disallowed so the LLM knows exactly what it can
+        # and cannot do — listing only disallowed leaves the LLM guessing.
+        effective = self.get_effective_capabilities()
+        if effective:
+            parts.append("=== YOUR AVAILABLE ACTIONS ===")
+            parts.append("You MAY use these actions:")
+            for cap in sorted(effective, key=lambda c: c.value):
+                parts.append(f"- {cap.value}")
+            parts.append("(Plus always-allowed meta-actions: idle, celebrate)")
+            parts.append("")
+
         disallowed = self.disallowed_capabilities
         if disallowed:
             parts.append("=== RESTRICTED ACTIONS ===")
