@@ -874,7 +874,9 @@ function VRMModel({
     if (st.blinking && em) {
       // Contemplative blink is slow and heavy; normal is crisp.
       const blinkSpeed = isThinking ? 4 : 10;
-      st.blinkT += delta * blinkSpeed;
+      // Cap per-frame increment so a large delta spike can't skip the
+      // whole blink in one frame. 16ms at 60fps = 0.016s baseline.
+      st.blinkT += Math.min(delta, 0.016) * blinkSpeed;
       const t = st.blinkT;
       let v: number;
       if (st.doubleBlink) {
