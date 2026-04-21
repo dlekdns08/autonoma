@@ -55,15 +55,5 @@ def _force_idle(exc: Exception, agent_name: str) -> dict[str, Any]:
 
 @register("decision.on_parse_failure", "abort")
 def _abort(exc: Exception, agent_name: str) -> dict[str, Any]:
-    """Return a sentinel dict that signals the caller to abort this turn.
-
-    We return (rather than raise) so the strategy contract is uniform;
-    the caller detects ``thinking == "parse_failure_abort"`` and raises
-    ``ParseFailureAbort`` to propagate the error up the call stack.
-    """
-    return {
-        "action": "idle",
-        "speech": "Parse error - aborting turn",
-        "thinking": "parse_failure_abort",
-        "_abort_exc": exc,
-    }
+    """Re-raise *exc* immediately so strict-mode callers surface the error."""
+    raise exc

@@ -537,17 +537,7 @@ Rules:
             handler = _strategy_lookup(
                 "decision.on_parse_failure", self.policy.decision.on_parse_failure
             )
-            result = handler(e, self.name)
-            # "abort" strategy returns a sentinel dict; detect and re-raise so
-            # the swarm loop can surface the error rather than papering over it.
-            if result.get("thinking") == "parse_failure_abort":
-                raise ParseFailureAbort(
-                    f"[{self.name}] parse_failure_abort: {result.get('_abort_exc', e)}"
-                ) from e
-            return result
-        except ParseFailureAbort:
-            # Let abort propagate without being caught by the generic handler.
-            raise
+            return handler(e, self.name)
         except Exception as e:
             logger.error(f"[{self.name}] Unexpected error in decide: {e}")
             return {"action": "idle", "speech": f"Error: {str(e)[:30]}", "thinking": "error"}
