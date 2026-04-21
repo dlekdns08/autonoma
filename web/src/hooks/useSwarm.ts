@@ -218,6 +218,13 @@ export function useSwarm() {
           addEvent(event, data);
         }
 
+        // ── Server-side errors (e.g. harness validation failure) ──────
+        if (event === "error") {
+          const msg = (data.message as string) ?? "An error occurred.";
+          addToast("info", "Error", msg, "✕");
+          return;
+        }
+
         // ── Auth events ──────────────────────────────────────────────
         if (event === "auth.status") {
           const hasAdmin = !!(data.has_admin);
