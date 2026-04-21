@@ -115,6 +115,12 @@ const INITIAL_SANDBOX_METRICS: SandboxMetrics = {
   totalDurationMs: 0,
 };
 
+export interface CheckpointEntry {
+  id: string;
+  round: number;
+  created_at: string;
+}
+
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -122,6 +128,7 @@ export function useSwarm() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authState, setAuthState] = useState<AuthState>(INITIAL_AUTH);
   const [sandboxMetrics, setSandboxMetrics] = useState<SandboxMetrics>(INITIAL_SANDBOX_METRICS);
+  const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
   // Per-connection session id issued by the backend on auth.status. Every
   // HTTP download route requires it so concurrent users stay isolated.
   const [sessionId, setSessionId] = useState<number | null>(null);
