@@ -15,6 +15,23 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, RoomState } from "@/lib/types";
 
+// Channel definitions — "All" shows every message regardless of channel.
+// Other tabs filter to messages that carry that channel tag.
+type ChannelTab = "all" | "api-team" | "frontend" | "docs";
+
+const CHANNEL_TABS: { id: ChannelTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "api-team", label: "api-team" },
+  { id: "frontend", label: "frontend" },
+  { id: "docs", label: "docs" },
+];
+
+const CHANNEL_BADGE_COLORS: Record<string, string> = {
+  "api-team": "bg-blue-500/30 text-blue-200",
+  "frontend": "bg-fuchsia-500/30 text-fuchsia-200",
+  "docs": "bg-green-500/30 text-green-200",
+};
+
 interface Props {
   room: RoomState;
   messages: ChatMessage[];
@@ -33,6 +50,7 @@ export default function ChatPanel({
   const [draft, setDraft] = useState("");
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [activeChannel, setActiveChannel] = useState<ChannelTab>("all");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
 
