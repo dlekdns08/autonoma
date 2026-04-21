@@ -72,6 +72,13 @@ export default function ChatPanel({
     setDraft("");
   };
 
+  // Filter messages by active channel. ChatMessage doesn't carry a channel
+  // field from the backend today — we filter only if the message object has
+  // one set; otherwise it shows in "All".
+  const filteredMessages = activeChannel === "all"
+    ? messages
+    : messages.filter((m) => (m as ChatMessage & { channel?: string }).channel === activeChannel);
+
   return (
     <div className="flex h-full flex-col gap-2 rounded-lg border border-cyan-500/20 bg-black/40 p-2 text-xs">
       <div className="flex items-center justify-between">
@@ -87,6 +94,24 @@ export default function ChatPanel({
         <div className="text-white/60">
           {room.viewerCount} viewer{room.viewerCount === 1 ? "" : "s"}
         </div>
+      </div>
+
+      {/* Channel filter tabs */}
+      <div className="flex gap-1 flex-wrap">
+        {CHANNEL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveChannel(tab.id)}
+            className={`rounded px-2 py-0.5 text-[10px] font-mono transition-colors ${
+              activeChannel === tab.id
+                ? "bg-cyan-500/30 text-cyan-200"
+                : "bg-white/5 text-white/40 hover:bg-white/10"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {!room.isOwner && (
@@ -107,19 +132,30 @@ export default function ChatPanel({
         onScroll={onScroll}
         className="flex-1 min-h-0 overflow-y-auto rounded bg-black/30 p-1.5 font-mono"
       >
-        {messages.length === 0 ? (
-          <div className="text-white/30">No chat yet — say hi.</div>
+        {filteredMessages.length === 0 ? (
+          <div className="text-white/30">
+            {activeChannel === "all" ? "No chat yet — say hi." : `No messages in #${activeChannel}.`}
+          </div>
         ) : (
-          messages.map((m) => (
-            <div key={m.id} className="leading-5">
-              <span
-                className={`mr-1 ${m.isOwner ? "text-amber-300" : "text-cyan-300"}`}
-              >
-                {m.from}:
-              </span>
-              <span className="text-white/90 whitespace-pre-wrap">{m.text}</span>
-            </div>
-          ))
+          filteredMessages.map((m) => {
+            const msgChannel = (m as ChatMessage & { channel?: string }).channel;
+            const badgeClass = msgChannel ? CHANNEL_BADGE_COLORS[msgChannel] : null;
+            return (
+              <div key={m.id} className="leading-5">
+                {badgeClass && (
+                  <span className={`mr-1 rounded px-1 py-0.5 text-[9px] font-mono ${badgeClass}`}>
+                    #{msgChannel}
+                  </span>
+                )}
+                <span
+                  className={`mr-1 ${m.isOwner ? "text-amber-300" : "text-cyan-300"}`}
+                >
+                  {m.from}:
+                </span>
+                <span className="text-white/90 whitespace-pre-wrap">{m.text}</span>
+              </div>
+            );
+          })
         )}
       </div>
 
