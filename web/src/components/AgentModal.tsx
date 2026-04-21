@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AgentData, RelationshipData } from "@/lib/types";
 
 interface Props {
@@ -142,6 +143,7 @@ function MoodSparkline({ mood }: { mood: string }) {
 
 export default function AgentModal({ agent, onClose, onSend, relationships = [] }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useModalA11y<HTMLDivElement>({ onEscape: onClose });
   const [tab, setTab] = useState<"stats" | "info" | "profile">("stats");
   const [instruction, setInstruction] = useState("");
   const [sentFlash, setSentFlash] = useState(false);
@@ -154,14 +156,6 @@ export default function AgentModal({ agent, onClose, onSend, relationships = [] 
     setSentFlash(true);
     setTimeout(() => setSentFlash(false), 900);
   };
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
 
   const xpPct = agent.xp_to_next > 0 ? (agent.xp / agent.xp_to_next) * 100 : 0;
 
@@ -180,11 +174,18 @@ export default function AgentModal({ agent, onClose, onSend, relationships = [] 
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-purple-500/30 bg-gradient-to-b from-slate-900 to-slate-950 shadow-2xl shadow-purple-500/10 overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="agent-modal-title"
+        className="w-full max-w-md rounded-2xl border border-purple-500/30 bg-gradient-to-b from-slate-900 to-slate-950 shadow-2xl shadow-purple-500/10 overflow-hidden"
+      >
         {/* Header */}
         <div className="relative px-6 py-5 bg-gradient-to-r from-purple-950/50 via-fuchsia-950/30 to-purple-950/50 border-b border-purple-500/20">
           <button
             onClick={onClose}
+            aria-label={`Close ${agent.name} details`}
             className="absolute top-3 right-3 text-white/30 hover:text-white/70 transition-colors text-lg"
           >
             ✕
@@ -193,7 +194,12 @@ export default function AgentModal({ agent, onClose, onSend, relationships = [] 
           <div className="flex items-center gap-4">
             <div className="text-5xl">{agent.species_emoji || agent.emoji}</div>
             <div>
-              <h2 className="text-xl font-bold text-white font-mono">{agent.name}</h2>
+              <h2
+                id="agent-modal-title"
+                className="text-xl font-bold text-white font-mono"
+              >
+                {agent.name}
+              </h2>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-sm text-white/50">{agent.role}</span>
                 {agent.rarity && agent.rarity !== "common" && (
