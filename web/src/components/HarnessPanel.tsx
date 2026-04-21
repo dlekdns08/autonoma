@@ -5,6 +5,8 @@ import {
   useHarnessPresets,
   type HarnessContent,
   type HarnessFieldSpec,
+  type HarnessPipeline,
+  type HarnessPipelineNode,
   type HarnessPreset,
   type HarnessSchema,
   type HarnessSectionContent,
@@ -26,6 +28,11 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onApply: (payload: HarnessStartPayload) => void;
+  /** Field paths the swarm is currently exercising — receives a brief
+   *  highlight in the Pipeline view so users can watch policy choices
+   *  "light up" as the run progresses. Sourced from ``session.checkpoint``
+   *  events upstream. */
+  activeFieldPaths?: ReadonlySet<string>;
 }
 
 // Default preset sentinel — when the user picks "(default)" we send no
