@@ -117,6 +117,22 @@ class AgentSwarm:
         # persister gets the right exit reason.
         self._last_exit_reason: str = ""
 
+        # Serialize the approve → spawn sequence so two concurrent
+        # ``agent.spawn_requested`` events can't both read
+        # ``len(self.agents) == max_agents - 1`` and each decide the
+        # slot is free. The bus dispatches handlers via ``gather``, so
+        # multiple instances of ``_on_spawn_request`` absolutely can run
+        # interleaved once ``bus.emit`` resumes them.
+        self._spawn_lock: asyncio.Lock = asyncio.Lock()
+
+        # Per-agent cooldown populated by ``_on_recovery_needed``. While an
+        # agent's name is in the map with ``until > loop.time()`` the round
+        # loop skips their ``think_and_act`` call — this breaks the
+        # "repeatedly fail parse → emit recovery_needed → nobody acts →
+        # loop forever" pattern. Without this handler, the bus event fired
+        # and nothing changed.
+        self._agent_cooldown_until: dict[str, float] = {}
+
         # ── World Systems ──
         self.relationships = RelationshipGraph()
         self.world_events = WorldEventLedger()
@@ -145,6 +161,7 @@ class AgentSwarm:
         self.director._swarm_relationships = self.relationships
 
         bus.on("agent.spawn_requested", self._on_spawn_request)
+        bus.on("agent.recovery_needed", self._on_recovery_needed)
 
     async def initialize(self, project: ProjectState) -> None:
         """Set up the swarm: director decomposes goal, agents get created."""
@@ -433,8 +450,13 @@ class AgentSwarm:
                 )
                 break
 
-            # All other agents act concurrently with individual timeouts
-            other_agents = [a for name, a in self.agents.items() if name != "Director"]
+            # All other agents act concurrently with individual timeouts.
+            # Skip any agent currently in post-recovery cooldown so the
+            # swarm doesn't keep hammering a struggling LLM path.
+            other_agents = [
+                a for name, a in self.agents.items()
+                if name != "Director" and not self._agent_in_cooldown(name)
+            ]
             if other_agents:
                 tasks = [
                     asyncio.wait_for(
@@ -1097,32 +1119,54 @@ class AgentSwarm:
         color: str = "cyan",
         **_: Any,
     ) -> None:
-        approve_fn = _strategy_lookup(
-            "spawn.approval_mode", self.policy.spawn.approval_mode
-        )
-        approved, reason = approve_fn(requester, list(self.agents.keys()))
-        if not approved:
-            logger.info(f"[Swarm] {reason}")
-            await bus.emit(
-                "agent.spawn_failed",
-                name=name,
-                reason="not_approved",
-                detail=reason,
-                requester=requester,
-            )
-            return
+        # Whole handler wrapped in try/except: the event bus uses
+        # ``gather(return_exceptions=True)`` so any uncaught failure here
+        # would leave the requester without an ``agent.spawn_failed`` signal
+        # and the Director would loop forever waiting for a peer that never
+        # materializes.
+        try:
+            # Approval + spawn must be atomic: otherwise two concurrent
+            # requests can both observe the same roster length, both pass
+            # ``approve_fn``, and both slip past ``spawn_agent``'s own
+            # ``len(self.agents) >= settings.max_agents`` guard if the
+            # approval policy cares about agent *names* rather than count.
+            async with self._spawn_lock:
+                approve_fn = _strategy_lookup(
+                    "spawn.approval_mode", self.policy.spawn.approval_mode
+                )
+                approved, reason = approve_fn(requester, list(self.agents.keys()))
+                if not approved:
+                    logger.info(f"[Swarm] {reason}")
+                    await bus.emit(
+                        "agent.spawn_failed",
+                        name=name,
+                        reason="not_approved",
+                        detail=reason,
+                        requester=requester,
+                    )
+                    return
 
-        agent = self.spawn_agent(
-            name=name,
-            role=role,
-            skills=skills or ["coding"],
-            emoji=emoji,
-            color=color,
-        )
+                agent = self.spawn_agent(
+                    name=name,
+                    role=role,
+                    skills=skills or ["coding"],
+                    emoji=emoji,
+                    color=color,
+                )
 
-        if agent:
-            # Hydrate persisted growth before announcing the spawn so
-            # listeners see the correct level in the first snapshot.
+                if agent is None:
+                    await bus.emit(
+                        "agent.spawn_failed",
+                        name=name,
+                        reason="max_agents_reached",
+                        requester=requester,
+                    )
+                    return
+
+            # The roster mutation is safely past us; the rest of the work
+            # (hydration + announcement + relationship seed) can happen
+            # outside the lock so other pending spawn requests aren't held
+            # up by a slow registry read.
             await self._hydrate_agent(agent)
             await bus.emit(
                 "agent.spawned",
@@ -1133,13 +1177,76 @@ class AgentSwarm:
             )
             # Initial relationship: spawner trusts the spawned agent
             self.relationships.record(requester, name, "spawned agent", positive=True)
-        else:
-            await bus.emit(
-                "agent.spawn_failed",
-                name=name,
-                reason="max_agents_reached",
-                requester=requester,
+        except Exception as exc:
+            # Log with traceback at ERROR so the failure mode is visible in
+            # logs, then emit spawn_failed so whatever is waiting on this
+            # spawn learns about it and can move on.
+            logger.error(
+                "[Swarm] _on_spawn_request crashed for requester=%s name=%s",
+                requester, name, exc_info=exc,
             )
+            try:
+                await bus.emit(
+                    "agent.spawn_failed",
+                    name=name,
+                    reason="handler_exception",
+                    detail=f"{type(exc).__name__}: {exc}"[:200],
+                    requester=requester,
+                )
+            except Exception:  # pragma: no cover — last-ditch
+                pass
+
+    async def _on_recovery_needed(
+        self,
+        agent: str = "",
+        pattern: str = "",
+        **_: Any,
+    ) -> None:
+        """React to an agent signalling it can't make progress.
+
+        ``base.py`` emits ``agent.recovery_needed`` after a sliding window
+        of 5+ parse failures. Previously nothing subscribed: the LLM would
+        keep getting hammered at full tilt on the next round and the window
+        would never recover. This handler forces a cool-off so the round
+        loop can skip the struggling agent long enough for the error window
+        to drain.
+        """
+        if not agent:
+            return
+        cooldown_seconds = 20.0  # ~3-4 rounds at default tick rate
+        try:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+        except RuntimeError:
+            now = 0.0
+        self._agent_cooldown_until[agent] = now + cooldown_seconds
+        logger.warning(
+            "[Swarm] agent.recovery_needed for %s (pattern=%s) — cooldown %.0fs",
+            agent, pattern, cooldown_seconds,
+        )
+        try:
+            await bus.emit(
+                "agent.cooldown_applied",
+                agent=agent,
+                pattern=pattern,
+                seconds=cooldown_seconds,
+            )
+        except Exception:  # pragma: no cover — best-effort announcement
+            pass
+
+    def _agent_in_cooldown(self, name: str) -> bool:
+        """Return True if this agent should skip its turn this round."""
+        until = self._agent_cooldown_until.get(name)
+        if until is None:
+            return False
+        try:
+            now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            return False
+        if now >= until:
+            self._agent_cooldown_until.pop(name, None)
+            return False
+        return True
 
     # ── Gossip Spreading ──────────────────────────────────────────────
 
