@@ -216,10 +216,11 @@ function SectionBlock({
 
 // ── Pipeline view ─────────────────────────────────────────────────────
 //
-// 16 nodes rendered as three horizontal lanes (groups A/B/C). Clicking a
-// node opens a focused drawer with just that field's editor. Edges are
-// straight horizontal connectors within each lane — the grouping carries
-// the real structural meaning, so a fancier layout would just add noise.
+// 16 nodes rendered as a clean three-lane diagram — each group is a
+// horizontal row of numbered circles with a section label floating on
+// the left. A low-contrast rail runs through the circle centers, and a
+// short S-curve connects consecutive lanes to suggest flow. Clicking a
+// node opens a per-field editor in the right drawer.
 
 function valueAtPath(content: HarnessContent, fieldPath: string): unknown {
   const [section, field] = fieldPath.split(".");
@@ -252,6 +253,99 @@ interface PipelineViewProps {
   activeFieldPaths?: ReadonlySet<string>;
 }
 
+interface NodeCircleProps {
+  number: number;
+  label: string;
+  valueText: string;
+  selected: boolean;
+  modified: boolean;
+  active: boolean;
+  adminSensitive: boolean;
+  onClick: () => void;
+}
+
+function NodeCircle({
+  number,
+  label,
+  valueText,
+  selected,
+  modified,
+  active,
+  adminSensitive,
+  onClick,
+}: NodeCircleProps) {
+  // Single responsibility per ring — selection wins over active wins
+  // over modified. Keeps the diagram legible: at most one accent per
+  // circle at a time.
+  const ringClass = selected
+    ? "border-cyan-300/80 ring-2 ring-cyan-300/25"
+    : active
+      ? "border-amber-300/80 ring-2 ring-amber-300/25"
+      : modified
+        ? "border-fuchsia-400/70"
+        : "border-white/15 group-hover:border-white/45";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative z-10 flex w-[92px] flex-col items-center gap-2.5 focus:outline-none"
+    >
+      <div
+        className={`relative flex h-12 w-12 items-center justify-center rounded-full border bg-slate-950 transition-all ${ringClass}`}
+      >
+        <span className="font-serif text-[18px] font-semibold tabular-nums text-white/85">
+          {number}
+        </span>
+        {adminSensitive && (
+          <span className="absolute -top-1 -right-1 text-[9px] leading-none text-amber-300/90">
+            🔒
+          </span>
+        )}
+        {modified && !selected && (
+          <span
+            aria-hidden
+            className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_6px_rgba(232,121,249,0.7)]"
+          />
+        )}
+      </div>
+      <span className="max-w-[88px] truncate text-center font-mono text-[11px] leading-tight text-white/65">
+        {label}
+      </span>
+      <span className="-mt-1.5 max-w-[88px] truncate text-center font-mono text-[9px] leading-none text-white/30">
+        {valueText}
+      </span>
+    </button>
+  );
+}
+
+function LaneConnector() {
+  // Thin S-curve from right-of-previous-lane down to left-of-next-lane.
+  // Uses non-scaling stroke + preserveAspectRatio=none so the curve
+  // stretches horizontally with the container without thickening.
+  return (
+    <div className="grid grid-cols-[72px_1fr] gap-5">
+      <div />
+      <div className="relative h-8 px-4">
+        <svg
+          aria-hidden
+          className="absolute inset-0 h-full w-full text-white/15"
+          viewBox="0 0 100 32"
+          preserveAspectRatio="none"
+          fill="none"
+        >
+          <path
+            d="M 95 0 C 95 16, 5 16, 5 32"
+            stroke="currentColor"
+            strokeWidth="1"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 function PipelineView({
   pipeline,
   schema,
@@ -264,13 +358,25 @@ function PipelineView({
 
   const nodesByGroup = useMemo(() => {
     const map = new Map<string, HarnessPipelineNode[]>();
+    for (const g of pipeline.groups) map.set(g.id, []);
     for (const n of pipeline.nodes) {
-      const bucket = map.get(n.group) ?? [];
-      bucket.push(n);
-      map.set(n.group, bucket);
+      const bucket = map.get(n.group);
+      if (bucket) bucket.push(n);
     }
     return map;
-  }, [pipeline.nodes]);
+  }, [pipeline.groups, pipeline.nodes]);
+
+  // Global 1..N numbering follows group order, then intra-group order.
+  const numbering = useMemo(() => {
+    const m = new Map<string, number>();
+    let i = 1;
+    for (const g of pipeline.groups) {
+      for (const n of nodesByGroup.get(g.id) ?? []) {
+        m.set(n.id, i++);
+      }
+    }
+    return m;
+  }, [pipeline.groups, nodesByGroup]);
 
   const isModified = useCallback(
     (path: string): boolean => {
@@ -287,86 +393,60 @@ function PipelineView({
   const selectedSpec = selectedPath ? specAtPath(schema, selectedPath) : null;
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
-        {pipeline.groups.map((group) => {
-          const groupNodes = nodesByGroup.get(group.id) ?? [];
-          return (
-            <div
-              key={group.id}
-              className="rounded-xl border border-white/10 bg-slate-900/40 p-3"
-            >
-              <div className="mb-2 flex items-baseline gap-3">
-                <span className="text-sm font-mono font-bold text-fuchsia-300">
-                  {group.id}. {group.label}
-                </span>
-                <span className="text-[10px] font-mono text-white/40">
-                  {group.description}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 overflow-x-auto">
-                {groupNodes.map((node, idx) => {
-                  const isActive = activeFieldPaths?.has(node.field_path) ?? false;
-                  const modified = isModified(node.field_path);
-                  const current = valueAtPath(working, node.field_path);
-                  return (
-                    <div key={node.id} className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedPath(node.field_path)}
-                        className={`group relative flex min-w-[140px] flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-all ${
-                          selectedPath === node.field_path
-                            ? "border-cyan-400/70 bg-cyan-500/10"
-                            : modified
-                              ? "border-fuchsia-500/50 bg-fuchsia-500/10"
-                              : "border-white/10 bg-slate-950/60 hover:border-white/30"
-                        } ${isActive ? "ring-2 ring-amber-300/70 ring-offset-1 ring-offset-slate-950" : ""}`}
-                      >
-                        <span className="text-[11px] font-mono font-bold text-white/90 truncate w-full">
-                          {node.label}
-                        </span>
-                        <span className="text-[10px] font-mono text-white/50 truncate w-full">
-                          {formatValue(current)}
-                        </span>
-                        <div className="absolute top-1 right-1 flex gap-1">
-                          {node.admin_sensitive && (
-                            <span
-                              title="admin-sensitive field"
-                              className="text-[9px] text-amber-300"
-                            >
-                              🔒
-                            </span>
-                          )}
-                          {modified && (
-                            <span
-                              title="modified from preset"
-                              className="text-[9px] text-fuchsia-300"
-                            >
-                              ●
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      {idx < groupNodes.length - 1 && (
-                        <span className="text-white/20 text-xs">→</span>
-                      )}
+    <div className="flex flex-1 overflow-hidden bg-[#0a0a0f]">
+      <div className="flex-1 overflow-y-auto px-8 py-10">
+        <div className="mx-auto flex max-w-3xl flex-col">
+          {pipeline.groups.map((group, gi) => {
+            const groupNodes = nodesByGroup.get(group.id) ?? [];
+            return (
+              <div key={group.id}>
+                {gi > 0 && <LaneConnector />}
+                <div className="grid grid-cols-[72px_1fr] items-center gap-5">
+                  <div className="pr-2 text-right font-mono">
+                    <div className="text-base leading-none tracking-[0.2em] text-amber-200/75">
+                      {group.id}
                     </div>
-                  );
-                })}
+                    <div className="mt-1.5 whitespace-pre-line text-[10px] leading-tight text-white/35">
+                      {group.description}
+                    </div>
+                  </div>
+                  <div className="relative flex items-center justify-between px-2 py-7">
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute left-[60px] right-[60px] top-[calc(2.25rem+1px)] border-t border-white/10"
+                    />
+                    {groupNodes.map((node) => {
+                      const path = node.field_path;
+                      return (
+                        <NodeCircle
+                          key={node.id}
+                          number={numbering.get(node.id) ?? 0}
+                          label={node.label}
+                          valueText={formatValue(valueAtPath(working, path))}
+                          selected={selectedPath === path}
+                          modified={isModified(path)}
+                          active={activeFieldPaths?.has(path) ?? false}
+                          adminSensitive={node.admin_sensitive}
+                          onClick={() => setSelectedPath(path)}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {selected && selectedSpec && (
-        <aside className="w-80 shrink-0 border-l border-white/10 bg-slate-950/80 px-4 py-4 overflow-y-auto">
+        <aside className="w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-950/80 px-4 py-4">
           <div className="mb-3 flex items-start justify-between">
             <div>
-              <h3 className="text-sm font-mono font-bold text-cyan-300">
-                {selected.label}
+              <h3 className="font-mono text-sm font-bold text-cyan-300">
+                {numbering.get(selected.id) ?? "—"}. {selected.label}
               </h3>
-              <p className="text-[10px] font-mono text-white/40">
+              <p className="font-mono text-[10px] text-white/40">
                 {selected.field_path}
               </p>
             </div>
@@ -379,7 +459,7 @@ function PipelineView({
             </button>
           </div>
           {selected.admin_sensitive && (
-            <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] font-mono text-amber-200">
+            <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 font-mono text-[10px] text-amber-200">
               🔒 일부 값은 관리자 권한이 필요합니다.
             </div>
           )}
@@ -392,7 +472,7 @@ function PipelineView({
               if (section && field) onFieldChange(section, field, next);
             }}
           />
-          <div className="mt-3 flex items-center justify-between text-[10px] font-mono text-white/40">
+          <div className="mt-3 flex items-center justify-between font-mono text-[10px] text-white/40">
             <span>
               default:{" "}
               <code className="text-white/60">
@@ -404,7 +484,11 @@ function PipelineView({
               onClick={() => {
                 const [section, field] = selected.field_path.split(".");
                 if (section && field) {
-                  onFieldChange(section, field, defaultForPath(schema, selected.field_path));
+                  onFieldChange(
+                    section,
+                    field,
+                    defaultForPath(schema, selected.field_path),
+                  );
                 }
               }}
               className="rounded border border-white/10 bg-slate-900/60 px-2 py-0.5 text-[10px] hover:border-white/30"
@@ -566,7 +650,7 @@ export default function HarnessPanel({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="w-full max-w-3xl max-h-[88vh] flex flex-col rounded-2xl border border-fuchsia-500/30 bg-slate-950/95 shadow-2xl shadow-fuchsia-500/10">
+      <div className="w-full max-w-4xl max-h-[88vh] flex flex-col rounded-2xl border border-white/10 bg-[#0a0a0f]/95 shadow-2xl shadow-black/40">
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <h2 className="text-lg font-bold font-mono text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-400">
