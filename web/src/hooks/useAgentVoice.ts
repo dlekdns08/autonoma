@@ -77,6 +77,16 @@ export interface UseAgentVoiceResult {
   reset: () => void;
   /** Speak text directly via Web Speech API (browser built-in). Used when server TTS is not configured. */
   speakText: (agentName: string, text: string) => void;
+  /**
+   * TTS-independent "this agent is speaking" flag driven purely by the
+   * text of the line. Sets ``speakingAgents`` true, oscillates fake
+   * amplitude for lip-sync, and clears after a duration derived from
+   * word count. Safe to call alongside server TTS / Web Speech — if
+   * either of those fires first and sets real amplitude, the fake
+   * oscillation won't overwrite it (we only write fake amp while the
+   * slot.amp remains below a threshold).
+   */
+  markSpeakingFromText: (agentName: string, text: string) => void;
 }
 
 export function useAgentVoice(): UseAgentVoiceResult {
@@ -296,8 +306,11 @@ export function useAgentVoice(): UseAgentVoiceResult {
 
   const speakText = useCallback((agentName: string, text: string) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    // Cancel any currently playing utterance for this agent (can't target per-agent in SpeechSynthesis, so cancel all)
-    window.speechSynthesis.cancel();
+    // Don't cancel() globally — that fires onend on every in-flight
+    // utterance and causes ``speakingAgents`` to flicker whenever two
+    // agents speak in quick succession (onend clears the previous agent
+    // while the new one hasn't fired onstart yet). Letting the browser
+    // queue is visually better than the flicker.
 
     const slot = ensureSlot(agentName);
     const utterance = new SpeechSynthesisUtterance(text);
@@ -353,6 +366,62 @@ export function useAgentVoice(): UseAgentVoiceResult {
     window.speechSynthesis.speak(utterance);
   }, [ensureSlot, setSpeaking, pickWebSpeechVoice]);
 
+  // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
+  // each call can cancel the prior timer/interval without rerendering.
+  const fallbackTimersRef = useRef<
+    Map<string, { clear: number; amp: ReturnType<typeof setInterval> }>
+  >(new Map());
+
+  const markSpeakingFromText = useCallback(
+    (agentName: string, text: string) => {
+      if (!agentName || !text) return;
+      const slot = ensureSlot(agentName);
+      // Duration estimate: ~3.2 words/sec is a comfortable talking cadence.
+      // Floor at 900ms so even one-word lines produce a visible speak flash.
+      const wordCount = Math.max(1, text.trim().split(/\s+/).length);
+      const durationMs = Math.max(900, Math.min(8000, (wordCount / 3.2) * 1000));
+
+      // Cancel any in-flight fallback for this agent before starting new.
+      const prior = fallbackTimersRef.current.get(agentName);
+      if (prior) {
+        clearInterval(prior.amp);
+        clearTimeout(prior.clear);
+      }
+
+      slot.speaking = true;
+      setSpeaking(agentName, true);
+
+      // Fake amplitude oscillation. Yields only when the real analyser
+      // isn't already producing a stronger signal, so when server TTS
+      // audio lands mid-line the real envelope takes over cleanly.
+      let target = 0.25;
+      const ampTimer = setInterval(() => {
+        target = 0.12 + Math.random() * 0.4;
+        if (slot.amp < 0.55) {
+          slot.amp = slot.amp * 0.55 + target * 0.45;
+        }
+      }, 130);
+
+      const clearTimer = window.setTimeout(() => {
+        clearInterval(ampTimer);
+        fallbackTimersRef.current.delete(agentName);
+        // Only drop the speaking flag if no other source (audio element
+        // or Web Speech) is currently holding it true.
+        if (!slot.audio.src || slot.audio.paused || slot.audio.ended) {
+          slot.speaking = false;
+          slot.amp = 0;
+          setSpeaking(agentName, false);
+        }
+      }, durationMs);
+
+      fallbackTimersRef.current.set(agentName, {
+        clear: clearTimer,
+        amp: ampTimer,
+      });
+    },
+    [ensureSlot, setSpeaking],
+  );
+
   const reset = useCallback(() => {
     for (const slot of slotsRef.current.values()) {
       try {
@@ -364,6 +433,11 @@ export function useAgentVoice(): UseAgentVoiceResult {
       }
     }
     slotsRef.current.clear();
+    for (const t of fallbackTimersRef.current.values()) {
+      clearInterval(t.amp);
+      clearTimeout(t.clear);
+    }
+    fallbackTimersRef.current.clear();
     setSpeakingAgents(new Set());
   }, []);
 
@@ -383,7 +457,21 @@ export function useAgentVoice(): UseAgentVoiceResult {
   // see a fresh reference on every render — which previously caused the
   // WebSocket to be torn down and re-created in a tight loop.
   return useMemo(
-    () => ({ pushAudioEvent, getMouthAmplitude, speakingAgents, reset, speakText }),
-    [pushAudioEvent, getMouthAmplitude, speakingAgents, reset, speakText],
+    () => ({
+      pushAudioEvent,
+      getMouthAmplitude,
+      speakingAgents,
+      reset,
+      speakText,
+      markSpeakingFromText,
+    }),
+    [
+      pushAudioEvent,
+      getMouthAmplitude,
+      speakingAgents,
+      reset,
+      speakText,
+      markSpeakingFromText,
+    ],
   );
 }
