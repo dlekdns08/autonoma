@@ -271,7 +271,16 @@ class RelationshipGraph:
         return self._graph[key]
 
     def record(self, from_agent: str, to_agent: str, description: str, positive: bool = True) -> None:
-        self.get(from_agent, to_agent).record_interaction(description, positive)
+        rel = self.get(from_agent, to_agent)
+        rel.record_interaction(description, positive)
+        _fire_event(
+            "relationship.update",
+            from_agent=from_agent,
+            to_agent=to_agent,
+            description=description,
+            positive=positive,
+            trust=rel.trust,
+        )
 
     def get_friends(self, agent: str, threshold: float = 0.7) -> list[str]:
         return [
