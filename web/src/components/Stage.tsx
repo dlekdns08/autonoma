@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentData, AgentEmote, BossData, CookieData } from "@/lib/types";
 import PixelMap from "./stage/pixel/PixelMap";
 import PixelCharacter from "./stage/pixel/PixelCharacter";
@@ -13,6 +13,11 @@ import {
   type MotionState,
   type DialoguePair,
 } from "./stage/useAgentMotion";
+
+// ── Camera helpers ────────────────────────────────────────────────────────
+function clamp(v: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, v));
+}
 
 interface Props {
   agents: AgentData[];
@@ -84,65 +89,169 @@ export default function Stage({
     onCookieCollected,
   });
 
+  // ── Camera state ──────────────────────────────────────────────────────
+  const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
+  const dragRef = useRef<{ startX: number; startY: number; camX: number; camY: number } | null>(null);
+
+  const resetCamera = useCallback(() => setCamera({ x: 0, y: 0, scale: 1 }), []);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    setCamera((prev) => ({
+      ...prev,
+      scale: clamp(prev.scale * (1 + e.deltaY * -0.001), 0.4, 2.5),
+    }));
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Only drag on primary button, ignore if clicking an interactive element
+    if (e.button !== 0) return;
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      camX: camera.x,
+      camY: camera.y,
+    };
+  }, [camera.x, camera.y]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setCamera((prev) => ({
+      ...prev,
+      x: dragRef.current!.camX + dx,
+      y: dragRef.current!.camY + dy,
+    }));
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const handleDoubleClick = useCallback(() => {
+    resetCamera();
+  }, [resetCamera]);
+
+  const stageContent = (
+    <>
+      {/* Cookies sit under the characters so an agent walking onto one
+          is drawn on top of it. */}
+      {cookies.map((c) => (
+        <CookieSprite key={`cookie-${c.recipient}`} cookie={c} />
+      ))}
+
+      {boss && <BossSprite boss={boss} attackingAgents={attackingAgents} />}
+
+      <DialogueLinks pairs={pairs} motions={motions} />
+      {pairs.map((p) => (
+        <div
+          key={`heart-${p.a}-${p.b}`}
+          className="pointer-events-none absolute animate-pulse text-pink-300 drop-shadow-[0_0_4px_rgba(244,114,182,0.9)]"
+          style={{
+            left: `${p.midX}%`,
+            top: `${p.midY - 14}%`,
+            transform: "translate(-50%, -50%)",
+            fontSize: "14px",
+          }}
+        >
+          ♥
+        </div>
+      ))}
+      {agents.map((agent) => {
+        const motion = motions[agent.name];
+        if (!motion) return null;
+        const emote = emotes?.[agent.name] ?? null;
+        const isTransitioning = transitioningAgent === agent.name;
+        return (
+          <AgentOnMap
+            key={agent.name}
+            agent={agent}
+            motion={motion}
+            emote={emote}
+            getMouthAmplitude={getMouthAmplitude}
+            onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
+            blooming={isTransitioning}
+          />
+        );
+      })}
+    </>
+  );
+
   if (agents.length === 0) {
     return (
-      <div className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20">
-        <PixelMap sky={skyMode} theme={theme}>
-          <div className="pointer-events-none flex h-full items-center justify-center">
-            <p className="font-mono text-white/60 text-lg drop-shadow-lg">
-              The HQ awaits a mission...
-            </p>
-          </div>
-        </PixelMap>
+      <div
+        className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20"
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+      >
+        <div
+          style={{
+            transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
+            transformOrigin: "center center",
+            width: "100%",
+            height: "100%",
+          }}
+        >
+          <PixelMap sky={skyMode} theme={theme}>
+            <div className="pointer-events-none flex h-full items-center justify-center">
+              <p className="font-mono text-white/60 text-lg drop-shadow-lg">
+                The HQ awaits a mission...
+              </p>
+            </div>
+          </PixelMap>
+        </div>
+        <ResetViewButton onReset={resetCamera} isDefault={camera.x === 0 && camera.y === 0 && camera.scale === 1} />
       </div>
     );
   }
 
   return (
-    <div className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20">
-      <PixelMap sky={skyMode} theme={theme}>
-        {/* Cookies sit under the characters so an agent walking onto one
-            is drawn on top of it. */}
-        {cookies.map((c) => (
-          <CookieSprite key={`cookie-${c.recipient}`} cookie={c} />
-        ))}
-
-        {boss && <BossSprite boss={boss} attackingAgents={attackingAgents} />}
-
-        <DialogueLinks pairs={pairs} motions={motions} />
-        {pairs.map((p) => (
-          <div
-            key={`heart-${p.a}-${p.b}`}
-            className="pointer-events-none absolute animate-pulse text-pink-300 drop-shadow-[0_0_4px_rgba(244,114,182,0.9)]"
-            style={{
-              left: `${p.midX}%`,
-              top: `${p.midY - 14}%`,
-              transform: "translate(-50%, -50%)",
-              fontSize: "14px",
-            }}
-          >
-            ♥
-          </div>
-        ))}
-        {agents.map((agent) => {
-          const motion = motions[agent.name];
-          if (!motion) return null;
-          const emote = emotes?.[agent.name] ?? null;
-          const isTransitioning = transitioningAgent === agent.name;
-          return (
-            <AgentOnMap
-              key={agent.name}
-              agent={agent}
-              motion={motion}
-              emote={emote}
-              getMouthAmplitude={getMouthAmplitude}
-              onClick={onSelectAgent ? () => onSelectAgent(agent.name) : undefined}
-              blooming={isTransitioning}
-            />
-          );
-        })}
-      </PixelMap>
+    <div
+      className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20"
+      onWheel={handleWheel}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onDoubleClick={handleDoubleClick}
+      style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+    >
+      <div
+        style={{
+          transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
+          transformOrigin: "center center",
+          width: "100%",
+          height: "100%",
+        }}
+      >
+        <PixelMap sky={skyMode} theme={theme}>
+          {stageContent}
+        </PixelMap>
+      </div>
+      <ResetViewButton onReset={resetCamera} isDefault={camera.x === 0 && camera.y === 0 && camera.scale === 1} />
     </div>
+  );
+}
+
+// ── Reset view button ──────────────────────────────────────────────────────
+
+function ResetViewButton({ onReset, isDefault }: { onReset: () => void; isDefault: boolean }) {
+  if (isDefault) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onReset(); }}
+      title="Reset view (↺)"
+      className="absolute top-2 left-2 z-10 flex items-center gap-1 rounded border border-white/20 bg-black/60 px-2 py-1 font-mono text-[10px] text-white/70 backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white"
+    >
+      ↺ Reset view
+    </button>
   );
 }
 
