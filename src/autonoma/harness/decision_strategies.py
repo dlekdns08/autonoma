@@ -10,13 +10,14 @@
       without stalling the run.
     - ``force_idle``: same structural fallback but silent — no speech —
       for demos where we'd rather swallow the miss than narrate it.
-    - ``abort``: re-raise the parse error. Strict mode for development
-      and CI, where a broken LLM output should surface loudly instead of
-      being papered over.
+    - ``abort``: signal the caller to stop the round immediately. Strict
+      mode for development and CI, where a broken LLM output should
+      surface loudly instead of being papered over.  The caller detects
+      the ``parse_failure_abort`` thinking tag and propagates the error.
 
-Strategy shape: ``(exc, agent_name) -> dict[str, Any]``. ``abort`` raises
-instead of returning. Caller is expected to use the returned dict
-directly as the turn's decision.
+Strategy shape: ``(exc, agent_name) -> dict[str, Any]``. ``abort``
+returns a sentinel dict; the caller (``AutonomousAgent.decide``) is
+responsible for detecting it and re-raising.
 """
 
 from __future__ import annotations
@@ -24,6 +25,14 @@ from __future__ import annotations
 from typing import Any
 
 from autonoma.harness.strategies import register
+
+
+class ParseFailureAbort(RuntimeError):
+    """Raised when the ``abort`` on_parse_failure policy is active.
+
+    Distinct from generic RuntimeError so the decide() caller can
+    re-raise it without accidentally swallowing unrelated errors.
+    """
 
 
 @register("decision.on_parse_failure", "skip_turn")
@@ -46,4 +55,15 @@ def _force_idle(exc: Exception, agent_name: str) -> dict[str, Any]:
 
 @register("decision.on_parse_failure", "abort")
 def _abort(exc: Exception, agent_name: str) -> dict[str, Any]:
-    raise exc
+    """Return a sentinel dict that signals the caller to abort this turn.
+
+    We return (rather than raise) so the strategy contract is uniform;
+    the caller detects ``thinking == "parse_failure_abort"`` and raises
+    ``ParseFailureAbort`` to propagate the error up the call stack.
+    """
+    return {
+        "action": "idle",
+        "speech": "Parse error - aborting turn",
+        "thinking": "parse_failure_abort",
+        "_abort_exc": exc,
+    }
