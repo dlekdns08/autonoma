@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { AgentData } from "@/lib/types";
+import type { AgentData, RelationshipData } from "@/lib/types";
 
 interface Props {
   agent: AgentData;
   onClose: () => void;
   onSend?: (agentName: string, message: string) => void;
+  relationships?: RelationshipData[];
 }
 
 // SVG radar chart for agent stats
@@ -139,9 +140,9 @@ function MoodSparkline({ mood }: { mood: string }) {
   );
 }
 
-export default function AgentModal({ agent, onClose, onSend }: Props) {
+export default function AgentModal({ agent, onClose, onSend, relationships = [] }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<"stats" | "info">("stats");
+  const [tab, setTab] = useState<"stats" | "info" | "profile">("stats");
   const [instruction, setInstruction] = useState("");
   const [sentFlash, setSentFlash] = useState(false);
 
@@ -229,7 +230,7 @@ export default function AgentModal({ agent, onClose, onSend }: Props) {
 
         {/* Tabs */}
         <div className="flex border-b border-white/5">
-          {(["stats", "info"] as const).map((t) => (
+          {(["stats", "info", "profile"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -237,7 +238,7 @@ export default function AgentModal({ agent, onClose, onSend }: Props) {
                 tab === t ? "text-purple-300 border-b-2 border-purple-400" : "text-white/30 hover:text-white/50"
               }`}
             >
-              {t === "stats" ? "★ Stats" : "♪ Info"}
+              {t === "stats" ? "★ Stats" : t === "info" ? "♪ Info" : "♥ Profile"}
             </button>
           ))}
         </div>
@@ -323,6 +324,89 @@ export default function AgentModal({ agent, onClose, onSend }: Props) {
                   ({agent.position.x}, {agent.position.y})
                 </div>
               </div>
+            </div>
+          )}
+
+          {tab === "profile" && (
+            <div className="flex flex-col gap-3">
+              {/* Species / Evolution */}
+              {agent.species && (
+                <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+                  <div className="text-[10px] text-white/30 font-mono mb-1">Species</div>
+                  <div className="text-base font-mono text-white/80">
+                    {agent.species_emoji} <span className="font-bold">{agent.species}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Traits */}
+              {agent.traits && agent.traits.length > 0 && (
+                <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+                  <div className="text-[10px] text-white/30 font-mono mb-2">Traits</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {agent.traits.map((t) => (
+                      <span key={t} className="rounded-full bg-purple-500/15 px-2.5 py-1 text-[11px] text-purple-300 font-mono border border-purple-500/20">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Achievements */}
+              {agent.stats && (agent.stats as Record<string, unknown>).achievements && (
+                <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+                  <div className="text-[10px] text-white/30 font-mono mb-2">Achievements</div>
+                  <div className="flex flex-col gap-1">
+                    {(
+                      (agent.stats as Record<string, unknown>).achievements as string[]
+                    ).map((a, i) => (
+                      <div key={i} className="text-xs text-white/60 font-mono">{a}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Relationship mini-graph */}
+              {relationships.length > 0 && (
+                <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+                  <div className="text-[10px] text-white/30 font-mono mb-2">Relationships</div>
+                  <div className="flex flex-col gap-1.5">
+                    {relationships
+                      .filter((r) => r.from === agent.name || r.to === agent.name)
+                      .slice(0, 6)
+                      .map((r) => {
+                        const other = r.from === agent.name ? r.to : r.from;
+                        const pct = Math.max(0, Math.min(100, r.trust));
+                        const filled = Math.round(pct / 10);
+                        const bar = "█".repeat(filled) + "░".repeat(10 - filled);
+                        return (
+                          <div key={`${r.from}-${r.to}`} className="flex items-center gap-2 text-[10px] font-mono">
+                            <span className="text-white/50 w-20 truncate">{other}</span>
+                            <span className="text-purple-400/60">{bar}</span>
+                            <span className="text-white/40">{pct}%</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Memory (speech as proxy) */}
+              {agent.speech && (
+                <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+                  <div className="text-[10px] text-white/30 font-mono mb-1">Recent Memory</div>
+                  <div className="text-xs text-white/50 font-mono italic">
+                    &quot;{agent.speech}&quot;
+                  </div>
+                </div>
+              )}
+
+              {!agent.species && !agent.traits?.length && !agent.speech && relationships.filter((r) => r.from === agent.name || r.to === agent.name).length === 0 && (
+                <div className="text-center text-xs text-white/30 font-mono py-4">
+                  (?.?) Profile data not available yet
+                </div>
+              )}
             </div>
           )}
         </div>
