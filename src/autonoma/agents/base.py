@@ -688,34 +688,54 @@ Rules:
         task_id = decision.get("target_task_id")
         output = decision.get("task_output", "")
 
-        if task_id:
-            task = next((t for t in project.tasks if t.id == task_id), None)
-            if task and task.assigned_to == self.name:
-                task.status = TaskStatus.DONE
-                task.output = output
-                task.completed_at = datetime.now()
+        if not task_id:
+            logger.warning(
+                f"[{self.name}] complete_task called with no target_task_id — ignoring."
+            )
+            await self._set_state(AgentState.THINKING)
+            return {"agent": self.name, "action": "complete_task", "task_id": None, "completed": False}
 
-                self.stats.tasks_completed += 1
-                leveled_up = self.stats.add_xp(30)
-                await self._set_mood(Mood.EXCITED if leveled_up else Mood.PROUD)
-                self.memory.remember(
-                    f"Completed task: {task.title}", "success", self._round_number
-                )
+        task = next((t for t in project.tasks if t.id == task_id), None)
+        if task is None:
+            logger.warning(
+                f"[{self.name}] complete_task: task_id='{task_id}' not found in project — ignoring."
+            )
+            await self._set_state(AgentState.THINKING)
+            return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": False}
 
-                await bus.emit(
-                    "task.completed", agent=self.name, task_id=task.id, title=task.title
-                )
-                if leveled_up:
-                    await bus.emit(
-                        "agent.level_up",
-                        agent=self.name,
-                        level=self.stats.level,
-                        species=self.bones.species,
-                    )
+        if task.assigned_to != self.name:
+            logger.warning(
+                f"[{self.name}] complete_task: task '{task_id}' is assigned to "
+                f"'{task.assigned_to}', not '{self.name}' — ignoring."
+            )
+            await self._set_state(AgentState.THINKING)
+            return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": False}
+
+        task.status = TaskStatus.DONE
+        task.output = output
+        task.completed_at = datetime.now()
+
+        self.stats.tasks_completed += 1
+        leveled_up = self.stats.add_xp(30)
+        await self._set_mood(Mood.EXCITED if leveled_up else Mood.PROUD)
+        self.memory.remember(
+            f"Completed task: {task.title}", "success", self._round_number
+        )
+
+        await bus.emit(
+            "task.completed", agent=self.name, task_id=task.id, title=task.title
+        )
+        if leveled_up:
+            await bus.emit(
+                "agent.level_up",
+                agent=self.name,
+                level=self.stats.level,
+                species=self.bones.species,
+            )
 
         self.current_task = None
         self._check_and_emit_achievements()
-        return {"agent": self.name, "action": "complete_task", "task_id": task_id}
+        return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": True}
 
     async def _action_run_code(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         """Execute LLM-authored code in a sandbox and feed the result back to the agent."""
