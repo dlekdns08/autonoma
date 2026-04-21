@@ -32,14 +32,40 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import io
+import re
 import zipfile
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response as FastAPIResponse,
+    WebSocket,
+    WebSocketDisconnect,
+    status as http_status,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
+from autonoma.auth import (
+    SESSION_COOKIE_NAME,
+    hash_password,
+    issue_session_token,
+    require_active_user,
+    require_admin,
+    verify_password,
+)
 from autonoma.config import settings
 from autonoma.context import current_session_id as _current_session_id
+from autonoma.db.users import (
+    User,
+    create_user,
+    get_user_by_username,
+    list_users,
+    update_user_status,
+)
 from autonoma.event_bus import bus
 from autonoma.llm import LLMConfig
 
@@ -566,9 +592,43 @@ def _get_snapshot(session_id: int | None) -> dict[str, Any]:
 
 # ── FastAPI App ───────────────────────────────────────────────────────────
 
+USERNAME_PATTERN = re.compile(r"^[a-z0-9_-]{3,32}$")
+
+
+async def _bootstrap_admin_user() -> None:
+    """Create the default admin user on startup if conditions are met.
+
+    Fires iff ``settings.admin_password`` is set AND there is no user
+    named ``admin`` in the DB. We intentionally gate on the username
+    (not on "any admin-role user") so an operator who has already
+    created named admin accounts doesn't get a stray ``admin`` row.
+    """
+    from autonoma.db.engine import init_db as _init_db
+
+    if not settings.admin_password:
+        return
+    # Make sure the users table exists before we query.
+    await _init_db()
+    existing = await get_user_by_username("admin")
+    if existing is not None:
+        return
+    try:
+        await create_user(
+            username="admin",
+            password_hash=hash_password(settings.admin_password),
+            role="admin",
+            status="active",
+        )
+        logger.info("[auth] bootstrap admin user created from AUTONOMA_ADMIN_PASSWORD")
+    except Exception as exc:
+        # Don't take the whole app down if somebody raced us.
+        logger.warning("[auth] bootstrap admin user create failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _register_event_bridge()
+    await _bootstrap_admin_user()
     yield
     _unregister_event_bridge()
 
@@ -586,6 +646,214 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _cookie_is_secure() -> bool:
+    """Secure cookies in production, lax in development.
+
+    We can't know whether we're behind HTTPS from Python alone, so treat
+    the presence of ``session_secret`` as the signal: if an operator has
+    set a durable secret they've configured this for real deployment.
+    Tests and local dev that don't set one get non-Secure cookies so
+    they work over plain http://localhost.
+    """
+    return bool(settings.session_secret)
+
+
+def _set_session_cookie(response: FastAPIResponse, user_id: str) -> None:
+    token = issue_session_token(user_id)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=_cookie_is_secure(),
+        samesite="strict",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: FastAPIResponse) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=_cookie_is_secure(),
+        samesite="strict",
+    )
+
+
+# ── /api/auth/* ───────────────────────────────────────────────────────
+
+
+@app.post("/api/auth/signup", status_code=http_status.HTTP_201_CREATED)
+async def auth_signup(payload: dict[str, Any]) -> dict[str, Any]:
+    """Public signup. New users start as ``pending`` until an admin
+    approves them. Returns 201 on success, 409 if taken, 400 if the
+    input doesn't match the username/password rules."""
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    if not USERNAME_PATTERN.match(username):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="invalid_username",
+        )
+    if len(password) < 6:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="invalid_password",
+        )
+    if await get_user_by_username(username) is not None:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="username_taken",
+        )
+    try:
+        password_hash = hash_password(password)
+    except ValueError:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="invalid_password",
+        )
+    await create_user(
+        username=username,
+        password_hash=password_hash,
+        role="user",
+        status="pending",
+    )
+    return {"status": "pending"}
+
+
+@app.post("/api/auth/login")
+async def auth_login(payload: dict[str, Any], response: FastAPIResponse) -> dict[str, Any]:
+    """Username/password login. 200 + cookie on success."""
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="bad_credentials",
+        )
+    user = await get_user_by_username(username)
+    if user is None or not verify_password(password, user.password_hash):
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="bad_credentials",
+        )
+    if user.status != "active":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="not_active",
+        )
+    _set_session_cookie(response, user.id)
+    return {"user": user.public_dict()}
+
+
+@app.post("/api/auth/logout", status_code=http_status.HTTP_204_NO_CONTENT)
+async def auth_logout(response: FastAPIResponse) -> FastAPIResponse:
+    """Unconditionally clear the session cookie. 204 even if no cookie
+    was present (idempotent logout)."""
+    _clear_session_cookie(response)
+    response.status_code = http_status.HTTP_204_NO_CONTENT
+    return response
+
+
+@app.get("/api/auth/me")
+async def auth_me(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return the current active user or 401/403."""
+    return {"user": user.public_dict()}
+
+
+# ── /api/admin/users/* ────────────────────────────────────────────────
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    users = await list_users()
+    return {"users": [u.public_dict() for u in users]}
+
+
+async def _transition_user(
+    user_id: str,
+    *,
+    required_status: set[str] | None,
+    new_status: str,
+) -> None:
+    """Apply a status transition, 404 if missing, 409 if current status
+    isn't in ``required_status`` (when specified)."""
+    from autonoma.db.users import get_user_by_id
+
+    user = await get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="user_not_found",
+        )
+    if required_status is not None and user.status not in required_status:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="invalid_state_transition",
+        )
+    await update_user_status(user_id, new_status)  # type: ignore[arg-type]
+
+
+@app.post(
+    "/api/admin/users/{user_id}/approve",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def admin_approve_user(
+    user_id: str,
+    _admin: User = Depends(require_admin),
+) -> FastAPIResponse:
+    await _transition_user(
+        user_id, required_status={"pending"}, new_status="active"
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/api/admin/users/{user_id}/deny",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def admin_deny_user(
+    user_id: str,
+    _admin: User = Depends(require_admin),
+) -> FastAPIResponse:
+    await _transition_user(
+        user_id, required_status={"pending"}, new_status="disabled"
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/api/admin/users/{user_id}/disable",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def admin_disable_user(
+    user_id: str,
+    _admin: User = Depends(require_admin),
+) -> FastAPIResponse:
+    await _transition_user(
+        user_id, required_status={"active"}, new_status="disabled"
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/api/admin/users/{user_id}/reactivate",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def admin_reactivate_user(
+    user_id: str,
+    _admin: User = Depends(require_admin),
+) -> FastAPIResponse:
+    await _transition_user(
+        user_id, required_status={"disabled"}, new_status="active"
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
 def _cleanup_session(session_id: int) -> None:
