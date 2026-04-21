@@ -90,7 +90,7 @@ const MOOD_MAP: Record<string, MoodTarget> = {
   relaxed:     { relaxed: 0.7 },
   determined:  { angry: 0.5, relaxed: 0.15 },
   focused:     { relaxed: 0.4 },
-  curious:     { surprised: 0.25, happy: 0.15 },
+  curious:     { surprised: 0.6, happy: 0.25 },
   tired:       { sad: 0.3, relaxed: 0.4 },
   nostalgic:   { sad: 0.35, relaxed: 0.35 },
   inspired:    { surprised: 0.4, happy: 0.55 },
@@ -399,17 +399,6 @@ function applyStateOverlay(
         bones.rightLowerArm.rotation.z =
           bones.rightLowerArm.rotation.z * (1 - w) + target * w;
       }
-      break;
-    }
-    case "moving": {
-      // Walking-pendulum feel: arms swing counter to each other on a
-      // ~2.9 Hz cycle, with a slight forward lean.
-      if (bones.chest) bones.chest.rotation.x += 0.05 * w;
-      const swing = Math.sin(now * 2.2) * 0.22;
-      if (bones.leftUpperArm) bones.leftUpperArm.rotation.x += swing * w;
-      if (bones.rightUpperArm) bones.rightUpperArm.rotation.x -= swing * w;
-      // Tiny head bob in time with the stride.
-      if (bones.head) bones.head.rotation.x += Math.abs(Math.sin(now * 2.2)) * 0.015 * w;
       break;
     }
     case "spawning": {
