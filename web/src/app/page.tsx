@@ -269,6 +269,22 @@ function Dashboard() {
     <div className="flex h-screen flex-col relative overflow-hidden">
       <Starfield intensity={state.boss ? 0.9 : 0.5} sky={state.sky} />
 
+      {connectionFailed && (
+        <div className="relative z-50 w-full bg-red-900/90 border-b border-red-500/50 px-4 py-2 text-center font-mono text-xs text-red-200">
+          Connection lost — please refresh
+        </div>
+      )}
+
+      {isSpectator && (
+        <div className="fixed top-2 left-2 z-50 flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-950/80 px-3 py-1 font-mono text-[10px] text-cyan-300 backdrop-blur-sm">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          Spectator
+          {room.viewerCount > 1 && (
+            <span className="text-cyan-400/60 ml-1">{room.viewerCount} viewers</span>
+          )}
+        </div>
+      )}
+
       <Header
         projectName={state.project_name}
         round={state.round}
