@@ -274,3 +274,63 @@ famous_quotes = Table(
     Column("round_number", Integer, nullable=False, default=0),
     Column("saved_at", DateTime, nullable=False, server_default=func.current_timestamp()),
 )
+
+
+# ── file_history ────────────────────────────────────────────────────────
+# Feature 9: Every file artifact created during a session is versioned
+# here. The ``content`` column stores the full text; the list endpoint
+# intentionally omits it to avoid large payloads.
+file_history = Table(
+    "file_history",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False, index=True),
+    Column("path", String(512), nullable=False),
+    Column("content", Text, nullable=False, default=""),
+    Column("created_by", String(64), nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("version_number", Integer, nullable=False, default=1),
+)
+
+Index("ix_file_history_session_path", file_history.c.session_id, file_history.c.path)
+
+
+# ── run_summary ──────────────────────────────────────────────────────────
+# Feature 12: One row per completed swarm run. Inserted at run completion
+# so cross-run analytics ("compare run A vs run B") are possible without
+# touching the per-run observability layer.
+run_summary = Table(
+    "run_summary",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False),
+    Column("goal", Text, nullable=False, default=""),
+    Column("started_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("completed_at", DateTime, nullable=True),
+    Column("agent_count", Integer, nullable=False, default=0),
+    Column("task_count", Integer, nullable=False, default=0),
+    Column("tasks_done", Integer, nullable=False, default=0),
+    Column("tasks_failed", Integer, nullable=False, default=0),
+    Column("total_rounds", Integer, nullable=False, default=0),
+    Column("llm_calls", Integer, nullable=False, default=0),
+    Column("preset_id", String(36), nullable=False, default=""),
+    Column("policy_hash", String(32), nullable=False, default=""),
+)
+
+
+# ── session_checkpoint ────────────────────────────────────────────────────
+# Feature 30: Periodic serialized snapshots of ProjectState. One row per
+# checkpoint (upserted by session_id + round_number). The ``state_json``
+# column holds the full JSON dump of ProjectState. Supports future resume.
+session_checkpoint = Table(
+    "session_checkpoint",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False),
+    Column("round_number", Integer, nullable=False, default=0),
+    Column("state_json", Text, nullable=False, default="{}"),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    UniqueConstraint("session_id", "round_number", name="uq_checkpoint_session_round"),
+)
+
+Index("ix_checkpoint_session", session_checkpoint.c.session_id)
