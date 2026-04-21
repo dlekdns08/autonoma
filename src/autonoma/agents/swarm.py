@@ -925,10 +925,22 @@ class AgentSwarm:
             if msg.id in self._routed_message_ids:
                 continue
             self._routed_message_ids.add(msg.id)
+            delivered = False
             for name in strategy(msg, agent_names, self._routing_state):
                 agent = self.agents.get(name)
                 if agent is not None:
                     agent.receive_message(msg)
+                    delivered = True
+            # Warn when a targeted message (not "all") finds no recipient.
+            # "all" broadcasts are expected to be delivered to all current
+            # agents so a miss there is not actionable at the routing layer.
+            recipient = getattr(msg, "recipient", None)
+            if not delivered and recipient and recipient != "all":
+                logger.warning(
+                    f"[Swarm] Message from {msg.sender} to '{recipient}' was not "
+                    f"delivered — no matching agent found. "
+                    f"Known agents: {list(self.agents.keys())}"
+                )
 
     def _tick_animations(self) -> None:
         for agent in self.agents.values():
