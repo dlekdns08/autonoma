@@ -716,6 +716,22 @@ export function useSwarm() {
     ws.onopen = () => {
       setConnected(true);
       reconnectAttemptsRef.current = 0; // reset backoff on successful connect
+      // Preemptive re-auth on reconnect: if we've already authenticated
+      // this browser session, resend creds immediately so the server
+      // doesn't sit in an unauthenticated state until the first user
+      // action. Cookie-based auto-auth on the server still runs first,
+      // but this covers admin-password flows that don't leave a cookie.
+      if (typeof window !== "undefined") {
+        try {
+          const stored = sessionStorage.getItem(SESSION_KEY);
+          if (stored) {
+            const creds = JSON.parse(stored) as UserCredentials;
+            ws.send(JSON.stringify({ command: "authenticate", ...creds }));
+          }
+        } catch {
+          /* bad stored creds — let auth.status prompt re-login */
+        }
+      }
     };
     ws.onclose = () => {
       setConnected(false);
@@ -865,13 +881,14 @@ export function useSwarm() {
     };
   }, [connect]);
 
-  // Sweep expired emotes once a second. Cheap; the map is tiny (one
-  // entry per agent) so this is well below noise.
+  // Sweep expired emotes once every 500ms. The interval runs for the
+  // whole mounted lifetime — restarting it whenever ``emotes`` changes
+  // (as a naive dep array would) would cancel each sweep mid-flight.
   useEffect(() => {
-    if (Object.keys(emotes).length === 0) return;
     const t = setInterval(() => {
       const now = Date.now();
       setEmotes((prev) => {
+        if (Object.keys(prev).length === 0) return prev;
         let changed = false;
         const next: Record<string, AgentEmote> = {};
         for (const [name, e] of Object.entries(prev)) {
@@ -882,7 +899,19 @@ export function useSwarm() {
       });
     }, 500);
     return () => clearInterval(t);
-  }, [emotes]);
+  }, []);
+
+  // Free voice slots for agents that disappear from the state (room
+  // switch, swarm reset). Prevents blob URL / analyser node build-up
+  // across long sessions.
+  const knownAgentNamesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = new Set(state.agents.map((a) => a.name));
+    for (const name of knownAgentNamesRef.current) {
+      if (!current.has(name)) voiceRef.current.cleanupAgent(name);
+    }
+    knownAgentNamesRef.current = current;
+  }, [state.agents]);
 
   // Drop cookies ~1.2s after they open, so Stage has time to play the poof.
   useEffect(() => {
