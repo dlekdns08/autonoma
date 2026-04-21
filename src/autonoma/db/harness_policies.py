@@ -76,6 +76,14 @@ harness_policies = Table(
 # ── helpers ───────────────────────────────────────────────────────────
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """SQLite via aiosqlite hands back naive datetimes. Normalize to
+    aware-UTC so comparisons with ``datetime.now(UTC)`` don't explode."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
 def _row_to_policy(row) -> HarnessPolicy:
     return HarnessPolicy(
         id=row["id"],
@@ -83,8 +91,8 @@ def _row_to_policy(row) -> HarnessPolicy:
         name=row["name"],
         is_default=bool(row["is_default"]),
         content=HarnessPolicyContent.model_validate_json(row["content"]),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
+        created_at=_as_utc(row["created_at"]),
+        updated_at=_as_utc(row["updated_at"]),
     )
 
 
