@@ -40,14 +40,13 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Query,
-    Request,
     Response as FastAPIResponse,
     WebSocket,
     WebSocketDisconnect,
     status as http_status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from autonoma.auth import (
     SESSION_COOKIE_NAME,
@@ -62,6 +61,7 @@ from autonoma.context import current_session_id as _current_session_id
 from autonoma.db.users import (
     User,
     create_user,
+    get_user_by_id,
     get_user_by_username,
     list_users,
     update_user_status,
@@ -784,8 +784,6 @@ async def _transition_user(
 ) -> None:
     """Apply a status transition, 404 if missing, 409 if current status
     isn't in ``required_status`` (when specified)."""
-    from autonoma.db.users import get_user_by_id
-
     user = await get_user_by_id(user_id)
     if user is None:
         raise HTTPException(
