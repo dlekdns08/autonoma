@@ -13,6 +13,13 @@
   --bg-surf1:   #110e26;
   --bg-surf2:   #18142f;
 
+  /* Semantic aliases for theming */
+  --bg-primary:   var(--bg-void);
+  --bg-secondary: var(--bg-surf1);
+  --border-color: var(--border-base);
+  --accent-fuchsia: #e879f9;
+  --accent-cyan:    #22d3ee;
+
   /* Borders */
   --border-dim:    rgba(255,255,255,0.04);
   --border-base:   rgba(255,255,255,0.08);
@@ -51,6 +58,33 @@
   --foreground:  var(--text-primary);
 }
 
+/* ── Light theme ───────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-void:    #f0eeff;
+  --bg-surf0:   #e8e4fb;
+  --bg-surf1:   #ddd8f7;
+  --bg-surf2:   #d0caef;
+
+  --bg-primary:   var(--bg-void);
+  --bg-secondary: var(--bg-surf1);
+
+  --border-dim:    rgba(0,0,0,0.06);
+  --border-base:   rgba(0,0,0,0.12);
+  --border-accent: rgba(139,92,246,0.4);
+  --border-bright: rgba(139,92,246,0.8);
+  --border-color:  var(--border-base);
+
+  --text-primary:   #1e1433;
+  --text-secondary: #4a3d78;
+  --text-dim:       #8b7eb8;
+
+  --accent-fuchsia: #a21caf;
+  --accent-cyan:    #0891b2;
+
+  --background: var(--bg-void);
+  --foreground:  var(--text-primary);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground:  var(--foreground);
@@ -59,9 +93,15 @@
 }
 
 body {
-  background: var(--bg-void);
+  background: var(--bg-primary, var(--bg-void));
   color: var(--text-primary);
   font-family: var(--font-geist-mono), "Geist Mono", monospace;
+}
+
+[data-theme="light"] body,
+[data-theme="light"].body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 /* ── Scrollbars ────────────────────────────────────────────────────── */
