@@ -18,9 +18,13 @@ export default function FileTree({ files, sessionId }: Props) {
   // Missing session=… on the download URL makes the backend reject with
   // 400/404. Disable the links while sessionId is null (mid-reconnect).
   const downloadsDisabled = sessionId === null;
-  const fileDownloadUrl = (path: string) =>
-    `${API_BASE_URL}/api/files/download?path=${encodeURIComponent(path)}&session=${sessionId}`;
-  const zipUrl = `${API_BASE_URL}/api/files/zip?session=${sessionId}`;
+  const fileDownloadUrl = (path: string) => {
+    const base = `${API_BASE_URL}/api/files/download?path=${encodeURIComponent(path)}`;
+    return sessionId ? `${base}&session=${sessionId}` : base;
+  };
+  const zipUrl = sessionId
+    ? `${API_BASE_URL}/api/files/zip?session=${sessionId}`
+    : `${API_BASE_URL}/api/files/zip`;
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-fuchsia-500/20 bg-slate-900/50 p-3">
