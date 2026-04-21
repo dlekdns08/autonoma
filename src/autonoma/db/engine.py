@@ -121,6 +121,12 @@ async def init_db() -> None:
     counter, and tables are created with checkfirst=True.
     """
     global _initialized
+    # Side-effect import: registers the ``users`` table on the shared
+    # ``metadata`` before the baseline migration runs. Done here (rather
+    # than at module top) to avoid a circular import — ``db.users``
+    # depends on ``db.engine``.
+    from autonoma.db import users as _users_module  # noqa: F401
+
     async with _init_lock:
         if _initialized:
             return
