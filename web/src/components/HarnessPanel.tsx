@@ -92,11 +92,13 @@ function FieldRow({
   spec,
   value,
   onChange,
+  sectionName,
 }: {
   name: string;
   spec: HarnessFieldSpec;
   value: unknown;
   onChange: (next: unknown) => void;
+  sectionName?: string;
 }) {
   const label = (
     <label className="text-xs font-mono text-white/55 shrink-0 w-44 truncate" title={name}>
@@ -105,18 +107,28 @@ function FieldRow({
   );
 
   if (spec.type === "enum" && spec.options) {
+    const currentVal = String(value ?? spec.default ?? "");
+    const isSpeechStyle = sectionName === "social" && name === "speech_style";
+    const stylePreview = isSpeechStyle ? STYLE_PREVIEWS[currentVal] : undefined;
     return (
-      <div className="flex items-center gap-3 py-1">
-        {label}
-        <select
-          value={String(value ?? spec.default ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-          className="flex-1 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-xs font-mono text-white outline-none focus:border-fuchsia-500/50"
-        >
-          {spec.options.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
+      <div className="flex flex-col py-1">
+        <div className="flex items-center gap-3">
+          {label}
+          <select
+            value={currentVal}
+            onChange={(e) => onChange(e.target.value)}
+            className="flex-1 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-xs font-mono text-white outline-none focus:border-fuchsia-500/50"
+          >
+            {spec.options.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        </div>
+        {stylePreview && (
+          <p className="text-xs italic text-white/40 mt-1 ml-[188px]">
+            &ldquo;{stylePreview}&rdquo;
+          </p>
+        )}
       </div>
     );
   }
@@ -263,6 +275,7 @@ function SectionBlock({
                 spec={spec}
                 value={value[fieldName]}
                 onChange={(next) => onChange({ ...value, [fieldName]: next })}
+                sectionName={sectionName}
               />
             ))}
           </div>
