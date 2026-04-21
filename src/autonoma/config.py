@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     # If empty, everyone must supply their own key.
     admin_password: str = ""
 
+    # ── Cookie session auth ──
+    # Secret used to sign the ``autonoma_session`` cookie. If unset, a
+    # random dev-only value is generated at startup (with a loud log)
+    # so cookies don't silently become forgeable across restarts in
+    # production.
+    session_secret: str | None = None
+
     # ── LLM provider keys (server-side; only accessible to admin) ──
     anthropic_api_key: str = ""
     openai_api_key: str = ""
