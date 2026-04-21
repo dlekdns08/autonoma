@@ -613,7 +613,7 @@ Rules:
         project.messages.append(msg)
         self.stats.messages_sent += 1
         self.stats.add_xp(5)
-        self.mood = Mood.FRIENDLY if self.mood != Mood.FRUSTRATED else Mood.DETERMINED
+        self.mood = Mood.HAPPY if self.mood != Mood.FRUSTRATED else Mood.DETERMINED
         await bus.emit(
             "message.sent",
             sender=self.name,
