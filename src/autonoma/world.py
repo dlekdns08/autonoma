@@ -24,6 +24,7 @@ Ported patterns from Claude Code:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import random
@@ -35,6 +36,23 @@ from enum import Enum
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _fire_event(event_name: str, **kwargs: Any) -> None:
+    """Fire-and-forget bus.emit from sync code.
+
+    Uses asyncio.get_event_loop().create_task() when a running loop is
+    available.  Silently skips emission when there is no loop (tests,
+    CLI without an event loop).  Import is deferred to avoid a circular
+    import between world.py and event_bus.py at module load time.
+    """
+    try:
+        from autonoma.event_bus import bus  # noqa: PLC0415
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(bus.emit(event_name, **kwargs))
+    except Exception as _exc:
+        logger.debug(f"[world] Could not emit '{event_name}': {_exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
