@@ -12,12 +12,93 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Awaitable, Callable, Literal, TypeVar
 
 logger = logging.getLogger(__name__)
+
+# ── Log sanitization ──────────────────────────────────────────────────────
+#
+# Provider SDKs occasionally surface the failing request payload in error
+# messages. Without scrubbing, a 401/400 traceback in the logs can leak the
+# API key (or the full Bearer header). These patterns cover Anthropic
+# (``sk-ant-…``), OpenAI (``sk-…``/``sk-proj-…``), and generic bearer tokens.
+_API_KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{16,}"),
+    re.compile(r"sk-[A-Za-z0-9_\-]{16,}"),
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-\.]{16,}"),
+    re.compile(r"(?i)authorization['\"]?\s*[:=]\s*['\"][^'\"]{12,}"),
+)
+
+
+def _sanitize(text: Any) -> str:
+    """Return ``str(text)`` with plausible API-key substrings redacted.
+
+    This is a defence in depth — we'd rather leak "***REDACTED***" than a
+    real token into rotating log files or stdout piped to a third-party
+    aggregator.
+    """
+    s = str(text)
+    for pat in _API_KEY_PATTERNS:
+        s = pat.sub("***REDACTED***", s)
+    return s
+
+
+# ── Retry / timeout helper ────────────────────────────────────────────────
+
+# Default timeouts tuned for streaming completions — vision/thinking models
+# can take 30-60s for a single pass, so we give plenty of runway.
+LLM_REQUEST_TIMEOUT_SECONDS = 90.0
+LLM_MAX_RETRIES = 2
+LLM_RETRY_BASE_DELAY = 1.0
+
+_T = TypeVar("_T")
+
+
+async def _call_with_retry(
+    do_call: Callable[[], Awaitable[_T]],
+    *,
+    label: str,
+    timeout: float = LLM_REQUEST_TIMEOUT_SECONDS,
+    max_retries: int = LLM_MAX_RETRIES,
+) -> _T:
+    """Invoke ``do_call`` with a wall-clock timeout and bounded retries.
+
+    Retries on ``asyncio.TimeoutError``, ``LLMConnectionError`` and
+    ``LLMRateLimitError`` with exponential backoff plus jitter. Auth
+    errors and any unexpected exception propagate on first attempt —
+    retrying a 401 just burns quota and racks up the retry counter on
+    the provider side.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await asyncio.wait_for(do_call(), timeout=timeout)
+        except asyncio.TimeoutError:
+            last_exc = LLMConnectionError(
+                f"{label}: request timed out after {timeout:.0f}s"
+            )
+            logger.warning(
+                "[llm] %s timed out (attempt %d/%d)",
+                label, attempt + 1, max_retries + 1,
+            )
+        except (LLMConnectionError, LLMRateLimitError) as exc:
+            last_exc = exc
+            logger.warning(
+                "[llm] %s transient error (attempt %d/%d): %s",
+                label, attempt + 1, max_retries + 1, _sanitize(exc),
+            )
+        if attempt >= max_retries:
+            break
+        delay = LLM_RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.3)
+        await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 # ── Normalized LLM response ───────────────────────────────────────────────
@@ -187,40 +268,50 @@ class AnthropicLLMClient(BaseLLMClient):
                 kwargs["temperature"] = temperature
             return await self._client.messages.create(**kwargs)
 
-        try:
+        async def _do() -> Any:
+            # Normalize provider-specific exceptions into LLMError so the
+            # retry helper can discriminate transient vs. fatal.
             try:
-                response = await _call(include_temperature=send_temperature)
-            except anthropic.BadRequestError as exc:
-                # Some Claude models (e.g. opus-4-7) have dropped support for
-                # `temperature`. Detect the specific deprecation error, memo
-                # the model, and retry once without the parameter.
-                if send_temperature and _is_temperature_deprecation_error(exc):
-                    logger.warning(
-                        "Anthropic model %r rejected `temperature` "
-                        "(deprecated). Retrying without it and memoizing.",
-                        model,
-                    )
-                    _ANTHROPIC_MODELS_NO_TEMPERATURE.add(model)
-                    response = await _call(include_temperature=False)
-                else:
+                try:
+                    return await _call(include_temperature=send_temperature)
+                except anthropic.BadRequestError as exc:
+                    # Some Claude models (e.g. opus-4-7) have dropped support
+                    # for `temperature`. Detect the specific deprecation
+                    # error, memo the model, and retry once without the
+                    # parameter.
+                    if send_temperature and _is_temperature_deprecation_error(exc):
+                        logger.warning(
+                            "Anthropic model %r rejected `temperature` "
+                            "(deprecated). Retrying without it and memoizing.",
+                            model,
+                        )
+                        _ANTHROPIC_MODELS_NO_TEMPERATURE.add(model)
+                        return await _call(include_temperature=False)
                     raise
+            except anthropic.APIConnectionError as exc:
+                raise LLMConnectionError(_sanitize(exc)) from exc
+            except anthropic.RateLimitError as exc:
+                raise LLMRateLimitError(_sanitize(exc)) from exc
+            except anthropic.AuthenticationError as exc:
+                raise LLMAuthError(_sanitize(exc)) from exc
 
+        try:
+            response = await _call_with_retry(_do, label=f"anthropic.create({model})")
             return LLMResponse(
                 text=response.content[0].text,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 stop_reason=str(response.stop_reason or "end_turn"),
             )
+        except LLMError:
+            raise
         except Exception as exc:
+            # Unexpected (non-provider) failure: log sanitized message and
+            # re-raise unchanged so callers can still discriminate by type.
             logger.error(
-                "Anthropic create() failed: model=%s error=%s", model, exc,
+                "Anthropic create() failed: model=%s error=%s",
+                model, _sanitize(exc),
             )
-            if isinstance(exc, anthropic.APIConnectionError):
-                raise LLMConnectionError(str(exc)) from exc
-            if isinstance(exc, anthropic.RateLimitError):
-                raise LLMRateLimitError(str(exc)) from exc
-            if isinstance(exc, anthropic.AuthenticationError):
-                raise LLMAuthError(str(exc)) from exc
             raise
 
     async def stream(  # type: ignore[override]
@@ -320,23 +411,37 @@ class OpenAILLMClient(BaseLLMClient):
         system: str,
         messages: list[dict[str, Any]],
     ) -> LLMResponse:
+        from openai import APIConnectionError, RateLimitError, AuthenticationError
+
+        full_messages = [{"role": "system", "content": system}] + list(messages)
+
+        # Reasoning models (o1/o3...) don't accept `temperature` and use
+        # `max_completion_tokens` instead of `max_tokens`.
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": full_messages,
+        }
+        if _is_openai_reasoning_model(model):
+            create_kwargs["max_completion_tokens"] = max_tokens
+        else:
+            create_kwargs["max_tokens"] = max_tokens
+            create_kwargs["temperature"] = temperature
+
+        async def _do() -> Any:
+            try:
+                return await self._client.chat.completions.create(
+                    **create_kwargs,  # type: ignore[arg-type]
+                )
+            except APIConnectionError as exc:
+                raise LLMConnectionError(_sanitize(exc)) from exc
+            except RateLimitError as exc:
+                raise LLMRateLimitError(_sanitize(exc)) from exc
+            except AuthenticationError as exc:
+                raise LLMAuthError(_sanitize(exc)) from exc
+
         try:
-            full_messages = [{"role": "system", "content": system}] + list(messages)
-
-            # Reasoning models (o1/o3...) don't accept `temperature` and use
-            # `max_completion_tokens` instead of `max_tokens`.
-            create_kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": full_messages,
-            }
-            if _is_openai_reasoning_model(model):
-                create_kwargs["max_completion_tokens"] = max_tokens
-            else:
-                create_kwargs["max_tokens"] = max_tokens
-                create_kwargs["temperature"] = temperature
-
-            response = await self._client.chat.completions.create(
-                **create_kwargs,  # type: ignore[arg-type]
+            response = await _call_with_retry(
+                _do, label=f"openai.create({self._provider}/{model})"
             )
             text = response.choices[0].message.content or ""
             usage = response.usage
@@ -346,26 +451,15 @@ class OpenAILLMClient(BaseLLMClient):
                 output_tokens=usage.completion_tokens if usage else 0,
                 stop_reason=response.choices[0].finish_reason or "stop",
             )
+        except LLMError:
+            raise
         except Exception as exc:
-            # Log BEFORE re-raising so the Director/agent loop can surface
-            # the real reason a fallback was taken (empty runs were previously
-            # mysterious because the root cause was swallowed).
+            # Log sanitized before re-raising so the Director/agent loop
+            # surfaces the real reason a fallback was taken.
             logger.error(
                 "OpenAI-compatible create() failed: provider=%s model=%s error=%s",
-                self._provider,
-                model,
-                exc,
+                self._provider, model, _sanitize(exc),
             )
-            try:
-                from openai import APIConnectionError, RateLimitError, AuthenticationError
-            except ImportError:
-                raise
-            if isinstance(exc, APIConnectionError):
-                raise LLMConnectionError(str(exc)) from exc
-            if isinstance(exc, RateLimitError):
-                raise LLMRateLimitError(str(exc)) from exc
-            if isinstance(exc, AuthenticationError):
-                raise LLMAuthError(str(exc)) from exc
             raise
 
     async def stream(  # type: ignore[override]
