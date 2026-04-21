@@ -80,6 +80,16 @@ function pickCookieSpot(recipient: string): { x: number; y: number } {
 
 let eventIdCounter = 0;
 
+function roleToColor(role: string): string {
+  const r = role.toLowerCase();
+  if (r.includes("director") || r.includes("lead")) return "yellow";
+  if (r.includes("test") || r.includes("qa") || r.includes("verif")) return "red";
+  if (r.includes("review") || r.includes("critic")) return "magenta";
+  if (r.includes("writ") || r.includes("doc")) return "green";
+  if (r.includes("design") || r.includes("architect")) return "blue";
+  return "cyan"; // coder default
+}
+
 const INITIAL_AUTH: AuthState = {
   status: "unknown",
   isAdmin: false,
@@ -94,6 +104,7 @@ const INITIAL_AUTH: AuthState = {
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [authState, setAuthState] = useState<AuthState>(INITIAL_AUTH);
   // Per-connection session id issued by the backend on auth.status. Every
@@ -137,6 +148,7 @@ export function useSwarm() {
   voiceRef.current = voice;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
   // Exponential backoff state: attempt count resets on successful open.
   const reconnectAttemptsRef = useRef(0);
 
@@ -334,7 +346,7 @@ export function useSwarm() {
           setAuthState((prev) => ({
             ...prev,
             status: "required",
-            error: (data.message as string) ?? "인증에 실패했습니다.",
+            error: (data.message as string) ?? "Authentication failed.",
           }));
           return;
         }
@@ -343,7 +355,7 @@ export function useSwarm() {
           setAuthState((prev) => ({
             ...prev,
             status: "required",
-            error: (data.message as string) ?? "로그인이 필요합니다.",
+            error: (data.message as string) ?? "Login required.",
           }));
           return;
         }
@@ -356,6 +368,110 @@ export function useSwarm() {
             paths.add(dot > 0 ? key.slice(0, dot) : key);
           }
           setLastRunFieldPaths(paths);
+        }
+
+        // ── New event handlers ───────────────────────────────────────
+        if (event === "agent.error") {
+          const agent = (data.agent as string) || "Agent";
+          const error = (data.error as string) || "An error occurred.";
+          addToast("info", "Agent Error", `${agent}: ${error}`, "✖");
+          setState((prev) => ({
+            ...prev,
+            agents: prev.agents.map((a) =>
+              a.name === agent ? { ...a, state: "error" } : a,
+            ),
+          }));
+          return;
+        }
+
+        if (event === "sandbox.run_started") {
+          const agent = (data.agent as string) || "Agent";
+          const language = (data.language as string) || "code";
+          addToast("info", "Running Code", `${agent} is running ${language} code...`, "▶");
+          return;
+        }
+
+        if (event === "sandbox.run_finished") {
+          const agent = (data.agent as string) || "Agent";
+          const language = (data.language as string) || "code";
+          const exitCode = (data.exit_code as number) ?? 0;
+          const ok = !!(data.ok);
+          const timedOut = !!(data.timed_out);
+          void language;
+          if (ok) {
+            addToast("info", "Code Finished", `${agent} code ran OK`, "✓");
+          } else if (timedOut) {
+            addToast("info", "Code Timed Out", `${agent} code timed out`, "⏱");
+          } else {
+            addToast("info", "Code Failed", `${agent} code failed (exit ${exitCode})`, "✖");
+          }
+          return;
+        }
+
+        if (event === "swarm.ready") {
+          setState((prev) => ({ ...prev, status: "running" }));
+          return;
+        }
+
+        if (event === "director.plan_failed") {
+          const error = (data.error as string) || "Unknown error";
+          addToast("info", "Plan Failed", `Director plan failed: ${error}`, "✖");
+          return;
+        }
+
+        if (event === "director.stall_escalated") {
+          const message = (data.message as string) || "Director stalled.";
+          addToast("info", "Stall Escalated", message, "⚠");
+          return;
+        }
+
+        if (event === "director.review_auto_approved") {
+          const count = (data.count as number) ?? 0;
+          addToast("info", "Auto-Approved", `${count} stalled review(s) auto-approved`, "✓");
+          return;
+        }
+
+        if (event === "help.requested") {
+          // Already logged via addEvent above; no toast needed
+          return;
+        }
+
+        if (event === "review.started") {
+          const agent = (data.agent as string) || "Agent";
+          const verdict = (data.verdict as string) || "";
+          if (verdict) {
+            addToast("info", "Review", `${agent}: ${verdict}`, "♥");
+          }
+          return;
+        }
+
+        if (event === "message.sent") {
+          // Already logged via addEvent above; no toast needed
+          return;
+        }
+
+        if (event === "workspace.complete") {
+          const totalFiles = (data.total_files as number) ?? 0;
+          addToast("info", "Workspace Complete", `Workspace complete: ${totalFiles} files`, "★");
+          return;
+        }
+
+        if (event === "swarm.diagnostic") {
+          // Log to console only
+          console.debug("[swarm.diagnostic]", data);
+          return;
+        }
+
+        if (event === "world.event") {
+          const title = (data.title as string) || "World Event";
+          const description = (data.description as string) || "";
+          addToast("info", title, description, "~*~");
+          // Fall through to setState below for event log
+        }
+
+        if (event === "pong") {
+          // Silently ignore pong responses
+          return;
         }
 
         // Generate toasts for important events
@@ -504,13 +620,14 @@ export function useSwarm() {
               const name = data.name as string | undefined;
               if (!name) break;
               if (!prev.agents.find((a) => a.name === name)) {
+                const role = (data.role as string) || "general";
                 next.agents = [
                   ...prev.agents,
                   {
                     name,
                     emoji: (data.emoji as string) || "?",
-                    role: (data.role as string) || "general",
-                    color: "cyan",
+                    role,
+                    color: roleToColor(role),
                     position: { x: 0, y: 0 },
                     state: "idle",
                     mood: "happy",
@@ -639,12 +756,14 @@ export function useSwarm() {
                 let hp = next.boss.hp;
                 let maxHp = next.boss.max_hp;
                 const damage = (data.damage as number) || 0;
-                if (typeof data.hp === "number") hp = data.hp as number;
-                if (typeof data.max_hp === "number") maxHp = data.max_hp as number;
-                if (!damage && typeof data.message === "string") {
+                if (typeof data.hp === "number") {
+                  hp = data.hp as number;
+                } else if (typeof data.message === "string") {
+                  // Fallback: parse HP from message string if hp field is absent
                   const m = (data.message as string).match(/(\d+)\/\d+ HP/);
                   if (m) hp = parseInt(m[1], 10);
                 }
+                if (typeof data.max_hp === "number") maxHp = data.max_hp as number;
                 next.boss = {
                   ...next.boss,
                   hp,
@@ -722,7 +841,15 @@ export function useSwarm() {
 
     ws.onopen = () => {
       setConnected(true);
+      setConnectionFailed(false);
       reconnectAttemptsRef.current = 0; // reset backoff on successful connect
+      // Set up heartbeat ping every 30 seconds
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ command: "ping" }));
+        }
+      }, 30_000);
       // Preemptive re-auth on reconnect: if we've already authenticated
       // this browser session, resend creds immediately so the server
       // doesn't sit in an unauthenticated state until the first user
@@ -741,6 +868,7 @@ export function useSwarm() {
       }
     };
     ws.onclose = () => {
+      clearInterval(pingIntervalRef.current);
       setConnected(false);
       // The old session id is dead on the backend the moment the socket
       // drops — clear it so stale downloads can't hit the wrong session.
@@ -749,6 +877,11 @@ export function useSwarm() {
       // Jitter (±20%) prevents thundering-herd when many clients reconnect
       // simultaneously after a server restart.
       const attempt = reconnectAttemptsRef.current;
+      const MAX_RECONNECT_ATTEMPTS = 15;
+      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+        setConnectionFailed(true);
+        return; // Stop retrying
+      }
       reconnectAttemptsRef.current = attempt + 1;
       const base = Math.min(30_000, 1_000 * 2 ** attempt);
       const jitter = base * 0.2 * (Math.random() * 2 - 1);
@@ -884,6 +1017,7 @@ export function useSwarm() {
     connect();
     return () => {
       clearTimeout(reconnectRef.current);
+      clearInterval(pingIntervalRef.current);
       wsRef.current?.close();
     };
   }, [connect]);
@@ -939,6 +1073,7 @@ export function useSwarm() {
   return {
     state,
     connected,
+    connectionFailed,
     toasts,
     dismissToast,
     sendMessage,
