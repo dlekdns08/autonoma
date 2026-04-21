@@ -796,14 +796,23 @@ Rules:
         summary = result.summarize(max_chars=400)
         self.memory.remember(summary, "success" if result.ok else "failure", self._round_number)
 
-        feedback = (
-            f"[sandbox run: {language.value} | {result.backend} | "
-            f"exit={result.exit_code} | {result.duration_sec}s"
-            f"{' | TIMEOUT' if result.timed_out else ''}"
-            f"{' | TRUNCATED' if result.truncated else ''}]\n"
-            f"--- stdout ---\n{result.stdout or '(empty)'}\n"
-            f"--- stderr ---\n{result.stderr or '(empty)'}\n"
-        )
+        if result.timed_out:
+            feedback = (
+                f"[sandbox run: {language.value} | {result.backend} | TIMEOUT | "
+                f"{result.duration_sec}s]\n"
+                "Code execution timed out. The sandbox killed the process. "
+                "Make your code faster or break it into smaller pieces.\n"
+                f"--- stdout (partial) ---\n{result.stdout or '(empty)'}\n"
+                f"--- stderr (partial) ---\n{result.stderr or '(empty)'}\n"
+            )
+        else:
+            feedback = (
+                f"[sandbox run: {language.value} | {result.backend} | "
+                f"exit={result.exit_code} | {result.duration_sec}s"
+                f"{' | TRUNCATED' if result.truncated else ''}]\n"
+                f"--- stdout ---\n{result.stdout or '(empty)'}\n"
+                f"--- stderr ---\n{result.stderr or '(empty)'}\n"
+            )
         self_msg = AgentMessage(
             sender="sandbox",
             recipient=self.name,
