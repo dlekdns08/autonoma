@@ -32,6 +32,18 @@ interface Props {
 
 const DEFAULT_SENTINEL = "__default__";
 
+// ── Dialogue style previews (Feature 17) ─────────────────────────────
+
+const STYLE_PREVIEWS: Record<string, string> = {
+  casual: "hey so i just finished that thing, looks good tbh",
+  formal: "I have completed the assigned task. The implementation is satisfactory.",
+  poetic: "With careful hands I've woven code into being...",
+  terse: "Done. Next?",
+  enthusiastic: "YES! Got it working!! This is SO cool!!",
+  technical: "Task complete. Exit code 0. No errors detected.",
+  playful: "Ta-daa! Look what I made, hehe~ ✨",
+};
+
 // ── Section descriptions ──────────────────────────────────────────────
 
 const SECTION_DESCRIPTIONS: Record<string, string> = {
