@@ -392,6 +392,23 @@ export function useSwarm() {
           setLastRunFieldPaths(paths);
         }
 
+        // ── Checkpoint events (Feature 4) ───────────────────────────
+        if (event === "session.checkpoint" || event === "checkpoint.saved") {
+          const round = (data.round as number) ?? 0;
+          const id =
+            (data.checkpoint_id as string | undefined) ??
+            `${round}-${Date.now()}`;
+          const created_at =
+            (data.created_at as string | undefined) ?? new Date().toISOString();
+          setCheckpoints((prev) => {
+            // Avoid duplicate entries for the same checkpoint id.
+            if (prev.some((c) => c.id === id)) return prev;
+            return [...prev, { id, round, created_at }];
+          });
+          addToast("info", "Checkpoint Saved", `Round ${round} checkpoint saved`, "✓");
+          return;
+        }
+
         // ── New event handlers ───────────────────────────────────────
         if (event === "agent.error") {
           const agent = (data.agent as string) || "Agent";
