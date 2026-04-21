@@ -345,6 +345,9 @@ FORWARDED_EVENTS = [
     "viewer.chat",
     "viewer.cheer",
     "room.viewers",
+    # Debate Arena (Feature 20)
+    "debate.started",
+    "debate.resolved",
 ]
 
 
