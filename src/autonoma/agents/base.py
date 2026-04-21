@@ -31,7 +31,6 @@ from autonoma.harness import (  # noqa: F401 — triggers @register
     safety_enforcement_strategies as _safety_enforcement_strategies,
     safety_strategies as _safety_strategies,
 )
-from autonoma.harness.decision_strategies import ParseFailureAbort
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import (
