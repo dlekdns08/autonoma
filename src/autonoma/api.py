@@ -295,6 +295,7 @@ FORWARDED_EVENTS = [
     "swarm.started",
     "swarm.round",
     "swarm.finished",
+    "session.metadata",
     "agent.speech",
     "agent.speech_audio_start",
     "agent.speech_audio_chunk",
@@ -467,6 +468,8 @@ async def _run_swarm(
     max_rounds: int = 30,
     llm_config: LLMConfig | None = None,
     policy: HarnessPolicyContent | None = None,
+    preset_id: str | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> None:
     """Run the swarm for a single session in the background.
 
@@ -495,6 +498,19 @@ async def _run_swarm(
     session.swarm = swarm
     session.project = project
 
+    # Seed per-run observability. ``policy`` is the effective content
+    # after preset + overrides + validation, so recording it here gives
+    # an accurate picture even when the user didn't supply either.
+    if policy is not None:
+        from autonoma.harness.observability import record_run_start
+
+        record_run_start(
+            session_id=session_id,
+            preset_id=preset_id,
+            overrides=overrides,
+            content=policy,
+        )
+
     try:
         await swarm.initialize(project)
 
@@ -521,6 +537,21 @@ async def _run_swarm(
         if sess is not None:
             await manager.send_to_ws(sess.ws, "swarm.error", {"error": str(e)})
     finally:
+        # Seal per-run observability before taking the room down.
+        from autonoma.harness.observability import (
+            get_session_metadata,
+            metadata_to_dict,
+            record_run_end,
+        )
+
+        record_run_end(session_id)
+        meta = get_session_metadata(session_id)
+        if meta is not None:
+            # Fan out the final metadata so the frontend + any external
+            # listeners can persist it. Piggy-backs on the existing
+            # event bus → FORWARDED_EVENTS path.
+            await bus.emit("session.metadata", **metadata_to_dict(meta))
+
         # Shut down this room's TTS worker (per-room since Phase 4).
         # Passing session_id explicitly avoids reading a ContextVar that
         # may already be cleared by the time the finally-block runs.
@@ -1290,6 +1321,59 @@ async def delete_harness_preset(
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
+@app.get("/api/harness/metrics")
+async def get_harness_metrics(
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Global strategy-pick counters across every run on this process.
+
+    Keys are ``"section.field=value"`` (e.g. ``"routing.strategy=priority"``);
+    values are pick counts since server start. Admin-only since the
+    signal is effectively a usage heat-map — not sensitive per se, but
+    not something we want public either.
+    """
+    from autonoma.harness.observability import get_global_counters
+
+    return {"counters": get_global_counters()}
+
+
+@app.get("/api/session/{session_id}/metadata")
+async def get_session_harness_metadata(
+    session_id: int,
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Per-run metadata: preset id, overridden sections, effective
+    policy, timestamps, and per-run picks. Callers that own a live
+    session can fetch mid-run; the ``ended_at`` field flips from null to
+    a timestamp when the run finishes.
+
+    Scoped to the caller's own sessions — admins can fetch any session
+    since the signal is useful for post-mortem debugging."""
+    from autonoma.harness.observability import (
+        get_session_metadata,
+        metadata_to_dict,
+    )
+
+    meta = get_session_metadata(session_id)
+    if meta is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="session_not_found",
+        )
+    # Non-admins can only see metadata for sessions they opened on this
+    # connection. ``_sessions`` is keyed by session_id and currently has
+    # no user_id link, so fall back to a "any active user sees their
+    # own session" check via the live SessionState (ws owner).
+    if user.role != "admin":
+        sess = _sessions.get(session_id)
+        if sess is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="session_not_found",
+            )
+    return metadata_to_dict(meta)
+
+
 def _cleanup_session(session_id: int) -> None:
     """Remove a session entry. Safe to call multiple times."""
     _sessions.pop(session_id, None)
@@ -1546,6 +1630,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             max_rounds,
                             llm_config=session.llm_config,
                             policy=policy_content,
+                            preset_id=msg.get("preset_id"),
+                            overrides=msg.get("overrides")
+                            if isinstance(msg.get("overrides"), dict)
+                            else None,
                         ),
                         context=ctx,
                     )
