@@ -368,6 +368,10 @@ function Dashboard() {
         >
           {showTasks && <TaskPanel tasks={state.tasks} />}
 
+          <ReviewQueue tasks={state.tasks} currentRound={state.round} />
+
+          <ExecutionTimeline events={state.events} />
+
           <RelationshipWeb
             agents={state.agents}
             relationships={state.relationships}
