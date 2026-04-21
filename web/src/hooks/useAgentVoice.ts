@@ -396,8 +396,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
     Map<
       string,
       {
-        clear: ReturnType<typeof setTimeout>;
-        amp: ReturnType<typeof setInterval>;
+        clear: ReturnType<typeof window.setTimeout>;
+        amp: ReturnType<typeof window.setInterval>;
       }
     >
   >(new Map());
@@ -406,7 +406,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
   // ``pushAudioEvent`` cancel the browser TTS the instant server TTS
   // audio arrives, avoiding double-speak.
   const pendingWebSpeechRef = useRef<
-    Map<string, ReturnType<typeof setTimeout>>
+    Map<string, ReturnType<typeof window.setTimeout>>
   >(new Map());
 
   const markSpeakingFromText = useCallback(
