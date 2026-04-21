@@ -44,14 +44,18 @@ class EventBus:
             )
             # Surface any handler errors instead of silently swallowing them.
             # We keep return_exceptions=True so one bad handler doesn't kill
-            # the whole batch — but at least we log what went wrong.
+            # the whole batch — but log at ERROR with the full traceback so
+            # operators can see *why* a spawn / cleanup / relationship handler
+            # died. A silent failure here used to mean a crashed
+            # ``_on_spawn_request`` left the requester waiting forever with
+            # no ``agent.spawn_failed`` signal.
             for handler, result in zip(handlers, results):
                 if isinstance(result, Exception):
-                    logger.warning(
-                        "Event handler failed: event=%s handler=%s error=%r",
+                    logger.error(
+                        "Event handler failed: event=%s handler=%s",
                         event,
                         _handler_name(handler),
-                        result,
+                        exc_info=result,
                     )
 
 
