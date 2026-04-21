@@ -166,7 +166,13 @@ const GESTURES: Record<
         b.rightUpperArm.rotation.y += env * osc * 0.5;
       }
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.z -= env * 0.95;
+        // Positive-z here — with the upper arm raised above horizontal,
+        // this rotates the forearm UP from the elbow so the hand ends
+        // near the head. Negative-z (the direction used by the `think`
+        // clip) only reads as natural flex when the upper arm hangs
+        // low; with a raised arm it drops the forearm downward into a
+        // V-shape instead of up into the waving ∧-shape.
+        b.rightLowerArm.rotation.z += env * 0.95;
       }
       if (b.rightHand) {
         b.rightHand.rotation.z += env * osc * 0.4;
@@ -189,7 +195,8 @@ const GESTURES: Record<
         b.rightUpperArm.rotation.y += env * osc * 0.65;
       }
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.z -= env * 1.1;
+        // See `wave` — flex sign is positive because the arm is raised.
+        b.rightLowerArm.rotation.z += env * 1.1;
       }
       if (b.rightHand) {
         b.rightHand.rotation.z += env * osc * 0.5;
