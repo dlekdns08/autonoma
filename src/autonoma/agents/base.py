@@ -22,6 +22,7 @@ from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — triggers @register
     action_strategies as _action_strategies,
+    message_strategies as _message_strategies,
     safety_strategies as _safety_strategies,
 )
 from autonoma.harness.policy import HarnessPolicyContent
@@ -276,17 +277,10 @@ class AutonomousAgent:
     def receive_message(self, msg: AgentMessage) -> None:
         self.inbox.append(msg)
         if len(self.inbox) > MAX_INBOX_SIZE:
-            # Evict lowest-priority (highest priority number) messages first.
-            # Among equal-priority messages, evict the oldest so recent context
-            # is preserved.  Two-key sort: (priority ASC, insertion-index DESC)
-            # puts the MAX_INBOX_SIZE messages we want to keep at the front,
-            # then we restore arrival order so callers see a time-ordered inbox.
-            pairs = list(enumerate(self.inbox))
-            pairs.sort(key=lambda p: (_msg_priority(p[1]), -p[0]))
-            self.inbox = sorted(
-                (m for _, m in pairs[:MAX_INBOX_SIZE]),
-                key=lambda m: m.timestamp,
+            trimmer = _strategy_lookup(
+                "decision.message_priority", self.policy.decision.message_priority
             )
+            self.inbox = trimmer(self.inbox, MAX_INBOX_SIZE, _msg_priority)
 
     # ── Decision Engine (Harness-Aware) ───────────────────────────────
 

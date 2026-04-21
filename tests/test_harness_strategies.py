@@ -64,6 +64,9 @@ def test_phase3_implemented_slots_are_no_longer_stubs() -> None:
         ("decision.on_parse_failure", "skip_turn"),
         ("decision.on_parse_failure", "force_idle"),
         ("decision.on_parse_failure", "abort"),
+        ("decision.message_priority", "urgency_ordered"),
+        ("decision.message_priority", "fifo"),
+        ("decision.message_priority", "round_robin"),
     }
 
     stubs = set(all_stubs())
