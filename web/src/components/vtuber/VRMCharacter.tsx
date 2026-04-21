@@ -483,13 +483,17 @@ function VRMModel({
     if (!vrm) return;
     VRMUtils.rotateVRM0(vrm);
     const h = vrm.humanoid;
-    // Drop the default T-pose arms a little so the idle frame doesn't
-    // look like a crucifixion. The idle loop adds a small oscillation
-    // around these base angles.
+    // Drop the T-pose arms so they hang down the sides. Going to
+    // ±1.40 rad (~80° from horizontal) leaves only a ~10° splay at the
+    // shoulder, which reads as "arms hanging naturally" — the ㄴ-shaped
+    // silhouette. The previous 1.15 rad (~66°) left the upper arm still
+    // jutting outward ~24° above vertical, which combined with the
+    // forearm flex read as a broken ㄱ shape (shoulder held up,
+    // forearm dangling).
     const leftUpper = h?.getNormalizedBoneNode("leftUpperArm") ?? null;
     const rightUpper = h?.getNormalizedBoneNode("rightUpperArm") ?? null;
-    if (leftUpper) leftUpper.rotation.z = 1.15;
-    if (rightUpper) rightUpper.rotation.z = -1.15;
+    if (leftUpper) leftUpper.rotation.z = 1.4;
+    if (rightUpper) rightUpper.rotation.z = -1.4;
     // Cache every bone the render loop touches. `chest` isn't guaranteed
     // on every VRM (some rigs only define upperChest or spine), so fall
     // through those in priority order rather than skipping breathing.
@@ -933,7 +937,7 @@ function VRMModel({
     const chestCoupling = breathe * 0.018;
 
     if (bones.leftUpperArm) {
-      bones.leftUpperArm.rotation.z = 1.15 + lPrimary + lSway + lSecondary + chestCoupling;
+      bones.leftUpperArm.rotation.z = 1.4 + lPrimary + lSway + lSecondary + chestCoupling;
       // Forward/back swing — visible pendulum motion.
       bones.leftUpperArm.rotation.x = Math.sin(now * 0.43 + phase + 0.9) * 0.045
                                     + Math.sin(now * 0.23 + phase) * 0.02;
@@ -941,7 +945,7 @@ function VRMModel({
       bones.leftUpperArm.rotation.y = Math.sin(now * 0.29 + phase + 1.7) * 0.028;
     }
     if (bones.rightUpperArm) {
-      bones.rightUpperArm.rotation.z = -1.15 - rPrimary - rSway + rSecondary - chestCoupling;
+      bones.rightUpperArm.rotation.z = -1.4 - rPrimary - rSway + rSecondary - chestCoupling;
       bones.rightUpperArm.rotation.x = Math.sin(now * 0.38 + phase + 2.5) * 0.042
                                      + Math.sin(now * 0.21 + phase + 1.1) * 0.02;
       bones.rightUpperArm.rotation.y = Math.sin(now * 0.33 + phase + 2.9) * 0.028;
