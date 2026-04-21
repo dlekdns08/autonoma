@@ -508,6 +508,7 @@ function Dashboard() {
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
           onSend={sendToAgent}
+          relationships={state.relationships}
         />
       )}
 
