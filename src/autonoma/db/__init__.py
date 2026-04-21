@@ -17,11 +17,12 @@ from autonoma.db.schema import (
     wills,
     famous_quotes,
 )
-# Importing users registers the ``users`` table on the shared ``metadata``
-# so ``init_db``'s ``create_all`` picks it up on first run. Without this
-# import the auth tables would only exist if some other code imports
-# ``autonoma.db.users`` before ``init_db`` runs.
+# Importing users / harness_policies registers their tables on the shared
+# ``metadata`` so ``init_db``'s ``create_all`` picks them up on first run.
+# Without these imports the tables would only exist if some other code
+# imports the module before ``init_db`` runs.
 from autonoma.db.users import users  # noqa: F401
+from autonoma.db.harness_policies import harness_policies  # noqa: F401
 
 __all__ = [
     "get_engine",
@@ -36,4 +37,5 @@ __all__ = [
     "wills",
     "famous_quotes",
     "users",
+    "harness_policies",
 ]
