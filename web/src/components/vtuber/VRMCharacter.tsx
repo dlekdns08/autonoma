@@ -313,11 +313,11 @@ const EMOTE_GESTURE_MAP: Record<string, GestureName> = {
 // always play the identical clip. Deterministic per-agent variation is
 // driven by a hash of the agent name combined with the emote sequence.
 const EMOTE_GESTURE_ALTERNATIVES: Record<string, GestureName[]> = {
-  "✦": ["hype", "wave"],
-  "★": ["hype", "wave", "bow"],
+  "✦": ["hype", "greet", "wave"],
+  "★": ["greet", "hype", "wave", "bow"],
   "‼": ["hype", "wave"],
-  "💡": ["hype", "wave"],
-  "♪": ["wave", "hype"],
+  "💡": ["hype", "greet", "wave"],
+  "♪": ["greet", "wave", "hype"],
   "?": ["think"],
   "•": ["think"],
   "💧": ["think", "bow"],
@@ -534,24 +534,30 @@ function VRMModel({
   }, [vrm, camera]);
 
   // Ambient idle gesture scheduler — fires gentle gestures (nod, beat,
-  // occasionally think/wave) on a 7-14s cadence regardless of state/mood
+  // waves, occasionally think) on a 6-12s cadence regardless of state/mood
   // so the character doesn't just jitter in place when the backend sends
-  // nothing. Skipped while a gesture is already running; weighted toward
-  // low-impact variants so it doesn't upstage mood-driven clips.
+  // nothing. Fires an initial `greet` shortly after mount so first
+  // impressions always include a visible hello wave. Skipped while a
+  // gesture is already running.
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    // Weighted by first occurrence — "nod" 3x, "beat" 3x, "wave"/"think" 1x each.
+    // Weighted: hand waves are the headline so we tip the pool toward
+    // them — wave 4x, beat 2x, nod 2x, think 1x.
     const pool: GestureName[] = [
-      "nod", "nod", "nod",
-      "beat", "beat", "beat",
-      "wave",
+      "wave", "wave", "wave", "wave",
+      "beat", "beat",
+      "nod", "nod",
       "think",
     ];
-    const scheduleNext = (initial: boolean) => {
-      const delay = initial
-        ? 2500 + Math.random() * 2500
-        : 7000 + Math.random() * 7000;
+    // Initial hello wave — fires once ~0.6-1.2s after mount, unconditionally.
+    const hello = window.setTimeout(() => {
+      if (cancelled) return;
+      stateRef.current.gesture = "greet";
+      stateRef.current.gestureStart = performance.now() / 1000;
+    }, 600 + Math.random() * 600);
+    const scheduleNext = () => {
+      const delay = 6000 + Math.random() * 6000; // 6–12s
       timer = window.setTimeout(() => {
         if (cancelled) return;
         if (!stateRef.current.gesture) {
@@ -559,12 +565,14 @@ function VRMModel({
           stateRef.current.gesture = pick;
           stateRef.current.gestureStart = performance.now() / 1000;
         }
-        scheduleNext(false);
+        scheduleNext();
       }, delay);
     };
-    scheduleNext(true);
+    // Queue the first ambient pick after the initial greet has room to play.
+    timer = window.setTimeout(scheduleNext, 4000 + Math.random() * 2000);
     return () => {
       cancelled = true;
+      window.clearTimeout(hello);
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, []);
