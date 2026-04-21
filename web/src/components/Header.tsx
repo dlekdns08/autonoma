@@ -69,8 +69,14 @@ export default function Header({ projectName, round, maxRounds, sky, connected }
         )}
 
         {/* Right — WS status */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label={connected ? "WebSocket connected" : "WebSocket disconnected"}
+          className="flex items-center gap-1.5 flex-shrink-0"
+        >
           <span
+            aria-hidden="true"
             className={`inline-block w-1.5 h-1.5 rounded-full ${
               connected
                 ? "bg-violet-500"
@@ -78,6 +84,7 @@ export default function Header({ projectName, round, maxRounds, sky, connected }
             }`}
           />
           <span
+            aria-hidden="true"
             className={`font-mono text-[9px] ${
               connected ? "text-violet-500/50" : "text-rose-400"
             }`}
