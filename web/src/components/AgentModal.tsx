@@ -354,14 +354,12 @@ export default function AgentModal({ agent, onClose, onSend, relationships = [] 
               )}
 
               {/* Achievements */}
-              {agent.stats && (agent.stats as Record<string, unknown>).achievements && (
+              {agent.stats && Array.isArray((agent.stats as Record<string, unknown>).achievements) && (
                 <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
                   <div className="text-[10px] text-white/30 font-mono mb-2">Achievements</div>
                   <div className="flex flex-col gap-1">
-                    {(
-                      (agent.stats as Record<string, unknown>).achievements as string[]
-                    ).map((a, i) => (
-                      <div key={i} className="text-xs text-white/60 font-mono">{a}</div>
+                    {((agent.stats as Record<string, unknown>).achievements as string[]).map((a, i) => (
+                      <div key={i} className="text-xs text-white/60 font-mono">{String(a)}</div>
                     ))}
                   </div>
                 </div>
