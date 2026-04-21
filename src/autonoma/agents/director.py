@@ -426,6 +426,7 @@ Rules:
 
                 if action == "approve_reviews":
                     targets = plan.get("tasks", [])
+                    did_reset = False
                     async with TASKS_LOCK:
                         for rt in targets:
                             logger.warning(
@@ -434,21 +435,28 @@ Rules:
                                 f"-> DONE (no reviewer agent is consuming REVIEW queue)"
                             )
                             rt.status = TaskStatus.DONE
+                        # Reset inside the lock so partial failures leave the
+                        # counter intact for re-evaluation next round.
+                        did_reset = True
                     await self._say("Auto-approving stuck reviews!", style="bold red")
                     await bus.emit("director.review_auto_approved", count=len(targets))
-                    self._stall_counter = 0
+                    if did_reset:
+                        self._stall_counter = 0
 
                 elif action == "clear_deps":
                     target = plan["task"]
                     cleared = plan.get("cleared", [])
+                    did_reset = False
                     async with TASKS_LOCK:
                         target.depends_on.clear()
+                        did_reset = True
                     logger.warning(
                         f"[Director] Forcibly unblocking '{target.title}' "
                         f"by clearing its dependencies={cleared}"
                     )
                     await self._say("Unblocking stuck task!", style="bold red")
-                    self._stall_counter = 0
+                    if did_reset:
+                        self._stall_counter = 0
 
                 elif action == "escalate":
                     logger.warning(
