@@ -173,6 +173,13 @@ class AutonomousAgent:
         self._consecutive_errors = 0
         self._mood_rng = random.Random()
 
+        # ── Feature 27: Graceful cancellation ──
+        self._cancelled: bool = False
+        self._cancellation_reason: str = ""
+
+        # ── Feature 29: LLM error auto-recovery ──
+        self._error_window: list[str] = []  # sliding window of last 10 error types
+
         # ── World System ──
         self.bones = AgentBones.from_role(persona.role, persona.name)
         self.mood = Mood.CURIOUS
@@ -214,10 +221,23 @@ class AutonomousAgent:
     def total_tokens(self) -> int:
         return self._total_tokens
 
+    # ── Feature 27: Cancellation ───────────────────────────────────────
+
+    def cancel(self, reason: str = "shutdown") -> None:
+        """Cancel this agent. Subsequent think_and_act calls will return immediately."""
+        self._cancelled = True
+        self._cancellation_reason = reason
+        logger.info(f"[{self.name}] Cancelled: {reason}")
+
     # ── Core Loop ──────────────────────────────────────────────────────
 
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
         """Main autonomous loop: observe state, decide action, execute it."""
+        # ── Feature 27: Graceful cancellation check ──
+        if self._cancelled:
+            logger.info(f"[{self.name}] Skipping think_and_act: cancelled ({self._cancellation_reason})")
+            return {"agent": self.name, "action": "idle", "cancelled": True}
+
         circuit = _strategy_lookup(
             "safety.enforcement_level", self.policy.safety.enforcement_level
         )(
@@ -243,6 +263,11 @@ class AutonomousAgent:
             self._consecutive_errors += 1
             await self._say("Timed out thinking...", style="bold red")
             return {"agent": self.name, "action": "idle", "error": "timeout"}
+
+        # ── Feature 27: Post-LLM cancellation check ──
+        if self._cancelled:
+            logger.info(f"[{self.name}] Cancelled during LLM call ({self._cancellation_reason})")
+            return {"agent": self.name, "action": "idle", "cancelled": True}
 
         action_type = decision.get("action", "idle")
 
@@ -527,12 +552,52 @@ Rules:
 
         except (LLMConnectionError, LLMRateLimitError) as e:
             logger.warning(f"[{self.name}] LLM error ({type(e).__name__}): {e}")
+
+            # Feature 29: record error type in the sliding window
+            error_type = "rate_limit" if isinstance(e, LLMRateLimitError) else "timeout"
+            self._error_window.append(error_type)
+            if len(self._error_window) > 10:
+                self._error_window = self._error_window[-10:]
+
+            # Pattern detection
+            timeout_count = self._error_window.count("timeout")
+            rate_limit_count = self._error_window.count("rate_limit")
+            if timeout_count >= 3:
+                logger.warning(
+                    f"[AutoRecovery] {self.name}: Frequent timeouts ({timeout_count}/10) "
+                    f"— consider reducing max_tokens"
+                )
+            if rate_limit_count >= 3:
+                logger.info(
+                    f"[AutoRecovery] {self.name}: Frequent rate limits ({rate_limit_count}/10) "
+                    f"— backing off 5s"
+                )
+                await asyncio.sleep(5)
+
             handler = _strategy_lookup(
                 "action.llm_error_handling", self.policy.action.llm_error_handling
             )
             return await handler(e, self.name)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"[{self.name}] Failed to parse LLM response: {e}")
+
+            # Feature 29: record parse failure in the sliding window
+            self._error_window.append("parse_failure")
+            if len(self._error_window) > 10:
+                self._error_window = self._error_window[-10:]
+
+            parse_failure_count = self._error_window.count("parse_failure")
+            if parse_failure_count >= 5:
+                logger.warning(
+                    f"[AutoRecovery] {self.name}: Repeated parse failures "
+                    f"({parse_failure_count}/10) — emitting recovery_needed"
+                )
+                await bus.emit(
+                    "agent.recovery_needed",
+                    agent=self.name,
+                    pattern="repeated_parse_failures",
+                )
+
             handler = _strategy_lookup(
                 "decision.on_parse_failure", self.policy.decision.on_parse_failure
             )
