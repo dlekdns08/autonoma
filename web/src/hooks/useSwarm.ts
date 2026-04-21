@@ -21,17 +21,35 @@ import { useAgentVoice } from "@/hooks/useAgentVoice";
 
 const SESSION_KEY = "autonoma_auth";
 
-const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL ||
-  (typeof window !== "undefined" && window.location.hostname === "autonoma.koala.ai.kr"
-    ? `wss://autonoma.koala.ai.kr/api/ws`
-    : "ws://localhost:3479/ws");
+// WS/API base URLs are resolved lazily so SSR (where ``window`` is
+// undefined) never touches the browser globals. ``getWsUrl`` is called
+// from ``connect()`` inside a ``useEffect`` — never during render — so
+// it is guaranteed to run client-side.
+function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window === "undefined") return "ws://localhost:3479/ws";
+  return window.location.hostname === "autonoma.koala.ai.kr"
+    ? "wss://autonoma.koala.ai.kr/api/ws"
+    : "ws://localhost:3479/ws";
+}
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window !== "undefined" && window.location.hostname === "autonoma.koala.ai.kr"
+// ``API_BASE_URL`` is used in template strings during render (download
+// href, etc.). Cache the resolved value once per module evaluation so
+// server HTML and client hydration agree, and favor the build-time env
+// var over hostname sniffing whenever possible.
+function resolveApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window === "undefined") {
+    // Relative paths work when the backend is same-origin. For dev the
+    // operator should set NEXT_PUBLIC_API_URL so SSR and CSR agree.
+    return "";
+  }
+  return window.location.hostname === "autonoma.koala.ai.kr"
     ? "https://autonoma.koala.ai.kr"
-    : "http://localhost:3479");
+    : "http://localhost:3479";
+}
+
+export const API_BASE_URL: string = resolveApiBase();
 
 const INITIAL_STATE: SwarmState = {
   status: "idle",
@@ -883,7 +901,7 @@ export function useSwarm() {
       if (code) pendingJoinCodeRef.current = code.trim().toUpperCase();
     }
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {
