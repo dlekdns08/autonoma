@@ -113,14 +113,13 @@ export default function VTuberStage({
   const [revealFlash, setRevealFlash] = useState(false);
   const prevForcedRef = useRef<string | null | undefined>(undefined);
 
-  useEffect(() => {
-    if (speakingAgents.size === 0) return;
+  if (speakingAgents.size > 0) {
     const next = Array.from(speakingAgents)[0];
     if (next !== lastSpeakerRef.current) {
       lastSpeakerRef.current = next;
-      setLastSpeaker(next);
+      if (lastSpeaker !== next) setLastSpeaker(next);
     }
-  }, [speakingAgents]);
+  }
 
   useEffect(() => {
     const t = setTimeout(() => setShowHint(false), 6000);
@@ -128,15 +127,17 @@ export default function VTuberStage({
   }, []);
 
   // Sync external pin + trigger reveal flash when the forced agent changes.
-  useEffect(() => {
-    if (forcePinnedAgent == null) return;
-    if (forcePinnedAgent === prevForcedRef.current) return;
+  if (forcePinnedAgent != null && forcePinnedAgent !== prevForcedRef.current) {
     prevForcedRef.current = forcePinnedAgent;
-    setPinned(forcePinnedAgent);
-    setRevealFlash(true);
+    if (pinned !== forcePinnedAgent) setPinned(forcePinnedAgent);
+    if (!revealFlash) setRevealFlash(true);
+  }
+
+  useEffect(() => {
+    if (!revealFlash) return;
     const t = setTimeout(() => setRevealFlash(false), 700);
     return () => clearTimeout(t);
-  }, [forcePinnedAgent]);
+  }, [revealFlash]);
 
   const spotlightName = pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
   const spotlightAgent = spotlightName
