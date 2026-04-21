@@ -127,7 +127,7 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
 // against the VRoid-style rigs in `public/vrm/`; different rigs may
 // need a second pass.
 
-type GestureName = "wave" | "hype" | "think" | "bow" | "beat" | "nod";
+type GestureName = "wave" | "greet" | "hype" | "think" | "bow" | "beat" | "nod";
 
 interface Bones {
   head: THREE.Object3D | null;
@@ -146,19 +146,59 @@ const GESTURES: Record<
   { duration: number; apply: (t: number, b: Bones, env: number) => void }
 > = {
   wave: {
-    duration: 1.4,
+    duration: 1.9,
     apply: (t, b, env) => {
-      // Right arm raises; forearm oscillates — classic greeting.
-      // rightUpperArm base is -1.15 (arm at side), so adding positive
-      // z brings the hand up and away from the torso.
+      // Classic greeting wave: upper arm raises up-and-slightly-forward,
+      // elbow bends ~90° so the hand ends near the side of the head, and
+      // the forearm oscillates side-to-side with the hand joining in so
+      // the palm reads as waving rather than the forearm just twisting.
+      // rightUpperArm base is -1.15 (arm hanging); +1.75 takes it above
+      // horizontal and well clear of the chest.
       if (b.rightUpperArm) {
-        b.rightUpperArm.rotation.z += env * 1.5;
-        b.rightUpperArm.rotation.x -= env * 0.35;
+        b.rightUpperArm.rotation.z += env * 1.75;
+        b.rightUpperArm.rotation.x -= env * 0.55;
       }
+      const osc = Math.sin(t * Math.PI * 4); // ~2 full waves over the clip
       if (b.rightLowerArm) {
-        b.rightLowerArm.rotation.y +=
-          env * Math.sin(t * Math.PI * 5) * 0.45;
+        // Bend the elbow so the hand is up by the head, then rock it
+        // side-to-side on the forearm twist axis.
+        b.rightLowerArm.rotation.z -= env * 0.95;
+        b.rightLowerArm.rotation.y += env * osc * 0.85;
       }
+      // Hand reinforces the oscillation — wrist roll + small abduction
+      // so the palm clearly waves instead of staying locked to the forearm.
+      if (b.rightHand) {
+        b.rightHand.rotation.z += env * osc * 0.45;
+        b.rightHand.rotation.y += env * osc * 0.25;
+      }
+    },
+  },
+  // Bigger, longer greeting — a deliberate "hi there!" wave used on
+  // first appearance and after spotlight switches. Same motion as `wave`
+  // but higher arm, longer duration, and more oscillation cycles so the
+  // viewer can't miss it.
+  greet: {
+    duration: 2.6,
+    apply: (t, b, env) => {
+      if (b.rightUpperArm) {
+        b.rightUpperArm.rotation.z += env * 1.95;
+        b.rightUpperArm.rotation.x -= env * 0.7;
+        // Slight outward twist opens the chest to the viewer.
+        b.rightUpperArm.rotation.y -= env * 0.25;
+      }
+      const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
+      if (b.rightLowerArm) {
+        b.rightLowerArm.rotation.z -= env * 1.1;
+        b.rightLowerArm.rotation.y += env * osc * 1.0;
+      }
+      if (b.rightHand) {
+        b.rightHand.rotation.z += env * osc * 0.55;
+        b.rightHand.rotation.y += env * osc * 0.3;
+      }
+      // Slight head tilt toward the waving side + a small smile-forward
+      // chest lean — sells the "hey!" energy.
+      if (b.head) b.head.rotation.z -= env * 0.06;
+      if (b.chest) b.chest.rotation.x -= env * 0.04;
     },
   },
   hype: {
