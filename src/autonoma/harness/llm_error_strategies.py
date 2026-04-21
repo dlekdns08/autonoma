@@ -62,3 +62,26 @@ async def _rate_limit_sleep(exc: Exception, agent_name: str) -> dict[str, Any]:
 @register("action.llm_error_handling", "abort")
 async def _abort(exc: Exception, agent_name: str) -> dict[str, Any]:
     raise exc
+
+
+@register("action.llm_error_handling", "rate_limit")
+async def _rate_limit(exc: Exception, agent_name: str) -> dict[str, Any]:
+    """Feature 29: dedicated rate-limit strategy with 5s backoff.
+
+    Separates the rate-limit sleep concern from base.py auto-recovery logic.
+    When the caller selects this strategy (policy.action.llm_error_handling =
+    "rate_limit"), rate-limit errors sleep 5s before returning an idle fallback.
+    Connection errors surface immediately so the agent can retry next round.
+    """
+    if isinstance(exc, LLMRateLimitError):
+        await asyncio.sleep(5)
+        return {
+            "action": "idle",
+            "speech": "Rate limited, backing off...",
+            "thinking": "rate_limited_backoff",
+        }
+    return {
+        "action": "idle",
+        "speech": "Can't reach the API...",
+        "thinking": "connection_error",
+    }
