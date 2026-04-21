@@ -53,6 +53,7 @@ from autonoma.auth import (
     SESSION_COOKIE_NAME,
     hash_password,
     issue_session_token,
+    read_session_token,
     require_active_user,
     require_admin,
     verify_password,
@@ -1621,6 +1622,31 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 "session_id": session.session_id,
             },
         }))
+
+        # ── Cookie-based auto-auth ───────────────────────────────────
+        # If the WS handshake carried a valid HTTP session cookie, promote
+        # the session automatically instead of forcing the viewer back
+        # through the legacy `authenticate` command. Without this the
+        # AuthModal reopens right after HTTP login and only the "Legacy
+        # admin" tab can satisfy the WS, which is what users were seeing.
+        cookie_token = ws.cookies.get(SESSION_COOKIE_NAME)
+        cookie_user_id = read_session_token(cookie_token or "")
+        cookie_user = await get_user_by_id(cookie_user_id) if cookie_user_id else None
+        if cookie_user is not None and cookie_user.status == "active":
+            llm_cfg = _build_admin_llm_config()
+            if llm_cfg is not None:
+                session.llm_config = llm_cfg
+                session.is_admin = cookie_user.role == "admin"
+                logger.info(
+                    f"[WS:{session.session_id}] Cookie auth ok "
+                    f"(user={cookie_user.username}, role={cookie_user.role}, "
+                    f"provider={llm_cfg.provider})"
+                )
+                await manager.send_to_ws(ws, "auth.success", {
+                    "is_admin": session.is_admin,
+                    "provider": llm_cfg.provider,
+                    "model": llm_cfg.model,
+                })
 
         # ── Initial state snapshot (always idle for a fresh connection) ──
         snapshot = await _get_snapshot_coalesced(session.session_id)
