@@ -226,6 +226,8 @@ for the production deployment.
 
 ```bash
 uv run pytest tests/ -v
+# Structural parity between English and Korean READMEs:
+python scripts/check_readme_drift.py
 ```
 
 ## License
