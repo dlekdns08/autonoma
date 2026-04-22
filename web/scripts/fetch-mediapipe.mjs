@@ -22,6 +22,12 @@ const MODELS = {
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
   "pose_landmarker_full.task":
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  // 21-landmark per hand, up to two hands. Drives finger-proximal bone
+  // rotations in the /mocap recorder. Optional — the recorder gracefully
+  // degrades to body+face only when the file is absent (hand capture
+  // toggle just stays disabled).
+  "hand_landmarker.task":
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
 };
 const WASM_FILES = [
   "vision_wasm_internal.js",
