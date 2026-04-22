@@ -62,6 +62,42 @@ def test_auto_unblock_escalates_when_no_agents_available() -> None:
     assert plan["action"] == "escalate"
 
 
+def test_auto_unblock_respects_live_critical_path_deps() -> None:
+    """When a dep points at an IN_PROGRESS upstream, refuse to clear it
+    — starting downstream work before the stage finishes defeats the
+    point of depends_on."""
+    fn = lookup("loop.stall_policy", "auto_unblock")
+    live_upstream = _task("impl", TaskStatus.IN_PROGRESS)
+    downstream = _task("review", TaskStatus.OPEN, depends_on=[live_upstream.id])
+    status_map = {live_upstream.id: live_upstream.status, downstream.id: downstream.status}
+    plan = fn([], [downstream], 1, task_status_map=status_map)
+    assert plan["action"] == "escalate"
+    assert "critical path" in plan["message"]
+
+
+def test_auto_unblock_clears_only_stale_deps_when_mixed() -> None:
+    """Mixed deps (one DONE, one IN_PROGRESS): clear the DONE ref but
+    keep the live one."""
+    fn = lookup("loop.stall_policy", "auto_unblock")
+    done_dep = _task("setup", TaskStatus.DONE)
+    live_dep = _task("impl", TaskStatus.IN_PROGRESS)
+    downstream = _task(
+        "review",
+        TaskStatus.OPEN,
+        depends_on=[done_dep.id, live_dep.id],
+    )
+    status_map = {
+        done_dep.id: done_dep.status,
+        live_dep.id: live_dep.status,
+        downstream.id: downstream.status,
+    }
+    plan = fn([], [downstream], 1, task_status_map=status_map)
+    assert plan["action"] == "clear_deps"
+    assert plan["cleared"] == [done_dep.id]
+    # live_dep.id MUST NOT be in the cleared set
+    assert live_dep.id not in plan["cleared"]
+
+
 # ── wait ──────────────────────────────────────────────────────────────
 
 
