@@ -238,7 +238,9 @@ class TTSWorker:
         total = 0
         index = 0
         try:
-            async for chunk in self._client.synthesize(
+            from autonoma.tts_synth import synthesize_streaming
+            async for chunk in synthesize_streaming(
+                self._client,
                 text=job.text,
                 voice=job.voice,
                 mood=job.mood,
@@ -247,8 +249,6 @@ class TTSWorker:
                 ref_audio_mime=ref_mime,
                 ref_text=ref_text,
             ):
-                if not chunk:
-                    continue
                 total += len(chunk)
                 await bus.emit(
                     "agent.speech_audio_chunk",
