@@ -197,6 +197,90 @@ Index("ix_rel_from", relationships.c.from_uuid)
 Index("ix_rel_to", relationships.c.to_uuid)
 
 
+# ── agent_journal ─────────────────────────────────────────────────────
+# Feature #5 — persistent diary/memory/notable events per character
+# across sessions. One row per journal entry; the character's
+# "autobiography" is an aggregation query over these rows.
+#
+# ``kind`` is free-form but we prefer a short controlled vocabulary:
+#   diary  — AgentDiary.write() output
+#   memory — MemoryEntry (lesson/success/failure/observation)
+#   lore   — narrative engine event that mentions this character
+#   note   — user-written pinned note shown on the profile page
+agent_journal = Table(
+    "agent_journal",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("kind", String(16), nullable=False, default="diary"),
+    Column("round_number", Integer, nullable=False, default=0),
+    Column("mood", String(32), nullable=False, default=""),
+    Column("text", Text, nullable=False),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+Index("ix_journal_char_kind", agent_journal.c.character_uuid, agent_journal.c.kind)
+
+
+# ── personas ──────────────────────────────────────────────────────────
+# Feature #6 — shareable agent templates. A persona bundles the bones
+# seed + a voice profile reference + a VRM preference + free-form
+# prompt style notes. Import a persona to spawn an agent that looks,
+# sounds, and talks like someone else's design.
+personas = Table(
+    "personas",
+    metadata,
+    Column("id", String(36), primary_key=True),  # uuid4
+    Column(
+        "owner_user_id",
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,  # NULL = imported anonymous / built-in
+        index=True,
+    ),
+    Column("name", String(64), nullable=False),
+    Column("role", String(128), nullable=False, default="coder"),
+    Column("seed_string", String(255), nullable=False),  # drives AgentBones
+    Column("voice_profile_id", String(36), nullable=True),  # voice_profiles.id
+    Column("vrm_file", String(64), nullable=False, default=""),
+    Column("prompt_style", Text, nullable=False, default=""),
+    Column("tags_json", Text, nullable=False, default="[]"),
+    Column("is_public", Integer, nullable=False, default=0),  # 0/1
+    Column("download_count", Integer, nullable=False, default=0),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+Index("ix_personas_public", personas.c.is_public)
+
+
 # ── graveyard ─────────────────────────────────────────────────────────
 # One row per death. A character CAN die multiple times if they're
 # revived in later runs — each death gets its own tombstone so the
