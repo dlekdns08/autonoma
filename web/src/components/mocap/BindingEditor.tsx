@@ -140,6 +140,9 @@ export default function BindingEditor({ vrmFile, clips, bindings }: Props) {
       <p className="text-[10px] text-white/35">
         바인딩은 전역입니다 — 저장 즉시 대시보드의 모든 뷰어가 해당 트리거에서 이 클립을 재생합니다.
       </p>
+      <p className="text-[10px] text-white/35">
+        재생 우선순위: 상태 &gt; 이모트 &gt; 무드 (여러 트리거가 동시에 맞을 때 상위 항목이 이깁니다).
+      </p>
     </div>
   );
 }
