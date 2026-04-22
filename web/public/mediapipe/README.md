@@ -5,12 +5,13 @@ files so production deploys are reproducible without CDN access.
 
 Contents after the fetch:
 
-| File                              | Purpose                               |
-| --------------------------------- | ------------------------------------- |
-| `vision_wasm_internal.{js,wasm}`  | SIMD build of the Tasks Vision runtime |
-| `vision_wasm_nosimd_internal.*`   | Fallback for browsers without SIMD    |
-| `face_landmarker.task`            | 468-point face mesh + 52 blendshapes  |
-| `pose_landmarker_full.task`       | 33-keypoint full-body pose            |
+| File                             | Purpose                                 |
+| -------------------------------- | --------------------------------------- |
+| `vision_wasm_internal.{js,wasm}` | SIMD build of the Tasks Vision runtime  |
+| `vision_wasm_nosimd_internal.*`  | Fallback for browsers without SIMD      |
+| `face_landmarker.task`           | 468-point face mesh + 52 blendshapes    |
+| `pose_landmarker_full.task`      | 33-keypoint full-body pose              |
+| `hand_landmarker.task`           | 21 landmarks × up to 2 hands (optional) |
 
 Do not edit these files by hand — re-run the fetch script instead so
 the pinned versions stay in lock-step with
