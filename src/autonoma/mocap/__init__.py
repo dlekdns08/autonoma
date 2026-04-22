@@ -18,6 +18,7 @@ from autonoma.mocap.triggers import (
 from autonoma.mocap.validator import (
     MocapValidationError,
     validate_payload,
+    MAX_CLIP_DURATION_S,
     MAX_PAYLOAD_SIZE_BYTES,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "EMOTE_TRIGGERS",
     "STATE_TRIGGERS",
     "MANUAL_SLUG_RE",
+    "MAX_CLIP_DURATION_S",
     "MAX_PAYLOAD_SIZE_BYTES",
     "MocapValidationError",
     "is_known_vrm",
