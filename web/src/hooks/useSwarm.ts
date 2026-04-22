@@ -321,6 +321,19 @@ export function useSwarm() {
           return;
         }
 
+        // Same row-level patch channel for voice bindings. Suppress the
+        // event-log entry so voice config churn doesn't flood the log.
+        if (event === "voice.bindings.updated") {
+          setVoiceBindingEvent({
+            vrm_file: String(data.vrm_file ?? ""),
+            profile_id:
+              data.profile_id == null ? null : String(data.profile_id),
+            removed: !!data.removed,
+            seq: ++voiceBindingEventSeqRef.current,
+          });
+          return;
+        }
+
         // Always log the event
         if (event !== "snapshot") {
           addEvent(event, data);
@@ -969,6 +982,8 @@ export function useSwarm() {
       // the socket was down would otherwise be missed. Bump the refresh
       // token so ``useMocapBindings`` does a full GET on reconnect.
       setMocapBindingsRefreshToken((n) => n + 1);
+      // Same treatment for voice bindings.
+      setVoiceBindingsRefreshToken((n) => n + 1);
       // Set up heartbeat ping every 30 seconds
       clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
@@ -1262,5 +1277,7 @@ export function useSwarm() {
     resumeFromCheckpoint,
     mocapBindingsRefreshToken,
     mocapBindingEvent,
+    voiceBindingsRefreshToken,
+    voiceBindingEvent,
   };
 }
