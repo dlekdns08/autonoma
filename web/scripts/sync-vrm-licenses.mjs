@@ -11,7 +11,7 @@
  * JSON catalog directly; no TypeScript transpile step needed.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,9 +21,51 @@ const catalogPath = resolve(
   repoWeb,
   "src/components/vtuber/vrmCatalog.json",
 );
-const outputPath = resolve(repoWeb, "public/vrm/LICENSES.md");
+const vrmDir = resolve(repoWeb, "public/vrm");
+const outputPath = resolve(vrmDir, "LICENSES.md");
 
 const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+
+// ── Drift check ────────────────────────────────────────────────────────
+// The sync script is the one touchpoint every catalog edit goes through,
+// so it's the natural place to guarantee catalog ↔ public/vrm alignment.
+// Two failure modes we care about:
+//   - catalog references a .vrm that isn't on disk → runtime 404 the
+//     first time that agent's VRM is needed
+//   - .vrm exists on disk but isn't in the catalog → VRM_FILES still
+//     only iterates the catalog, so the file is "hidden" and the author
+//     loses attribution (violates the VRoid Hub terms for Midori)
+//
+// We fail loudly with exit(1) so CI / the developer notices immediately
+// rather than shipping a broken license file. --allow-drift lets an
+// operator regenerate anyway (e.g. during a two-step rename).
+const onDisk = new Set(
+  readdirSync(vrmDir)
+    .filter((f) => f.toLowerCase().endsWith(".vrm"))
+);
+const inCatalog = new Set(Object.keys(catalog));
+const missingFiles = [...inCatalog].filter((f) => !onDisk.has(f));
+const orphanFiles = [...onDisk].filter((f) => !inCatalog.has(f));
+if (missingFiles.length > 0 || orphanFiles.length > 0) {
+  if (missingFiles.length > 0) {
+    console.error(
+      `[vrm] catalog references files missing from public/vrm/:\n  - ${missingFiles.join("\n  - ")}`,
+    );
+  }
+  if (orphanFiles.length > 0) {
+    console.error(
+      `[vrm] public/vrm/ contains .vrm files with no catalog entry:\n  - ${orphanFiles.join("\n  - ")}`,
+    );
+  }
+  if (!process.argv.includes("--allow-drift")) {
+    console.error(
+      "[vrm] Refusing to regenerate LICENSES.md while catalog and disk disagree. " +
+        "Fix the catalog (or delete the orphan .vrm) and re-run, or pass --allow-drift.",
+    );
+    process.exit(1);
+  }
+  console.warn("[vrm] --allow-drift set: writing LICENSES.md despite drift.");
+}
 
 const HEADER = `# VRM Model Licenses
 
