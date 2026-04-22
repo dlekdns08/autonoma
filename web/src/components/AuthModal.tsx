@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAuth, type AuthUser, type LoginReason, type SignupReason } from "@/hooks/useAuth";
 import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AuthState, UserCredentials } from "@/lib/types";
+import { STRINGS } from "@/lib/strings";
 
 // ── Props ─────────────────────────────────────────────────────────────────
 //
@@ -35,16 +36,16 @@ function reasonToMessage(
 ): string {
   switch (reason) {
     case "bad_credentials":
-      return "사용자 이름 또는 비밀번호가 올바르지 않습니다.";
+      return STRINGS.auth.invalidCredentials;
     case "not_active":
-      return "계정이 아직 활성화되지 않았습니다. 관리자의 승인을 기다려 주세요.";
+      return STRINGS.auth.notActivated;
     case "username_taken":
-      return "이미 사용 중인 사용자 이름입니다.";
+      return STRINGS.auth.usernameTaken;
     case "invalid":
-      return "입력값이 올바르지 않습니다. 규칙을 확인해 주세요.";
+      return STRINGS.auth.invalidInput;
     case "network":
     default:
-      return "네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+      return STRINGS.auth.networkError;
   }
 }
 
