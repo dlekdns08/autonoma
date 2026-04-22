@@ -1326,6 +1326,33 @@ function VRMModel({
       }
     }
 
+    // ── Mocap clip override (covered bones + expressions) ────────────
+    // When a clip is active for the current (agent, mood/emote/state),
+    // sample it and OVERWRITE the procedural pose on bones it drives.
+    // Uncovered bones keep whatever the idle loop wrote — this is how
+    // a face-only recording layers cleanly against the body idle.
+    // Expressions are written after mood/mouth so the recorded mouth
+    // shapes win when the clip covers vowels.
+    const mocapRt = mocapRuntimeRef.current;
+    if (mocapRt) {
+      mocapRt.sampleInto(performance.now() / 1000, mocapSampleRef.current);
+      const sample = mocapSampleRef.current;
+      const mocapBones = mocapBonesRef.current;
+      for (const name of Object.keys(sample.bones) as MocapBone[]) {
+        const q = sample.bones[name]!;
+        const node = mocapBones[name];
+        if (node) node.quaternion.set(q[0], q[1], q[2], q[3]);
+      }
+      if (em) {
+        for (const [name, v] of Object.entries(sample.expressions) as [
+          MocapExpression,
+          number,
+        ][]) {
+          if (em.getExpression?.(name)) em.setValue(name, v);
+        }
+      }
+    }
+
     vrm.update(delta);
   });
 
@@ -1476,6 +1503,7 @@ export default function VRMCharacter({
   cameraResetNonce,
   state,
   emote,
+  mocapClipId,
 }: Props) {
   const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
   const url = `/vrm/${file}`;
@@ -1533,6 +1561,7 @@ export default function VRMCharacter({
               spotlight={spotlight}
               cameraResetNonce={cameraResetNonce}
               emote={emote}
+              mocapClipId={mocapClipId}
             />
           </Suspense>
         </VRMLoadErrorBoundary>
