@@ -312,25 +312,40 @@ const GESTURES: Record<
   },
 };
 
-// Mood → gesture options. Multiple options = random pick so the same
-// mood doesn't always play the exact same clip.
-const MOOD_GESTURE_OPTIONS: Partial<Record<string, GestureName[]>> = {
-  excited:     ["hype", "wave"],
-  proud:       ["wave", "bow"],
-  worried:     ["think"],
-  happy:       ["wave", "bow"],
-  determined:  ["hype"],
-  focused:     ["think"],
-  celebrating: ["hype", "wave"],
-  curious:     ["think", "wave"],
-  tired:       ["think", "bow"],
-  nostalgic:   ["bow", "think"],
-  inspired:    ["hype", "wave"],
-  mischievous: ["wave", "hype"],
-  friendly:    ["wave", "bow"],
-  frustrated:  ["wave", "hype"],
-  relaxed:     ["bow", "wave"],
+// Mood → weighted gesture options. Tuples are [gesture, weight]. Uniform
+// picks made every mood's first option dominate by luck alone; weights
+// let the signature gesture for a mood (e.g. `hype` on `excited`) play
+// more often than its softer variant without excluding it entirely.
+type WeightedGesture = readonly [GestureName, number];
+const MOOD_GESTURE_OPTIONS: Partial<Record<string, readonly WeightedGesture[]>> = {
+  excited:     [["hype", 3], ["wave", 1]],
+  proud:       [["wave", 2], ["bow", 1]],
+  worried:     [["think", 1]],
+  happy:       [["wave", 2], ["bow", 1]],
+  determined:  [["hype", 1]],
+  focused:     [["think", 1]],
+  celebrating: [["hype", 2], ["wave", 1]],
+  curious:     [["think", 2], ["wave", 1]],
+  tired:       [["think", 2], ["bow", 1]],
+  nostalgic:   [["bow", 2], ["think", 1]],
+  inspired:    [["hype", 2], ["wave", 1]],
+  mischievous: [["wave", 2], ["hype", 1]],
+  friendly:    [["wave", 2], ["bow", 1]],
+  frustrated:  [["hype", 2], ["wave", 1]],
+  relaxed:     [["bow", 2], ["wave", 1]],
 };
+
+function pickWeighted<T>(opts: ReadonlyArray<readonly [T, number]>): T {
+  let total = 0;
+  for (const [, w] of opts) total += w;
+  if (total <= 0) return opts[0][0];
+  let r = Math.random() * total;
+  for (const [val, w] of opts) {
+    r -= w;
+    if (r <= 0) return val;
+  }
+  return opts[opts.length - 1][0];
+}
 
 // Emote icon → gesture (or gesture list). Icons come from the backend
 // `agent.emote` events whose icon field is set based on the agent's mood
@@ -628,7 +643,7 @@ function VRMModel({
     let timer: number | undefined;
     const playOne = () => {
       if (cancelled) return;
-      const next = options[Math.floor(Math.random() * options.length)];
+      const next = pickWeighted(options);
       requestGestureRef.current(next, GESTURE_PRIORITY.mood);
     };
     const scheduleNext = (initial: boolean) => {
