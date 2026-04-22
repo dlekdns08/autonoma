@@ -258,28 +258,42 @@ Rules:
             )
             return [fallback]
 
-        # Create tasks
+        # Create tasks — drop malformed entries (empty title OR empty
+        # description) so a partly-garbage LLM plan doesn't spawn tasks
+        # no agent can pick up, which causes an instant stall.
+        raw_task_entries = data.get("tasks", [])
+        kept_entries: list[dict] = []
         tasks: list[Task] = []
         title_to_id: dict[str, str] = {}
 
-        for t_data in data.get("tasks", []):
+        for t_data in raw_task_entries:
+            title = str(t_data.get("title", "")).strip()
+            description = str(t_data.get("description", "")).strip()
+            if not title or not description:
+                logger.warning(
+                    f"[Director] dropping malformed task from LLM plan "
+                    f"(title={title!r}, desc_empty={not description})"
+                )
+                continue
+
             try:
                 priority = TaskPriority(t_data.get("priority", "medium"))
             except ValueError:
                 priority = TaskPriority.MEDIUM
 
             task = Task(
-                title=t_data.get("title", "Unnamed task"),
-                description=t_data.get("description", ""),
+                title=title,
+                description=description,
                 priority=priority,
                 created_by="Director",
             )
             tasks.append(task)
+            kept_entries.append(t_data)
             title_to_id[task.title] = task.id
 
         # Resolve dependencies by title with validation
         unresolved_deps: list[str] = []
-        for task, t_data in zip(tasks, data.get("tasks", [])):
+        for task, t_data in zip(tasks, kept_entries):
             for dep_title in t_data.get("depends_on_titles", []):
                 dep_id = title_to_id.get(dep_title)
                 if dep_id:
@@ -291,9 +305,19 @@ Rules:
             logger.warning(f"[Director] Unresolved dependencies: {unresolved_deps}")
 
         if not tasks:
+            # Either the LLM gave us no tasks, or every task was
+            # malformed and we dropped them all. In both cases agents
+            # would be spawned against an empty backlog, triggering the
+            # stall detector immediately. Emit a distinct event so
+            # telemetry separates "empty plan" from "parse failure".
             logger.warning(
-                "[Director] LLM returned empty task list, creating fallback "
-                "(single 'Implement project' task, one Builder agent)"
+                f"[Director] LLM plan produced 0 usable tasks "
+                f"(raw_count={len(raw_task_entries)}); creating fallback "
+                f"(single 'Implement project' task, one Builder agent)"
+            )
+            await bus.emit(
+                "director.decompose_empty",
+                raw_task_count=len(raw_task_entries),
             )
             tasks = [Task(
                 title="Implement project",
