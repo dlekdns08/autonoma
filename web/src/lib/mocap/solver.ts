@@ -202,11 +202,13 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
 const WRIST_LM = 0;
 const MIDDLE_MCP_LM = 9;
 
-/** Joint type — selects calibration constants (rest/fist/out-range).
- *  Different joints have different anatomical ranges: a PIP joint
- *  flexes to ~90° at a full fist, a DIP to ~70°, a thumb MCP to ~70°
- *  etc. Sharing the proximal's 50°/90° calibration across them would
- *  leave intermediate/distal dead for the first half of their range. */
+/** Joint type — selects calibration constants (rest/fist/out-range)
+ *  and the VRM-local rotation axis. Different joints have different
+ *  anatomical ranges AND different local-axis conventions on the rig:
+ *  non-thumb fingers flex around +Z while the thumb (anatomically
+ *  rotated ~90° from the other fingers) flexes around -X. The
+ *  axis-finding was validated with the finger-axis test harness in
+ *  ``MocapPreview``. */
 type JointType =
   | "proximal"        // MCP joint of index/middle/ring/little
   | "intermediate"    // PIP joint
@@ -214,10 +216,21 @@ type JointType =
   | "thumbProximal"   // MCP of thumb (measured relative to metacarpal)
   | "thumbDistal";    // IP of thumb (measured relative to proximal)
 
-const CALIBRATION: Record<
-  JointType,
-  { restRad: number; fistRad: number; outRangeRad: number }
-> = {
+type RotationAxis = "x" | "y" | "z";
+
+interface JointCalibration {
+  restRad: number;
+  fistRad: number;
+  outRangeRad: number;
+  /** VRM-local rotation axis where "flexion" lives for this joint. */
+  axis: RotationAxis;
+  /** Flip the sign of the applied rotation. True when the axis's
+   *  positive direction goes AWAY from flexion (e.g. the thumb's local
+   *  +X points toward the tip and flexion requires -X). */
+  flipSign?: boolean;
+}
+
+const CALIBRATION: Record<JointType, JointCalibration> = {
   // Validated empirically with Midori rig. Any mis-tuning shows as
   // "joint feels stuck at rest" (rest too high) or "joint over-curls
   // before user closes" (rest too low).
@@ -225,26 +238,37 @@ const CALIBRATION: Record<
     restRad: (50 * Math.PI) / 180,
     fistRad: (90 * Math.PI) / 180,
     outRangeRad: (90 * Math.PI) / 180,
+    axis: "z",
   },
   intermediate: {
     restRad: (10 * Math.PI) / 180,
     fistRad: (90 * Math.PI) / 180,
     outRangeRad: (90 * Math.PI) / 180,
+    axis: "z",
   },
   distal: {
     restRad: (10 * Math.PI) / 180,
     fistRad: (70 * Math.PI) / 180,
     outRangeRad: (70 * Math.PI) / 180,
+    axis: "z",
   },
+  // Thumb joints: +Z produces an invisible twist on this rig family
+  // (bone's local +Z is along the thumb's own axis). Local -X is the
+  // anatomical flexion direction — see axis-test report where pressing
+  // X caused the thumb proximal to bend toward the palm.
   thumbProximal: {
     restRad: (20 * Math.PI) / 180,
     fistRad: (70 * Math.PI) / 180,
     outRangeRad: (60 * Math.PI) / 180,
+    axis: "x",
+    flipSign: true,
   },
   thumbDistal: {
     restRad: (10 * Math.PI) / 180,
     fistRad: (60 * Math.PI) / 180,
     outRangeRad: (50 * Math.PI) / 180,
+    axis: "x",
+    flipSign: true,
   },
 };
 
@@ -575,11 +599,14 @@ export class MocapSolver {
    *  while proximal rests near 50°, so a single global remap would
    *  leave intermediate/distal dead through half their range.
    *
-   *  Axis + chirality: all joints rotate around the VRM bone's local Z
-   *  (validated with the finger-axis test harness on VRoid rigs — X is
-   *  an invisible twist, Y is abduction, Z is flexion). Right hand
-   *  uses the opposite sign — empirically the normalized humanoid
-   *  doesn't mirror finger-bone local axes per-side.
+   *  Axis + chirality: non-thumb finger joints rotate around the VRM
+   *  bone's local Z (validated with the finger-axis test harness — X
+   *  is an invisible twist, Y is abduction, Z is flexion). The thumb
+   *  uses local -X instead because the thumb bones are anatomically
+   *  rotated ~90° from the other fingers. Right hand uses the opposite
+   *  sign overall — empirically the normalized humanoid doesn't mirror
+   *  finger-bone local axes per-side. Both per-joint axis and per-hand
+   *  sign are driven from the ``CALIBRATION`` table.
    *
    *  Trade-off: still curl-only — no finger spread (abduction) and no
    *  thumb opposition. Those need explicit 2nd-axis rotation work.
@@ -638,9 +665,23 @@ export class MocapSolver {
       const span = cal.fistRad - cal.restRad;
       const norm =
         span > 1e-6 ? Math.max(0, Math.min(1, (curl - cal.restRad) / span)) : 0;
-      const boneRot = norm * cal.outRangeRad * curlSign;
+      const sign = (cal.flipSign ? -1 : 1) * curlSign;
+      const boneRot = norm * cal.outRangeRad * sign;
 
-      _curlEuler.set(0, 0, boneRot, "XYZ");
+      // Dispatch on ``cal.axis`` — each joint type has its own local
+      // flexion axis (validated against the rig via the axis test
+      // harness). Branches compile to a trivial jump table.
+      switch (cal.axis) {
+        case "x":
+          _curlEuler.set(boneRot, 0, 0, "XYZ");
+          break;
+        case "y":
+          _curlEuler.set(0, boneRot, 0, "XYZ");
+          break;
+        case "z":
+          _curlEuler.set(0, 0, boneRot, "XYZ");
+          break;
+      }
       _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(
         boneName,
