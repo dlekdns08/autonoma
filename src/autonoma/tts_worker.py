@@ -51,6 +51,11 @@ class _SpeechJob:
     voice: str
     mood: str
     language: str
+    # OmniVoice zero-shot path: profile_id is carried in ``voice``; the
+    # worker resolves it to (ref_audio, ref_text) at pop-time so a
+    # profile update picks up on the next utterance without restarting
+    # the worker. Empty when no binding exists (worker drops the job).
+    vrm_file: str = ""
 
 
 @dataclass
@@ -116,12 +121,22 @@ class TTSWorker:
                 pass
             self._task = None
 
-    def enqueue(self, *, agent: str, text: str, voice: str, mood: str = "", language: str = "ko") -> bool:
+    def enqueue(
+        self,
+        *,
+        agent: str,
+        text: str,
+        voice: str,
+        mood: str = "",
+        language: str = "ko",
+        vrm_file: str = "",
+    ) -> bool:
         """Schedule a line. Returns False if dropped upfront.
 
         Drops happen for three reasons: worker stopped, queue full, or
         text too long. Budget / rate-limit are checked at pop-time (after
-        waiting a moment so we can collapse bursts).
+        waiting a moment so we can collapse bursts). Profile lookup is
+        deferred to pop-time too so binding edits take effect immediately.
         """
         if self._stopped or not settings.tts_enabled:
             return False
@@ -129,7 +144,14 @@ class TTSWorker:
             return False
         if len(text) > MAX_TEXT_CHARS:
             text = text[:MAX_TEXT_CHARS]
-        job = _SpeechJob(agent=agent, text=text, voice=voice, mood=mood, language=language)
+        job = _SpeechJob(
+            agent=agent,
+            text=text,
+            voice=voice,
+            mood=mood,
+            language=language,
+            vrm_file=vrm_file,
+        )
         try:
             self._queue.put_nowait(job)
         except asyncio.QueueFull:
@@ -179,6 +201,27 @@ class TTSWorker:
             )
             return
 
+        # Resolve the voice profile at pop-time so edits to the binding
+        # or the profile audio take effect on the next utterance without
+        # restarting the worker. job.voice already carries the profile id.
+        ref_audio: bytes | None = None
+        ref_mime = "audio/wav"
+        ref_text = ""
+        if job.voice:
+            from autonoma.voice import get_profile
+
+            profile = await get_profile(job.voice)
+            if profile is None:
+                await bus.emit(
+                    "agent.speech_audio_dropped",
+                    agent=job.agent,
+                    reason="profile_not_found",
+                )
+                return
+            ref_audio = profile.ref_audio
+            ref_mime = profile.ref_audio_mime
+            ref_text = profile.ref_text
+
         counter = self._counters.setdefault(job.agent, _AgentSpeechCounter())
         counter.seq += 1
         seq = counter.seq
@@ -189,14 +232,20 @@ class TTSWorker:
             seq=seq,
             voice=job.voice,
             mood=job.mood,
-            mime="audio/mpeg",
+            mime="audio/wav",
         )
 
         total = 0
         index = 0
         try:
             async for chunk in self._client.synthesize(
-                text=job.text, voice=job.voice, mood=job.mood, language=job.language,
+                text=job.text,
+                voice=job.voice,
+                mood=job.mood,
+                language=job.language,
+                ref_audio=ref_audio,
+                ref_audio_mime=ref_mime,
+                ref_text=ref_text,
             ):
                 if not chunk:
                     continue
