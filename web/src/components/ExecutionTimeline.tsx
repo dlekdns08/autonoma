@@ -49,23 +49,21 @@ interface Props {
   events: EventLogEntry[];
 }
 
-export default function ExecutionTimeline({ events }: Props) {
+function ExecutionTimelineImpl({ events }: Props) {
   const [collapsed, setCollapsed] = useState(false);
 
-  // Filter and limit
-  const relevant = events
-    .filter((e) => TIMELINE_EVENTS.has(e.event))
-    .slice(-50);
-
-  // Group by agent
-  const byAgent: Record<string, EventLogEntry[]> = {};
-  for (const entry of relevant) {
-    const agent = getAgent(entry);
-    if (!byAgent[agent]) byAgent[agent] = [];
-    byAgent[agent].push(entry);
-  }
-
-  const agentNames = Object.keys(byAgent);
+  // Filter/group only when `events` identity changes — parent re-renders
+  // (e.g. a pure collapse toggle) no longer rewalk the full event list.
+  const { byAgent, agentNames } = useMemo(() => {
+    const grouped: Record<string, EventLogEntry[]> = {};
+    const relevant = events.filter((e) => TIMELINE_EVENTS.has(e.event)).slice(-50);
+    for (const entry of relevant) {
+      const agent = getAgent(entry);
+      if (!grouped[agent]) grouped[agent] = [];
+      grouped[agent].push(entry);
+    }
+    return { byAgent: grouped, agentNames: Object.keys(grouped) };
+  }, [events]);
 
   return (
     <div
