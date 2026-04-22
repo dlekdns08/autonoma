@@ -24,6 +24,20 @@ COPY src/ src/
 # Install the project itself
 RUN uv sync --no-dev --frozen --extra tts
 
+# Pre-download OmniVoice model weights (~2 GB) into a build-time HF cache
+# so the first ``/voice`` synthesis doesn't block on a HuggingFace pull.
+# The cache is copied into the runtime stage below and pinned via the
+# ``HF_HOME`` env var so ``OmniVoice.from_pretrained`` finds it offline.
+#
+# This layer invalidates only when OMNIVOICE_MODEL_ID changes — bump the
+# ARG to force a re-download on a model upgrade.
+ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
+ENV HF_HOME=/opt/hf-cache
+RUN /app/.venv/bin/python - <<PY
+from huggingface_hub import snapshot_download
+snapshot_download("${OMNIVOICE_MODEL_ID}")
+PY
+
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
@@ -48,6 +62,12 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy source code
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/pyproject.toml /app/
+
+# Bake the pre-downloaded OmniVoice weights into the runtime image.
+# ``HF_HOME`` pins the HuggingFace cache path so the library finds these
+# files without ever hitting the network — useful for air-gapped deploys.
+COPY --from=builder /opt/hf-cache /opt/hf-cache
+ENV HF_HOME=/opt/hf-cache
 
 # Add .venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
