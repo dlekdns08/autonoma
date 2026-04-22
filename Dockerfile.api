@@ -63,10 +63,26 @@ WORKDIR /app
 # libsndfile1 + ffmpeg are runtime deps of the OmniVoice TTS stack:
 #   - soundfile wraps libsndfile for WAV/FLAC I/O
 #   - librosa uses ffmpeg as its decoder fallback for non-WAV refs
+#
+# git + gh (GitHub CLI) are needed for feature #9 (git_pr tool) — agents
+# commit + push + open pull requests via ``gh``. Installed from the
+# upstream cli.github.com apt repo. Each agent is expected to have its
+# own ``AUTONOMA_AGENT_GH_TOKEN_<UPPER_NAME>`` env var (or a shared
+# ``GH_TOKEN`` fallback).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bubblewrap libseccomp2 ca-certificates libsndfile1 ffmpeg \
+      git curl gnupg \
  && chmod u+s /usr/bin/bwrap \
+ && (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg) \
+ && chmod 644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
+ && apt-get purge -y curl gnupg \
+ && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy the virtual environment from builder
