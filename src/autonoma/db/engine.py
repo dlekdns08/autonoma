@@ -132,12 +132,23 @@ async def _migration_005_mocap(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_006_voice(conn) -> None:
+    """Create voice_profiles and voice_bindings tables.
+
+    Powers the /voice admin page: OmniVoice reference-audio profiles +
+    per-VRM voice bindings. Same ``create_all(checkfirst=True)`` pattern
+    as the mocap migration.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
     (3, _migration_003_harness_policies),
     (4, _migration_004_feature_tables),
     (5, _migration_005_mocap),
+    (6, _migration_006_voice),
 ]
 
 
