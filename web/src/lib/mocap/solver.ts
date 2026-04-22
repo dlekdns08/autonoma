@@ -1,0 +1,375 @@
+/**
+ * MediaPipe Tasks Vision → VRM humanoid adapter.
+ *
+ * Input  — one ``FaceLandmarkerResult`` + ``PoseLandmarkerResult`` pair
+ *          captured at the same video timestamp.
+ * Output — a ``ClipSample`` (bone quaternions in humanoid-normalized
+ *          space + expression scalars) ready to apply to a VRM or append
+ *          to a recording buffer.
+ *
+ * Why bypass Kalidokit for face:
+ *   Tasks Vision already produces 52 ARKit blendshapes and a
+ *   face-transformation matrix. That matrix is a rigid head pose in a
+ *   known coordinate system, so we can derive neck/head rotation
+ *   directly. For eyes + mouth the blendshapes are more accurate than
+ *   Kalidokit's heuristic-based face solve.
+ *
+ * Why use Kalidokit for body:
+ *   Kalidokit.Pose.solve does the limb-frame math (shoulder-rooted
+ *   rotations computed from neighbouring keypoints, elbow flex axis,
+ *   etc.). Doing it by hand is possible but Kalidokit has already tuned
+ *   the edge cases — crossing arms, shoulder roll — against real
+ *   webcam footage. We feed it the Tasks Vision output in the shape
+ *   the older Holistic API produced and swap L↔R on the way out so the
+ *   VRM mirrors the user (webcam is a mirror by convention).
+ *
+ * Smoothing:
+ *   One-Euro filter per bone/expression. Jitter at 30fps is the single
+ *   biggest source of "that looks AI-generated" energy; the adaptive
+ *   cutoff handles the tradeoff between responsiveness and calm.
+ */
+
+import * as Kalidokit from "kalidokit";
+import type {
+  FaceLandmarkerResult,
+  PoseLandmarkerResult,
+} from "@mediapipe/tasks-vision";
+import * as THREE from "three";
+import {
+  MOCAP_BONES,
+  type MocapBone,
+  type MocapExpression,
+} from "./clipFormat";
+import type { ClipSample } from "./clipPlayer";
+import { OneEuroQuat, OneEuroScalar, type OneEuroConfig } from "./oneEuro";
+
+/** Which Tasks Vision blendshapes map to which VRM 1.0 expressions. The
+ *  ARKit shapes are a superset — we blend the relevant ones per VRM slot
+ *  so stronger ARKit motion reads as stronger VRM expression without
+ *  losing subtler shapes. */
+const BLENDSHAPE_TO_VRM: Record<string, [MocapExpression, number][]> = {
+  // Eyes → blinks. Tasks Vision reports left/right separately.
+  eyeBlinkLeft: [["blinkLeft", 1], ["blink", 0.5]],
+  eyeBlinkRight: [["blinkRight", 1], ["blink", 0.5]],
+  // Smile + cheek puff → happy.
+  mouthSmileLeft: [["happy", 0.6]],
+  mouthSmileRight: [["happy", 0.6]],
+  cheekSquintLeft: [["happy", 0.2]],
+  cheekSquintRight: [["happy", 0.2]],
+  // Frown + brow down → angry.
+  browDownLeft: [["angry", 0.5]],
+  browDownRight: [["angry", 0.5]],
+  mouthFrownLeft: [["angry", 0.4], ["sad", 0.3]],
+  mouthFrownRight: [["angry", 0.4], ["sad", 0.3]],
+  // Inner brow raise + mouth down → sad.
+  browInnerUp: [["sad", 0.6]],
+  // Jaw open + relaxed brows → relaxed (drifts toward neutral smile).
+  mouthShrugUpper: [["relaxed", 0.3]],
+  // Wide eyes + raised brows → surprised.
+  eyeWideLeft: [["surprised", 0.5]],
+  eyeWideRight: [["surprised", 0.5]],
+  browOuterUpLeft: [["surprised", 0.3]],
+  browOuterUpRight: [["surprised", 0.3]],
+  // Mouth shapes for vowels. These are coarse — ARKit doesn't separate
+  // vowels, so we derive each vowel's weight from the jaw-open / lip
+  // shape combinations that read as that vowel.
+  jawOpen: [["aa", 1]],
+  mouthFunnel: [["ou", 1]],
+  mouthPucker: [["ou", 0.6], ["oh", 0.4]],
+  mouthClose: [["ih", 0.5]],
+  mouthStretchLeft: [["ee", 0.5]],
+  mouthStretchRight: [["ee", 0.5]],
+};
+
+/** Sum blendshapes into VRM expression slots, clamped 0..1. */
+function mapBlendshapes(
+  categories: { categoryName: string; score: number }[],
+  out: Partial<Record<MocapExpression, number>>,
+): void {
+  for (const c of categories) {
+    const entries = BLENDSHAPE_TO_VRM[c.categoryName];
+    if (!entries) continue;
+    for (const [slot, weight] of entries) {
+      out[slot] = (out[slot] ?? 0) + c.score * weight;
+    }
+  }
+  for (const k of Object.keys(out) as MocapExpression[]) {
+    out[k] = Math.max(0, Math.min(1, out[k] ?? 0));
+  }
+}
+
+/** Convert a 4x4 column-major matrix (MediaPipe ships these) into a
+ *  three.js Matrix4, then extract a quaternion.  */
+function quatFromMatrix(
+  m: Float32Array | number[],
+  out: [number, number, number, number],
+): void {
+  const mat = _scratchMat.fromArray(m as number[]);
+  mat.decompose(_scratchVec, _scratchQuat, _scratchVec2);
+  out[0] = _scratchQuat.x;
+  out[1] = _scratchQuat.y;
+  out[2] = _scratchQuat.z;
+  out[3] = _scratchQuat.w;
+}
+
+const _scratchMat = new THREE.Matrix4();
+const _scratchVec = new THREE.Vector3();
+const _scratchVec2 = new THREE.Vector3();
+const _scratchQuat = new THREE.Quaternion();
+
+interface LM2D {
+  x: number;
+  y: number;
+  z: number;
+  visibility?: number;
+}
+
+/** Adapt Tasks Vision pose output to Kalidokit's expected shape. The
+ *  older Holistic API returned arrays of ``{x, y, z, visibility}``;
+ *  Tasks Vision is the same shape but with additional ``presence`` and
+ *  per-landmark ``visibility`` fields we ignore. */
+function toKalidokitPose(
+  landmarks: LM2D[],
+  worldLandmarks: LM2D[],
+): {
+  pose2d: { x: number; y: number; z: number; visibility?: number }[];
+  pose3d: { x: number; y: number; z: number; visibility?: number }[];
+} {
+  const pose2d = landmarks.map((l) => ({
+    x: l.x,
+    y: l.y,
+    z: l.z ?? 0,
+    visibility: l.visibility,
+  }));
+  const pose3d = worldLandmarks.map((l) => ({
+    x: l.x,
+    y: l.y,
+    z: l.z ?? 0,
+    visibility: l.visibility,
+  }));
+  return { pose2d, pose3d };
+}
+
+/** Kalidokit outputs Euler angles per bone; convert to quaternion. */
+function eulerToQuat(
+  e: { x: number; y: number; z: number } | undefined,
+  order: THREE.EulerOrder,
+  out: [number, number, number, number],
+): void {
+  if (!e) {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 1;
+    return;
+  }
+  _scratchEuler.set(e.x, e.y, e.z, order);
+  _scratchQuat.setFromEuler(_scratchEuler);
+  out[0] = _scratchQuat.x;
+  out[1] = _scratchQuat.y;
+  out[2] = _scratchQuat.z;
+  out[3] = _scratchQuat.w;
+}
+
+const _scratchEuler = new THREE.Euler();
+
+/** Per-bone Euler order — matches the one VRMCharacter's gesture code
+ *  uses so the recorded rotations play back cleanly. */
+const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
+  hips: "XYZ",
+  spine: "XYZ",
+  chest: "YXZ",
+  upperChest: "YXZ",
+  neck: "YXZ",
+  head: "YXZ",
+  leftShoulder: "YXZ",
+  rightShoulder: "YXZ",
+  leftUpperArm: "YXZ",
+  rightUpperArm: "YXZ",
+  leftLowerArm: "YXZ",
+  rightLowerArm: "YXZ",
+  leftHand: "YXZ",
+  rightHand: "YXZ",
+};
+
+export interface SolverOptions {
+  /** Mirror the webcam on horizontal axis so the user's left hand drives
+   *  the VRM's left hand (webcam is a mirror by convention). Default
+   *  true — turn off only for non-selfie sources. */
+  mirror?: boolean;
+  /** Filter config applied to every output. Defaults are chosen to
+   *  match natural webcam conditions (30fps, well-lit). */
+  oneEuro?: OneEuroConfig;
+}
+
+/** Reusable per-source solver. Owns a bank of One-Euro filters so
+ *  repeated calls share smoothing state. */
+export class MocapSolver {
+  private readonly mirror: boolean;
+  private readonly cfg: OneEuroConfig | undefined;
+  private readonly quatFilters: Partial<Record<MocapBone, OneEuroQuat>> = {};
+  private readonly scalarFilters: Partial<Record<MocapExpression, OneEuroScalar>> = {};
+  private readonly scratch: [number, number, number, number] = [0, 0, 0, 1];
+
+  constructor(opts: SolverOptions = {}) {
+    this.mirror = opts.mirror ?? true;
+    this.cfg = opts.oneEuro;
+  }
+
+  reset(): void {
+    for (const f of Object.values(this.quatFilters)) f?.reset();
+    for (const f of Object.values(this.scalarFilters)) f?.reset();
+  }
+
+  private quatFilter(name: MocapBone): OneEuroQuat {
+    let f = this.quatFilters[name];
+    if (!f) {
+      f = new OneEuroQuat(this.cfg);
+      this.quatFilters[name] = f;
+    }
+    return f;
+  }
+
+  private scalarFilter(name: MocapExpression): OneEuroScalar {
+    let f = this.scalarFilters[name];
+    if (!f) {
+      f = new OneEuroScalar(this.cfg);
+      this.scalarFilters[name] = f;
+    }
+    return f;
+  }
+
+  /** Resolve one frame. Either input can be null — e.g. face-only
+   *  recording omits pose. Output buffer is reused across calls, so
+   *  don't retain references to ``out.bones[name]`` between frames. */
+  solveInto(
+    face: FaceLandmarkerResult | null,
+    pose: PoseLandmarkerResult | null,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    for (const k of Object.keys(out.bones)) {
+      delete out.bones[k as MocapBone];
+    }
+    for (const k of Object.keys(out.expressions)) {
+      delete out.expressions[k as MocapExpression];
+    }
+    if (face) this.solveFace(face, tsSec, out);
+    if (pose) this.solvePose(pose, tsSec, out);
+  }
+
+  private solveFace(
+    face: FaceLandmarkerResult,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    // 1) Blendshapes → VRM expressions.
+    const shapes = face.faceBlendshapes?.[0]?.categories;
+    if (shapes) {
+      const raw: Partial<Record<MocapExpression, number>> = {};
+      mapBlendshapes(shapes, raw);
+      for (const [name, v] of Object.entries(raw) as [MocapExpression, number][]) {
+        const smoothed = this.scalarFilter(name).filter(v, tsSec);
+        out.expressions[name] = smoothed;
+      }
+    }
+    // 2) Head pose from the facial transformation matrix. Tasks Vision
+    //    ships one 4x4 matrix per tracked face; we only use face #0.
+    const mats = face.facialTransformationMatrixes;
+    const mat = mats?.[0]?.data;
+    if (mat) {
+      quatFromMatrix(mat, this.scratch);
+      // Mirror the rotation's Y/Z around the vertical axis so a head
+      // tilt-left in the mirror drives a head tilt-left on the VRM.
+      // For a rotation (x, y, z, w), mirroring across X → (x, -y, -z, w).
+      if (this.mirror) {
+        this.scratch[1] = -this.scratch[1];
+        this.scratch[2] = -this.scratch[2];
+      }
+      // Split evenly between neck and head so the motion reads as a
+      // natural spine chain rather than a bobblehead.
+      const half: [number, number, number, number] = [
+        this.scratch[0] * 0.5,
+        this.scratch[1] * 0.5,
+        this.scratch[2] * 0.5,
+        // Half-rotation: w component = cos(θ/2) ≈ linear blend of w+1 halved.
+        (this.scratch[3] + 1) * 0.5,
+      ];
+      const mag = Math.hypot(half[0], half[1], half[2], half[3]) || 1;
+      half[0] /= mag;
+      half[1] /= mag;
+      half[2] /= mag;
+      half[3] /= mag;
+      this.writeBoneSmoothed("neck", half, tsSec, out);
+      this.writeBoneSmoothed("head", half, tsSec, out);
+    }
+  }
+
+  private solvePose(
+    pose: PoseLandmarkerResult,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const landmarks = pose.landmarks?.[0];
+    const world = pose.worldLandmarks?.[0];
+    if (!landmarks || !world) return;
+    const { pose2d, pose3d } = toKalidokitPose(landmarks, world);
+    let rig;
+    try {
+      rig = Kalidokit.Pose.solve(pose3d, pose2d, {
+        runtime: "mediapipe",
+        enableLegs: false,
+      });
+    } catch {
+      return;
+    }
+    if (!rig) return;
+    // Kalidokit "left" / "right" are from the webcam's perspective. If
+    // mirrored (default), swap so the VRM's left matches the user's
+    // visual left in the preview.
+    const left = this.mirror ? rig.RightUpperArm : rig.LeftUpperArm;
+    const right = this.mirror ? rig.LeftUpperArm : rig.RightUpperArm;
+    const leftLower = this.mirror ? rig.RightLowerArm : rig.LeftLowerArm;
+    const rightLower = this.mirror ? rig.LeftLowerArm : rig.RightLowerArm;
+    const leftHand = this.mirror ? rig.RightHand : rig.LeftHand;
+    const rightHand = this.mirror ? rig.LeftHand : rig.RightHand;
+
+    this.writeBoneFromEuler("leftUpperArm", left, tsSec, out);
+    this.writeBoneFromEuler("rightUpperArm", right, tsSec, out);
+    this.writeBoneFromEuler("leftLowerArm", leftLower, tsSec, out);
+    this.writeBoneFromEuler("rightLowerArm", rightLower, tsSec, out);
+    this.writeBoneFromEuler("leftHand", leftHand, tsSec, out);
+    this.writeBoneFromEuler("rightHand", rightHand, tsSec, out);
+    this.writeBoneFromEuler("hips", rig.Hips?.rotation, tsSec, out);
+    this.writeBoneFromEuler("spine", rig.Spine, tsSec, out);
+  }
+
+  private writeBoneFromEuler(
+    name: MocapBone,
+    euler: { x: number; y: number; z: number } | undefined,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    if (!euler) return;
+    // Kalidokit produces Euler angles in radians under its own sign
+    // convention. When mirroring, flip X+Y so mirrored limbs rotate
+    // correctly around the VRM's local axes.
+    const src = this.mirror
+      ? { x: euler.x, y: -euler.y, z: -euler.z }
+      : euler;
+    const order = BONE_EULER_ORDER[name] ?? "XYZ";
+    eulerToQuat(src, order, this.scratch);
+    this.writeBoneSmoothed(name, this.scratch, tsSec, out);
+  }
+
+  private writeBoneSmoothed(
+    name: MocapBone,
+    q: [number, number, number, number],
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const pool: [number, number, number, number] = out.bones[name] ?? [0, 0, 0, 1];
+    this.quatFilter(name).filter(q[0], q[1], q[2], q[3], tsSec, pool);
+    out.bones[name] = pool;
+  }
+}
