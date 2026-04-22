@@ -57,6 +57,52 @@ export const VRM_CREDITS: Record<string, VrmCredit> = catalog as Record<
 /** List of available .vrm filenames, in assignment order. */
 export const VRM_FILES: string[] = Object.keys(VRM_CREDITS);
 
+// Shape validation at module init. The build-time sync script catches
+// catalog ↔ public/vrm/ drift, but that script only runs when someone
+// edits the catalog — a half-filled JSON entry (missing author, no URL,
+// etc.) would still slip through to the browser where the credit overlay
+// would silently render "undefined" and technically violate the
+// attribution clause on the Midori model. Fail closed at startup by
+// throwing; the dev-server surfaces this as a red error boundary, which
+// is strictly better than the silent render.
+//
+// Only runs in dev to keep production bundles from paying the cost —
+// prod builds are protected by the CI sync check.
+if (process.env.NODE_ENV !== "production") {
+  const problems: string[] = [];
+  for (const [file, credit] of Object.entries(VRM_CREDITS)) {
+    if (!file.toLowerCase().endsWith(".vrm")) {
+      problems.push(`${file}: key must end in .vrm`);
+    }
+    if (!credit || typeof credit !== "object") {
+      problems.push(`${file}: entry is not an object`);
+      continue;
+    }
+    for (const field of ["character", "author", "url", "uploaded"] as const) {
+      if (typeof credit[field] !== "string" || credit[field].length === 0) {
+        problems.push(`${file}: missing or empty '${field}'`);
+      }
+    }
+    const lic = credit.license;
+    if (!lic || typeof lic !== "object") {
+      problems.push(`${file}: missing 'license' object`);
+    } else if (
+      typeof lic.attribution !== "string" ||
+      lic.attribution.length === 0
+    ) {
+      // 'attribution' is the field the in-app overlay reads to decide
+      // whether to surface the author credit prominently. Missing it
+      // risks failing the attribution clause silently.
+      problems.push(`${file}: license.attribution must be a non-empty string`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `vrmCatalog.json validation failed:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
 /** Deterministic name → .vrm filename mapping.
  *
  *  Uses a cheap djb2 hash modulo the roster size so the same agent name
