@@ -394,6 +394,8 @@ FORWARDED_EVENTS = [
     # Debate Arena (Feature 20)
     "debate.started",
     "debate.resolved",
+    # Mocap — global character binding changes (broadcast site-wide).
+    "mocap.bindings.updated",
 ]
 
 
@@ -3241,3 +3243,244 @@ async def list_models_with_key(payload: dict[str, Any]):
 
     models, is_live = await asyncio.to_thread(list_models, provider, api_key, base_url)
     return {"provider": provider, "is_live": is_live, "models": models}
+
+
+# ── /api/mocap/* ──────────────────────────────────────────────────────
+#
+# Motion-capture clip library + global trigger→clip bindings for the
+# VTuber character playback path. The ``/mocap`` page records webcam
+# motion via MediaPipe, uploads gzipped JSON clips, and wires them to
+# (vrm_file, kind, value) triggers. Any agent rendered with that VRM
+# plays the bound clip site-wide.
+#
+# Binding mutations emit ``mocap.bindings.updated`` on the shared bus.
+# Because these handlers run in HTTP context (no ``_current_session_id``)
+# the bus→WS bridge falls through to ``manager.broadcast``, fanning the
+# update out to every connected viewer.
+
+from autonoma.mocap import (  # noqa: E402  — grouped at feature boundary
+    ALLOWED_TRIGGER_KINDS,
+    MocapValidationError,
+    is_known_vrm,
+    validate_payload,
+    validate_trigger,
+)
+from autonoma.mocap import store as mocap_store  # noqa: E402
+from autonoma.mocap.triggers import trigger_catalog  # noqa: E402
+
+
+@app.get("/api/mocap/triggers")
+async def mocap_triggers(
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Static whitelist of allowed trigger values for the UI."""
+    return trigger_catalog()
+
+
+@app.get("/api/mocap-clips")
+async def mocap_list_clips(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    clips = await mocap_store.list_clips_for_user(user.id)
+    return {"clips": [c.to_dict() for c in clips]}
+
+
+@app.post("/api/mocap-clips", status_code=http_status.HTTP_201_CREATED)
+async def mocap_create_clip(
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip()
+    source_vrm = str(payload.get("source_vrm") or "").strip()
+    payload_gz_b64 = str(payload.get("payload_gz_b64") or "")
+    expected_size = payload.get("expected_size_bytes")
+
+    if not is_known_vrm(source_vrm):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="unknown_source_vrm",
+        )
+
+    try:
+        validated = validate_payload(
+            payload_gz_b64,
+            name=name,
+            source_vrm=source_vrm,
+            expected_size_bytes=(
+                int(expected_size) if isinstance(expected_size, (int, float)) else None
+            ),
+        )
+    except MocapValidationError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=exc.code,
+        )
+
+    clip = await mocap_store.create_clip(
+        owner_user_id=user.id, validated=validated
+    )
+    return {"clip": clip.to_dict()}
+
+
+@app.get("/api/mocap-clips/{clip_id}")
+async def mocap_get_clip(
+    clip_id: str,
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return clip metadata + the gzipped base64 payload for playback.
+
+    Any active user can fetch any clip — bindings are global so a
+    viewer may need a clip owned by someone else to render a character.
+    """
+    result = await mocap_store.get_clip_payload(clip_id)
+    if result is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
+        )
+    summary, payload_b64 = result
+    return {"clip": summary.to_dict(), "payload_gz_b64": payload_b64}
+
+
+@app.patch("/api/mocap-clips/{clip_id}")
+async def mocap_rename_clip(
+    clip_id: str,
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    summary = await mocap_store.get_clip_summary(clip_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
+        )
+    if summary.owner_user_id != user.id and user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
+        )
+    new_name = str(payload.get("name") or "").strip()
+    if not (1 <= len(new_name) <= 128):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name"
+        )
+    updated = await mocap_store.rename_clip(clip_id, new_name)
+    assert updated is not None
+    return {"clip": updated.to_dict()}
+
+
+@app.delete("/api/mocap-clips/{clip_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def mocap_delete_clip(
+    clip_id: str,
+    user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    summary = await mocap_store.get_clip_summary(clip_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
+        )
+    if summary.owner_user_id != user.id and user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
+        )
+    if await mocap_store.clip_is_bound(clip_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use"
+        )
+    ok = await mocap_store.delete_clip(clip_id)
+    if not ok:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
+        )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/api/mocap-bindings")
+async def mocap_list_bindings(
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    bindings = await mocap_store.list_bindings()
+    return {"bindings": [b.to_dict() for b in bindings]}
+
+
+@app.put("/api/mocap-bindings")
+async def mocap_upsert_binding(
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    vrm_file = str(payload.get("vrm_file") or "").strip()
+    kind = str(payload.get("trigger_kind") or "").strip()
+    value = str(payload.get("trigger_value") or "").strip()
+    clip_id = str(payload.get("clip_id") or "").strip()
+
+    if not is_known_vrm(vrm_file):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
+        )
+    if kind not in ALLOWED_TRIGGER_KINDS:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_kind"
+        )
+    trig_err = validate_trigger(kind, value)
+    if trig_err:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err
+        )
+    clip = await mocap_store.get_clip_summary(clip_id)
+    if clip is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
+        )
+
+    binding = await mocap_store.upsert_binding(
+        vrm_file=vrm_file,
+        trigger_kind=kind,
+        trigger_value=value,
+        clip_id=clip_id,
+        updated_by=user.id,
+    )
+
+    await bus.emit(
+        "mocap.bindings.updated",
+        vrm_file=vrm_file,
+        trigger_kind=kind,
+        trigger_value=value,
+        clip_id=clip_id,
+        removed=False,
+    )
+    return {"binding": binding.to_dict()}
+
+
+@app.delete(
+    "/api/mocap-bindings", status_code=http_status.HTTP_204_NO_CONTENT
+)
+async def mocap_delete_binding(
+    vrm_file: str = Query(...),
+    trigger_kind: str = Query(...),
+    trigger_value: str = Query(...),
+    _user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    if not is_known_vrm(vrm_file):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
+        )
+    trig_err = validate_trigger(trigger_kind, trigger_value)
+    if trig_err:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err
+        )
+    ok = await mocap_store.delete_binding(
+        vrm_file=vrm_file,
+        trigger_kind=trigger_kind,
+        trigger_value=trigger_value,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found"
+        )
+    await bus.emit(
+        "mocap.bindings.updated",
+        vrm_file=vrm_file,
+        trigger_kind=trigger_kind,
+        trigger_value=trigger_value,
+        clip_id=None,
+        removed=True,
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
