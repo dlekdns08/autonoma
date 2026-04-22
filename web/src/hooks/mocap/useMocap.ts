@@ -317,7 +317,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       setStatus("error");
       stop();
     }
-  }, [opts.mirror, stop]);
+  }, [opts.mirror, opts.hands, stop]);
 
   const appendRawFrame = (sample: ClipSample, tsSec: number) => {
     // Clone the quaternion tuples — the pool buffer is reused next
