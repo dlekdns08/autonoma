@@ -79,30 +79,36 @@ class AgentHarness:
             return set(self.allowed_capabilities) - set(self.disallowed_capabilities)
         return set(self.allowed_capabilities)
 
-    def can_perform(self, action: str) -> bool:
-        """Check if this harness allows a given action.
+    def check_action(self, action: str) -> tuple[bool, str | None]:
+        """Classify an action; return ``(allowed, reason_if_blocked)``.
 
-        Unknown actions are REJECTED by default (strict mode). This prevents
-        LLM typos in action names from silently being permitted. Legitimate
-        meta-actions that are not AgentCapability values (``idle``,
-        ``celebrate``) are always allowed.
+        Pure — does no logging. The caller (enforcement strategy) owns
+        the user-facing message so logs aren't duplicated at two layers.
+
+        Unknown actions are REJECTED (strict). Prevents LLM typos from
+        silently being permitted. Meta-actions in
+        ``_ALWAYS_ALLOWED_ACTIONS`` (``idle``, ``celebrate``) are always
+        allowed.
         """
         if action in _ALWAYS_ALLOWED_ACTIONS:
-            return True
+            return True, None
         try:
             cap = AgentCapability(action)
         except ValueError:
-            logger.warning(
-                f"[Harness:{self.name}] rejecting unknown action '{action}' "
-                f"(not a recognized AgentCapability). Likely an LLM typo."
+            return False, (
+                "unknown action (not a recognized AgentCapability; "
+                "likely an LLM typo)"
             )
-            return False
-        allowed = cap in self.get_effective_capabilities()
-        if not allowed:
-            logger.warning(
-                f"[Harness:{self.name}] action '{action}' is a valid capability "
-                f"but is not granted to this harness (check allowed_capabilities / disallowed_capabilities)."
+        if cap not in self.get_effective_capabilities():
+            return False, (
+                "not in allowed_capabilities for this harness "
+                "(check allowed_capabilities / disallowed_capabilities)"
             )
+        return True, None
+
+    def can_perform(self, action: str) -> bool:
+        """Boolean wrapper over :meth:`check_action`."""
+        allowed, _reason = self.check_action(action)
         return allowed
 
     def build_system_prompt(self, agent_name: str, skills: list[str]) -> str:
