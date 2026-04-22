@@ -178,18 +178,28 @@ function Dashboard() {
     isRunning: state.status === "running",
   });
 
+  const needsAuth = authState.status !== "authenticated";
+
   // Floating user chrome (chip + settings modal). Rendered inside every
   // Dashboard layout variant so the ⚙ action is reachable from idle,
   // running, and finished states alike.
+  //
+  // Mutual exclusion: AuthModal and ModelSettingsModal both solicit model
+  // credentials, so showing them simultaneously would stack two overlays
+  // on top of each other. When ``needsAuth`` is true the AuthModal owns
+  // that UX — suppress the settings modal (and ignore ⚙ clicks) until
+  // the user is authenticated.
   const userChrome = user ? (
     <>
       <UserChip
         username={user.username}
         isAdmin={user.role === "admin"}
         onLogout={() => void httpLogout()}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          if (!needsAuth) setSettingsOpen(true);
+        }}
       />
-      {settingsOpen && (
+      {settingsOpen && !needsAuth && (
         <ModelSettingsModal
           authState={authState}
           onAuthenticate={authenticate}
@@ -198,8 +208,6 @@ function Dashboard() {
       )}
     </>
   ) : null;
-
-  const needsAuth = authState.status !== "authenticated";
 
   const handleSelectAgent = useCallback(
     (name: string) => {
