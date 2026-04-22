@@ -139,6 +139,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const faceRef = useRef<FaceLandmarker | null>(null);
   const poseRef = useRef<PoseLandmarker | null>(null);
+  const handRef = useRef<HandLandmarker | null>(null);
   const solverRef = useRef<MocapSolver | null>(null);
   const sampleRef = useRef<ClipSample>(createSampleBuffer());
   const rafHandleRef = useRef<number | null>(null);
