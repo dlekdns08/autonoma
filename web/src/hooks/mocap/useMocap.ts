@@ -185,6 +185,8 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     faceRef.current = null;
     poseRef.current?.close();
     poseRef.current = null;
+    handRef.current?.close();
+    handRef.current = null;
     solverRef.current?.reset();
     recordingRef.current = false;
     setRecording(false);
