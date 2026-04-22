@@ -66,41 +66,46 @@ export default function MocapPage() {
   const [stageMessage, setStageMessage] = useState<string | null>(null);
 
   // Playback buffer for the trim preview. Fed by a ClipRuntime we
-  // create on demand.
+  // create on demand. Playhead lives in both a ref (fast path for the
+  // rAF tick) and state (UI rendering); don't include the state in
+  // effect deps or every tick will re-register the rAF loop.
   const trimSampleRef = useRef<ClipSample>(createSampleBuffer());
   const trimRuntimeRef = useRef<ClipRuntime | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
-  const playStartRef = useRef(0);
+  const playheadRef = useRef(0);
   const rafRef = useRef<number | null>(null);
 
-  // Rebuild trim runtime whenever draft changes.
   useEffect(() => {
     if (!draftClip) {
       trimRuntimeRef.current = null;
       setTrimStart(0);
       setTrimEnd(0);
       setPlayhead(0);
+      playheadRef.current = 0;
       return;
     }
     trimRuntimeRef.current = new ClipRuntime(draftClip, 0, { loop: false });
     setTrimStart(0);
     setTrimEnd(draftClip.durationS);
     setPlayhead(0);
+    playheadRef.current = 0;
   }, [draftClip]);
 
-  // Trim-preview loop — advances playhead, samples the ClipRuntime into
-  // trimSampleRef so MocapPreview renders the trimmed region.
   useEffect(() => {
     if (!playing || !draftClip || !trimRuntimeRef.current) return;
-    playStartRef.current = performance.now() / 1000 - (playhead - trimStart);
     const rt = trimRuntimeRef.current;
+    // Snap a stale playhead back inside the trim window.
+    if (playheadRef.current < trimStart || playheadRef.current >= trimEnd) {
+      playheadRef.current = trimStart;
+    }
+    const startWall = performance.now() / 1000;
+    const startHead = playheadRef.current;
     const tick = () => {
       const now = performance.now() / 1000;
-      const t = Math.min(trimEnd, trimStart + (now - playStartRef.current));
+      const t = Math.min(trimEnd, startHead + (now - startWall));
+      playheadRef.current = t;
       setPlayhead(t);
-      // ClipRuntime uses its own startedAt, so pass a fake nowSec
-      // relative to its construction time.
       rt.sampleInto(t, trimSampleRef.current);
       if (t >= trimEnd) {
         setPlaying(false);
@@ -114,12 +119,12 @@ export default function MocapPage() {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [playing, draftClip, trimStart, trimEnd, playhead]);
+  }, [playing, draftClip, trimStart, trimEnd]);
 
-  // Seek handler — samples once so the preview updates even when paused.
   const onSeek = (t: number) => {
     setPlaying(false);
     setPlayhead(t);
+    playheadRef.current = t;
     if (trimRuntimeRef.current) {
       trimRuntimeRef.current.sampleInto(t, trimSampleRef.current);
     }
@@ -192,7 +197,9 @@ export default function MocapPage() {
   };
 
   // Which preview to show: draft clip when recorded, else the live webcam solve.
-  const previewSampleRef = stage === "recorded" ? trimSampleRef : { current: mocap.latestSample };
+  const liveSampleRef = useRef<ClipSample>(mocap.latestSample);
+  liveSampleRef.current = mocap.latestSample;
+  const previewSampleRef = stage === "recorded" ? trimSampleRef : liveSampleRef;
 
   const tracking = useMemo(() => {
     return mocap.frameSeq > 0 && Object.keys(mocap.latestSample.bones).length > 0;
