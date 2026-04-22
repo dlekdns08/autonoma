@@ -98,10 +98,10 @@ export default function MocapPage() {
 
   useEffect(() => {
     const meta = mocap.recordingMeta;
-    if (!mocap.recording || !meta) {
-      setRecordElapsed(0);
-      return;
-    }
+    if (!mocap.recording || !meta) return;
+    // Stale "last elapsed" gets overwritten by the first tick below;
+    // no need to reset here, which would trigger the lint rule that
+    // flags setState calls in an effect body.
     const update = () =>
       setRecordElapsed(performance.now() / 1000 - meta.startedAt);
     update();
