@@ -62,8 +62,10 @@ export default function VoicePage() {
   const [upBusy, setUpBusy] = useState(false);
   const [upError, setUpError] = useState<string | null>(null);
 
-  // Test bench state
-  const [testProfileId, setTestProfileId] = useState<string>("");
+  // Test bench state. ``selectedTestProfileId`` is the user's explicit
+  // selection; the effective id falls back to the first profile so the
+  // select always has a valid value without an effect-driven seed.
+  const [selectedTestProfileId, setSelectedTestProfileId] = useState<string>("");
   const [testText, setTestText] = useState(
     "안녕하세요, 제 목소리 테스트입니다.",
   );
@@ -72,12 +74,15 @@ export default function VoicePage() {
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Seed the test profile select once profiles arrive.
-  useEffect(() => {
-    if (!testProfileId && profilesApi.profiles.length > 0) {
-      setTestProfileId(profilesApi.profiles[0]!.id);
+  const testProfileId = useMemo(() => {
+    if (selectedTestProfileId) {
+      const hit = profilesApi.profiles.find(
+        (p) => p.id === selectedTestProfileId,
+      );
+      if (hit) return hit.id;
     }
-  }, [profilesApi.profiles, testProfileId]);
+    return profilesApi.profiles[0]?.id ?? "";
+  }, [selectedTestProfileId, profilesApi.profiles]);
 
   // Revoke the previous blob URL when a new one is created or the
   // component unmounts — otherwise every test leaks a ~100KB blob.
@@ -366,7 +371,7 @@ export default function VoicePage() {
                 <span>프로파일</span>
                 <select
                   value={testProfileId}
-                  onChange={(e) => setTestProfileId(e.target.value)}
+                  onChange={(e) => setSelectedTestProfileId(e.target.value)}
                   className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 font-mono text-sm text-white outline-none focus:border-fuchsia-500/60"
                 >
                   {profilesApi.profiles.length === 0 && (
