@@ -38,6 +38,12 @@ class AgentCapability(str, Enum):
     REQUEST_HELP = "request_help"
     REVIEW_WORK = "review_work"
     RUN_CODE = "run_code"
+    # Feature #9 — agent commits + pushes + opens a GitHub PR via the
+    # git_pr tool. Requires ``gh`` on PATH and a GH token in env. Default
+    # harness lists this as allowed so it follows the same capability
+    # machinery as every other action; operators who don't want autonomous
+    # PR creation should add OPEN_PR to disallowed_capabilities.
+    OPEN_PR = "open_pr"
 
 
 @dataclass
@@ -234,6 +240,10 @@ CODER_HARNESS = AgentHarness(
         AgentCapability.SEND_MESSAGE,
         AgentCapability.REQUEST_HELP,
         AgentCapability.RUN_CODE,
+        # Feature #9 — coders can open PRs when a repo_path + gh token
+        # are available. No-op (structured "no_token" failure) in
+        # deployments that haven't configured GitHub credentials.
+        AgentCapability.OPEN_PR,
     ],
     disallowed_capabilities=[AgentCapability.SPAWN_AGENT],
     default_skills=["coding", "implementation", "debugging"],

@@ -319,6 +319,8 @@ class AutonomousAgent:
                 result = await self._action_complete_task(decision, project)
             elif action_type == "run_code":
                 result = await self._action_run_code(decision, project)
+            elif action_type == "open_pr":
+                result = await self._action_open_pr(decision, project)
             elif action_type == "celebrate":
                 await self._set_state(AgentState.CELEBRATING)
                 await self._say("All done!", style="bold green")
@@ -548,6 +550,7 @@ RECENT MESSAGES:
         _all_actions = [
             "work_on_task", "create_file", "send_message", "request_help",
             "review_work", "spawn_agent", "complete_task", "run_code",
+            "open_pr",
         ]
         _permitted = [a for a in _all_actions if a in _effective_caps]
         _permitted += ["idle", "celebrate"]
@@ -571,7 +574,12 @@ Based on the situation, decide your SINGLE next action. Respond with JSON:
   "task_output": "result summary if completing a task",
   "verdict": "PASS|FAIL|PARTIAL if reviewing (required for reviewers/testers)",
   "code_language": "python|bash|node (if run_code)",
-  "code_body": "the actual program source to execute in the sandbox (if run_code). Stdlib only, no network. Keep it short — a few seconds of CPU max. Use print() to report results."
+  "code_body": "the actual program source to execute in the sandbox (if run_code). Stdlib only, no network. Keep it short — a few seconds of CPU max. Use print() to report results.",
+  "repo_path": "workspace-relative git repo (if open_pr)",
+  "branch":    "branch name to push (if open_pr, e.g. 'feature/fizzbuzz-<short>')",
+  "pr_title":  "short single-line PR title (if open_pr)",
+  "pr_body":   "PR body with What / Why / Test plan sections (if open_pr)",
+  "base":      "base branch, optional, default 'main' (if open_pr)"
 }}
 
 Rules:
@@ -979,6 +987,109 @@ Rules:
             "exit_code": result.exit_code,
             "timed_out": result.timed_out,
             "duration": result.duration_sec,
+        }
+
+    async def _action_open_pr(self, decision: dict, project: ProjectState) -> dict[str, Any]:
+        """Commit the current working tree and open a GitHub PR as this
+        agent. Feature #9 — requires ``gh`` on PATH plus a token in env
+        (``AUTONOMA_AGENT_GH_TOKEN_<UPPER>`` preferred, ``GH_TOKEN``
+        fallback).
+
+        Expected decision shape (LLM fills these from the system prompt)::
+
+            {
+              "action": "open_pr",
+              "repo_path": "./output/proj",   # absolute or relative; must
+                                               # be inside settings.output_dir
+              "branch":   "feature/alice-fizzbuzz",
+              "pr_title": "Add fizzbuzz()",
+              "pr_body":  "What / Why / Test plan",
+              "base":     "main"              # optional, default "main"
+            }
+
+        Failure is never raised — the tool returns a structured reason
+        which we surface as the action result so the LLM can self-correct
+        in the next turn (e.g. checkout the right branch, retry with
+        different args).
+        """
+        await self._set_state(AgentState.WORKING)
+
+        repo_path = str(decision.get("repo_path") or "").strip()
+        branch = str(decision.get("branch") or "").strip()
+        title = str(decision.get("pr_title") or "").strip()
+        body = str(decision.get("pr_body") or "").strip()
+        base = str(decision.get("base") or "main").strip() or "main"
+
+        if not repo_path or not branch or not title:
+            await self._say("PR needs repo_path + branch + pr_title.", style="italic yellow")
+            return {
+                "agent": self.name,
+                "action": "open_pr",
+                "ok": False,
+                "reason": "missing_args",
+            }
+
+        # Offload blocking subprocess work to a thread — ``gh`` can stall
+        # for several seconds on network-heavy repos, so we never want it
+        # blocking the main event loop.
+        from autonoma.agents.tools import open_pull_request
+        import asyncio as _asyncio
+
+        result = await _asyncio.to_thread(
+            open_pull_request,
+            agent_name=self.name,
+            repo_path=repo_path,
+            branch=branch,
+            title=title,
+            body=body,
+            base=base,
+        )
+
+        if result.ok:
+            self.stats.add_xp(25)
+            await self._set_mood(Mood.PROUD)
+            self.memory.remember(f"Opened PR: {title}", "success", self._round_number)
+            await bus.emit(
+                "agent.opened_pr",
+                agent=self.name,
+                url=result.url,
+                title=title,
+                branch=branch,
+                base=base,
+            )
+            # An auto-clip-worthy milestone — the live/broadcast hook
+            # observes ``agent.opened_pr`` via the AUTOCLIP_EVENTS set
+            # if the deployment wants a highlight reel. (Default set
+            # does not include it; add ``"agent.opened_pr"`` there if
+            # streaming.)
+            await self._say(f"PR opened: {result.url[:60]}", style="bold green")
+            return {
+                "agent": self.name,
+                "action": "open_pr",
+                "ok": True,
+                "url": result.url,
+                "branch": branch,
+                "title": title,
+            }
+
+        # Failure path — surface a short reason to the LLM so the next
+        # turn can either retry or abandon this branch cleanly.
+        reason = result.reason[:200] if result.reason else "unknown"
+        await self._say(f"PR failed: {reason[:40]}", style="italic red")
+        self.memory.remember(f"PR failed: {reason[:60]}", "failure", self._round_number)
+        await bus.emit(
+            "agent.opened_pr_failed",
+            agent=self.name,
+            reason=reason,
+            branch=branch,
+            title=title,
+        )
+        return {
+            "agent": self.name,
+            "action": "open_pr",
+            "ok": False,
+            "reason": reason,
+            "branch": branch,
         }
 
     _round_number: int = 0  # Updated by swarm each round
