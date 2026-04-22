@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_BASE_URL } from "@/hooks/useSwarm";
+import { STRINGS } from "@/lib/strings";
 
 interface RunSummary {
   id: string;
@@ -58,7 +59,7 @@ export default function AdminRunsPage() {
         headers: { Accept: "application/json" },
       });
       if (res.status === 401 || res.status === 403) {
-        setError("관리자 권한이 필요합니다.");
+        setError(STRINGS.admin.adminRequired);
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -125,7 +126,7 @@ export default function AdminRunsPage() {
           <div className="mb-3 text-4xl">⛔</div>
           <h1 className="text-2xl font-bold font-mono text-red-300">403</h1>
           <p className="mt-2 text-sm font-mono text-white/60">
-            관리자만 접근할 수 있습니다.
+            {STRINGS.admin.onlyAdmin}
           </p>
         </div>
       </div>
