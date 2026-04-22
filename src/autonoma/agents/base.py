@@ -56,7 +56,6 @@ from autonoma.models import (
     TaskStatus,
 )
 from autonoma.dialogue_style import style_speech
-from autonoma.tts import pick_voice_for
 from autonoma.tts_worker import get_default_worker
 from autonoma.world import (
     ACHIEVEMENTS,
@@ -1013,14 +1012,16 @@ Rules:
         # persistent registry). We enqueue and return immediately — the
         # worker handles budget, rate-limiting, and audio fan-out.
         if settings.tts_enabled:
-            voice = self._resolve_voice()
-            get_default_worker().enqueue(
-                agent=self.name,
-                text=text,
-                voice=voice,
-                mood=self.mood.value if self.mood else "",
-                language=settings.tts_default_language,
-            )
+            voice, vrm_file = await self._resolve_voice()
+            if voice:
+                get_default_worker().enqueue(
+                    agent=self.name,
+                    text=text,
+                    voice=voice,
+                    mood=self.mood.value if self.mood else "",
+                    language=settings.tts_default_language,
+                    vrm_file=vrm_file,
+                )
         # Reaction icon — derived from mood. Stays cheap (one event per
         # speech) and lets the frontend paint a small EmoteBubble above
         # the sprite without needing per-mood event plumbing.
