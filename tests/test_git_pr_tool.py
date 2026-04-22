@@ -23,6 +23,46 @@ from autonoma.agents.tools.git_pr import (
 )
 
 
+def test_token_file_fallback_for_github_app_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Option C (GitHub App sidecar): no env GH_TOKEN, read from file."""
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("AUTONOMA_AGENT_GH_TOKEN_ALICE", raising=False)
+    env_file = tmp_path / "gh.env"
+    env_file.write_text(
+        "# auto-generated\n"
+        "# expires_at=2026-04-22T10:00:00Z\n"
+        "GH_TOKEN=ghs_installationtoken\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GH_TOKEN_FILE", str(env_file))
+    assert _gh_token_for("Alice") == "ghs_installationtoken"
+
+
+def test_per_agent_git_identity_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Option A: per-agent GIT_AUTHOR_* env overlay."""
+    from autonoma.agents.tools.git_pr import _git_author_env_for
+
+    monkeypatch.setenv("AUTONOMA_AGENT_GH_NAME_MIDORI", "midori-bot")
+    monkeypatch.setenv("AUTONOMA_AGENT_GH_EMAIL_MIDORI", "1+midori@users.noreply.github.com")
+    overlay = _git_author_env_for("Midori")
+    assert overlay["GIT_AUTHOR_NAME"] == "midori-bot"
+    assert overlay["GIT_COMMITTER_NAME"] == "midori-bot"
+    assert overlay["GIT_AUTHOR_EMAIL"].endswith("@users.noreply.github.com")
+    assert overlay["GIT_COMMITTER_EMAIL"] == overlay["GIT_AUTHOR_EMAIL"]
+
+
+def test_git_identity_overlay_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Options B/C/D: no per-agent vars → empty overlay (defers to
+    container's global git config)."""
+    from autonoma.agents.tools.git_pr import _git_author_env_for
+
+    monkeypatch.delenv("AUTONOMA_AGENT_GH_NAME_BEAR", raising=False)
+    monkeypatch.delenv("AUTONOMA_AGENT_GH_EMAIL_BEAR", raising=False)
+    assert _git_author_env_for("Bear") == {}
+
+
 def test_per_agent_token_beats_shared(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_TOKEN", "shared-fallback")
     monkeypatch.setenv("AUTONOMA_AGENT_GH_TOKEN_MIDORI", "midori-specific")

@@ -37,9 +37,56 @@ class GitPRResult:
     reason: str = ""
 
 
+def _git_author_env_for(agent_name: str) -> dict[str, str]:
+    """Per-agent git author identity for Option A (per-agent bot accounts).
+
+    Reads ``AUTONOMA_AGENT_GH_NAME_<UPPER>`` and
+    ``AUTONOMA_AGENT_GH_EMAIL_<UPPER>`` and returns a subprocess env
+    overlay that makes ``git commit`` attribute to the right bot.
+    Missing values fall back to whatever is set globally in the
+    container (``git config --global``), so Options B/C/D that use a
+    single identity aren't affected.
+    """
+    up = agent_name.upper().replace(" ", "_")
+    name = os.environ.get(f"AUTONOMA_AGENT_GH_NAME_{up}")
+    email = os.environ.get(f"AUTONOMA_AGENT_GH_EMAIL_{up}")
+    overlay: dict[str, str] = {}
+    if name:
+        overlay["GIT_AUTHOR_NAME"] = name
+        overlay["GIT_COMMITTER_NAME"] = name
+    if email:
+        overlay["GIT_AUTHOR_EMAIL"] = email
+        overlay["GIT_COMMITTER_EMAIL"] = email
+    return overlay
+
+
 def _gh_token_for(agent_name: str) -> str | None:
+    """Resolve the GH token for this agent. Priority:
+
+    1. Per-agent env var ``AUTONOMA_AGENT_GH_TOKEN_<UPPER_NAME>``
+       (Option A — per-agent bot accounts).
+    2. Shared ``GH_TOKEN`` env var (Options D/B).
+    3. ``GH_TOKEN_FILE`` env var pointing at a file containing a
+       ``GH_TOKEN=...`` line — used by Option C's refresher sidecar so
+       the API process always reads the freshest installation token
+       without requiring a container restart every 50 minutes.
+    """
     env_key = f"AUTONOMA_AGENT_GH_TOKEN_{agent_name.upper().replace(' ', '_')}"
-    return os.environ.get(env_key) or os.environ.get("GH_TOKEN")
+    token = os.environ.get(env_key) or os.environ.get("GH_TOKEN")
+    if token:
+        return token
+    # Fallback: read from token file (GitHub App sidecar pattern).
+    token_file = os.environ.get("GH_TOKEN_FILE")
+    if not token_file:
+        return None
+    try:
+        for line in open(token_file, "r", encoding="utf-8"):
+            line = line.strip()
+            if line.startswith("GH_TOKEN="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        return None
+    return None
 
 
 def _is_inside_workspace(path: Path) -> bool:
@@ -76,6 +123,9 @@ def open_pull_request(
         return GitPRResult(ok=False, reason="no GH_TOKEN available for this agent")
 
     env = {**os.environ, "GH_TOKEN": token}
+    # Per-agent author identity for Option A (no-op when the env vars
+    # aren't set — the container's global git identity takes over).
+    env.update(_git_author_env_for(agent_name))
     try:
         subprocess.run(
             ["git", "-C", str(repo), "checkout", "-b", branch],
