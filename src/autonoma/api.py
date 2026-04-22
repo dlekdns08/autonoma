@@ -1017,9 +1017,11 @@ async def _warmup_omnivoice() -> None:
     On CPU the first ``_ensure_model`` call takes 30–60s. Without this
     warmup the first admin /test request pays that cost and nginx cuts
     it at its default 60s ``proxy_read_timeout`` (504 Gateway Timeout).
-    We run it as a detached task so startup (and the /api/health probe)
-    isn't blocked on the load.
+    Gated on ``settings.tts_provider`` so deployments with TTS disabled
+    don't pay the 2–3 GB resident memory cost.
     """
+    if settings.tts_provider != "omnivoice":
+        return
     try:
         from autonoma.tts_omnivoice import warmup_shared_client
     except ImportError:
@@ -1033,9 +1035,12 @@ async def lifespan(app: FastAPI):
     await _bootstrap_admin_user()
     await _bootstrap_default_harness_policy()
     _log_startup_summary()
-    warmup_task = asyncio.create_task(_warmup_omnivoice())
+    warmup_task: asyncio.Task[None] | None = None
+    if settings.tts_provider == "omnivoice":
+        warmup_task = asyncio.create_task(_warmup_omnivoice())
     yield
-    warmup_task.cancel()
+    if warmup_task is not None:
+        warmup_task.cancel()
     _unregister_event_bridge()
 
 
@@ -3156,9 +3161,8 @@ async def resume_session(
     Full swarm resumption from a checkpoint is not yet implemented
     (``AgentSwarm`` does not expose ``start_from_checkpoint()``). This
     endpoint returns the deserialized checkpoint data so the frontend can
-    display it and prompt the user.
-
-    # TODO: requires swarm.start_from_checkpoint() to fully resume a run.
+    display it and prompt the user. Resumption itself requires a future
+    ``AgentSwarm.start_from_checkpoint()`` hook — tracked separately.
     """
     from sqlalchemy import select
 
@@ -3210,11 +3214,29 @@ async def health():
         1 for s in _sessions.values()
         if s.task is not None and not s.task.done()
     )
+    # TTS status so the /voice page can distinguish "model still warming"
+    # from "synthesis really failed". Cheap — no model load triggered.
+    tts_info: dict[str, object] = {
+        "provider": settings.tts_provider,
+        "ready": settings.tts_provider != "omnivoice",
+        "device": "",
+        "dtype": "",
+    }
+    if settings.tts_provider == "omnivoice":
+        try:
+            from autonoma.tts_omnivoice import shared_client_status
+            status_snap = shared_client_status()
+            tts_info["ready"] = bool(status_snap["loaded"])
+            tts_info["device"] = status_snap["device"]
+            tts_info["dtype"] = status_snap["dtype"]
+        except ImportError:
+            tts_info["ready"] = False
     return {
         "status": "ok",
         "connections": len(manager.connections),
         "sessions": len(_sessions),
         "active_swarms": active_swarms,
+        "tts": tts_info,
     }
 
 
@@ -3509,286 +3531,10 @@ async def mocap_delete_binding(
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
-# ── /api/voice/* ──────────────────────────────────────────────────────
-#
-# OmniVoice reference-audio profiles + per-VRM voice bindings. Each
-# profile is a short reference clip (WAV preferred) + its transcript;
-# the TTS worker reads the binding at speech time and feeds the profile
-# to the zero-shot synthesizer.
-#
-# Binding mutations emit ``voice.bindings.updated`` on the shared bus
-# so every connected viewer re-resolves the character's voice.
+# ── /api/voice/* — moved to autonoma.routers.voice ───────────────────
+# Voice endpoints + helpers live in ``src/autonoma/routers/voice.py``
+# and are mounted on ``app`` via ``include_router``. Kept this breadcrumb
+# so grepping for ``voice`` in this file still points the right way.
 
-from autonoma import voice as voice_service  # noqa: E402  — grouped at feature boundary
-from autonoma.voice.store import IntegrityError as _VoiceIntegrityError  # noqa: E402
-
-
-MAX_VOICE_REF_BYTES = 4 * 1024 * 1024  # 4 MB — plenty for 30s PCM16 WAV
-ALLOWED_VOICE_MIMES = {
-    "audio/wav",
-    "audio/wave",
-    "audio/x-wav",
-    "audio/webm",
-    "audio/ogg",
-    "audio/mpeg",
-    "audio/mp3",
-}
-
-
-def _infer_duration_from_wav(data: bytes) -> float:
-    """Best-effort duration estimate for WAV bytes. Returns 0.0 on any
-    parse failure — the field is informational only (displayed in the
-    admin UI) so we never block uploads over it."""
-    try:
-        import io
-        import wave
-
-        with wave.open(io.BytesIO(data), "rb") as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            return frames / float(rate) if rate else 0.0
-    except Exception:
-        return 0.0
-
-
-@app.get("/api/voice-profiles")
-async def voice_list_profiles(
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    profiles = await voice_service.list_profile_summaries()
-    return {"profiles": [p.to_dict() for p in profiles]}
-
-
-@app.post("/api/voice-profiles", status_code=http_status.HTTP_201_CREATED)
-async def voice_create_profile(
-    name: str = Form(...),
-    ref_text: str = Form(...),
-    ref_audio: UploadFile = File(...),
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Upload a reference audio sample + its transcript.
-
-    Multipart form: ``name``, ``ref_text``, ``ref_audio`` (audio file).
-    """
-    name = (name or "").strip()
-    ref_text = (ref_text or "").strip()
-    if not (1 <= len(name) <= 128):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name"
-        )
-    if not (1 <= len(ref_text) <= 2048):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_ref_text"
-        )
-
-    mime = (ref_audio.content_type or "").lower()
-    if mime and mime not in ALLOWED_VOICE_MIMES:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="unsupported_audio_mime",
-        )
-
-    data = await ref_audio.read()
-    if not data:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="empty_audio"
-        )
-    if len(data) > MAX_VOICE_REF_BYTES:
-        raise HTTPException(
-            status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="audio_too_large",
-        )
-
-    duration = _infer_duration_from_wav(data) if "wav" in (mime or "") else 0.0
-    summary = await voice_service.create_profile(
-        owner_user_id=user.id,
-        name=name,
-        ref_text=ref_text,
-        ref_audio=data,
-        ref_audio_mime=mime or "audio/wav",
-        duration_s=duration,
-    )
-    return {"profile": summary.to_dict()}
-
-
-@app.get("/api/voice-profiles/{profile_id}/audio")
-async def voice_get_profile_audio(
-    profile_id: str,
-    _user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    """Serve the reference audio bytes for in-browser preview."""
-    result = await voice_service.get_profile_audio(profile_id)
-    if result is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
-        )
-    data, mime = result
-    return FastAPIResponse(content=data, media_type=mime)
-
-
-@app.delete(
-    "/api/voice-profiles/{profile_id}",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def voice_delete_profile(
-    profile_id: str,
-    user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    summary = await voice_service.get_profile_summary(profile_id)
-    if summary is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
-        )
-    if summary.owner_user_id != user.id and user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
-        )
-    if await voice_service.profile_is_bound(profile_id):
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT, detail="profile_in_use"
-        )
-    try:
-        ok = await voice_service.delete_profile(profile_id)
-    except _VoiceIntegrityError:
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT, detail="profile_in_use"
-        )
-    if not ok:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
-        )
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.post("/api/voice-profiles/{profile_id}/test")
-async def voice_test_profile(
-    profile_id: str,
-    payload: dict[str, Any],
-    _user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    """Synthesize ``text`` with the given profile and return WAV bytes.
-
-    Pure round-trip: the result is streamed back to the browser for a
-    quick listen. No events, no worker, no budget — this is explicitly a
-    test endpoint for the admin UI.
-    """
-    text_in = str(payload.get("text") or "").strip()
-    if not (1 <= len(text_in) <= 500):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_text"
-        )
-    profile = await voice_service.get_profile(profile_id)
-    if profile is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
-        )
-
-    from autonoma.tts_base import TTSError
-
-    # Use the process-wide singleton so we don't pay the multi-GB model
-    # load cost on every test request (nginx's 60s proxy_read_timeout
-    # will cut a cold-load request as a 504). Skip the factory's stub
-    # fallback — a missing package should surface as a clear error, not
-    # "empty_synthesis" after the stub silently emits zero bytes.
-    try:
-        from autonoma.tts_omnivoice import get_shared_client
-    except ImportError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"omnivoice_not_available: {exc}",
-        )
-
-    client = get_shared_client()
-    buf = bytearray()
-    try:
-        async for chunk in client.synthesize(
-            text=text_in,
-            voice=profile.id,
-            ref_audio=profile.ref_audio,
-            ref_audio_mime=profile.ref_audio_mime,
-            ref_text=profile.ref_text,
-        ):
-            buf.extend(chunk)
-    except TTSError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"tts_error: {exc}",
-        )
-    except Exception as exc:
-        # Torch/model load errors (CUDA OOM, MPS unsupported op, HF network
-        # failure on first run) don't inherit TTSError. Without this catch
-        # they fall through as a 500 and the admin UI sees nothing useful.
-        logger.exception("voice /test synthesis failed")
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"synth_error: {type(exc).__name__}: {exc}",
-        )
-    if not buf:
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="empty_synthesis",
-        )
-    return FastAPIResponse(content=bytes(buf), media_type="audio/wav")
-
-
-@app.get("/api/voice-bindings")
-async def voice_list_bindings(
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    bindings = await voice_service.list_bindings()
-    return {"bindings": [b.to_dict() for b in bindings]}
-
-
-@app.put("/api/voice-bindings")
-async def voice_upsert_binding(
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    vrm_file = str(payload.get("vrm_file") or "").strip()
-    profile_id = str(payload.get("profile_id") or "").strip()
-
-    if not is_known_vrm(vrm_file):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
-        )
-    profile = await voice_service.get_profile_summary(profile_id)
-    if profile is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
-        )
-
-    binding = await voice_service.upsert_binding(
-        vrm_file=vrm_file, profile_id=profile_id, updated_by=user.id
-    )
-    await bus.emit(
-        "voice.bindings.updated",
-        vrm_file=vrm_file,
-        profile_id=profile_id,
-        removed=False,
-    )
-    return {"binding": binding.to_dict()}
-
-
-@app.delete(
-    "/api/voice-bindings", status_code=http_status.HTTP_204_NO_CONTENT
-)
-async def voice_delete_binding(
-    vrm_file: str = Query(...),
-    _user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    if not is_known_vrm(vrm_file):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
-        )
-    ok = await voice_service.delete_binding(vrm_file=vrm_file)
-    if not ok:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found"
-        )
-    await bus.emit(
-        "voice.bindings.updated",
-        vrm_file=vrm_file,
-        profile_id=None,
-        removed=True,
-    )
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+from autonoma.routers import voice as _voice_router  # noqa: E402
+app.include_router(_voice_router.router)
