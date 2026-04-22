@@ -28,6 +28,7 @@ import {
 } from "@/hooks/voice/useVoiceProfiles";
 import { useVoiceBindings } from "@/hooks/voice/useVoiceBindings";
 import { VRM_FILES, VRM_CREDITS } from "@/components/vtuber/vrmCredits";
+import { StatusBox } from "@/components/StatusBox";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -61,6 +62,9 @@ export default function VoicePage() {
   const [upFile, setUpFile] = useState<File | null>(null);
   const [upBusy, setUpBusy] = useState(false);
   const [upError, setUpError] = useState<string | null>(null);
+  // Blob URL for the currently-selected upload file so the admin can
+  // verify they picked the right recording before committing it.
+  const [upPreviewUrl, setUpPreviewUrl] = useState<string | null>(null);
 
   // Test bench state. ``selectedTestProfileId`` is the user's explicit
   // selection; the effective id falls back to the first profile so the
@@ -72,6 +76,8 @@ export default function VoicePage() {
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
+  const [testElapsed, setTestElapsed] = useState(0);
+  const testAbortRef = useRef<AbortController | null>(null);
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const testProfileId = useMemo(() => {
@@ -91,6 +97,35 @@ export default function VoicePage() {
       if (testAudioUrl) URL.revokeObjectURL(testAudioUrl);
     };
   }, [testAudioUrl]);
+
+  // Same leak guard for the upload preview blob.
+  useEffect(() => {
+    return () => {
+      if (upPreviewUrl) URL.revokeObjectURL(upPreviewUrl);
+    };
+  }, [upPreviewUrl]);
+
+  // Tick a 1s elapsed counter while a synth request is in flight so the
+  // admin knows the page isn't frozen during slow CPU inference.
+  useEffect(() => {
+    if (!testBusy) {
+      setTestElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const tick = () => setTestElapsed(Math.round((Date.now() - start) / 1000));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [testBusy]);
+
+  // Cancel any in-flight synth on unmount so the server isn't synthesizing
+  // audio no one will listen to.
+  useEffect(() => {
+    return () => {
+      testAbortRef.current?.abort();
+    };
+  }, []);
 
   const bindingsByVrm = useMemo(() => {
     const m = new Map<string, string>();
@@ -127,15 +162,31 @@ export default function VoicePage() {
     });
     setUpBusy(false);
     if (!res.ok) {
-      setUpError(`업로드 실패: ${res.reason}`);
+      setUpError(res.reason);
       return;
     }
     setUpName("");
     setUpRefText("");
     setUpFile(null);
+    setUpPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     // Reset file input value so the same file can be picked twice in a row
     const form = e.target as HTMLFormElement;
     form.reset();
+  };
+
+  const onUpFileChange = (file: File | null) => {
+    setUpFile(file);
+    setUpPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return file ? URL.createObjectURL(file) : null;
+    });
+  };
+
+  const onCancelTest = () => {
+    testAbortRef.current?.abort();
   };
 
   const onDeleteProfile = async (p: VoiceProfileSummary) => {
@@ -159,19 +210,27 @@ export default function VoicePage() {
 
   const onTest = async () => {
     if (!testProfileId) return;
+    if (testBusy) return; // button should already be disabled; defense in depth
     if (!testText.trim()) {
       setTestError("테스트 문장을 입력하세요.");
       return;
     }
+    // Abort any previous request (shouldn't exist since button is locked,
+    // but clean up anyway so we never leak an orphan request).
+    testAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    testAbortRef.current = ctrl;
     setTestBusy(true);
     setTestError(null);
     const res = await testVoiceProfile({
       id: testProfileId,
       text: testText.trim(),
+      signal: ctrl.signal,
     });
     setTestBusy(false);
+    testAbortRef.current = null;
     if (!res.ok) {
-      setTestError(`합성 실패: ${res.reason}`);
+      if (!res.aborted) setTestError(res.reason);
       return;
     }
     const url = URL.createObjectURL(res.blob);
@@ -267,13 +326,20 @@ export default function VoicePage() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-xs text-white/60">
-                <span>레퍼런스 오디오 (WAV 권장, ≤ 4MB)</span>
+                <span>레퍼런스 오디오 (WAV 권장, 1–30초, ≤ 4MB)</span>
                 <input
                   type="file"
                   accept="audio/wav,audio/x-wav,audio/wave,audio/mpeg,audio/ogg,audio/webm"
-                  onChange={(e) => setUpFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => onUpFileChange(e.target.files?.[0] ?? null)}
                   className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 font-mono text-xs text-white/70 file:mr-3 file:rounded-md file:border-0 file:bg-fuchsia-500/20 file:px-3 file:py-1 file:text-fuchsia-200"
                 />
+                {upPreviewUrl && (
+                  <audio
+                    controls
+                    src={upPreviewUrl}
+                    className="mt-1 h-8 w-full"
+                  />
+                )}
               </label>
             </div>
             <label className="flex flex-col gap-1 text-xs text-white/60">
@@ -288,9 +354,9 @@ export default function VoicePage() {
               />
             </label>
             {upError && (
-              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 font-mono text-xs text-rose-200">
+              <StatusBox tone="error" title="업로드 실패">
                 {upError}
-              </div>
+              </StatusBox>
             )}
             <div className="flex items-center justify-end">
               <button
@@ -384,15 +450,31 @@ export default function VoicePage() {
                   ))}
                 </select>
               </label>
-              <div className="flex flex-col justify-end">
-                <button
-                  type="button"
-                  onClick={onTest}
-                  disabled={testBusy || !testProfileId}
-                  className="rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-4 py-2 font-mono text-xs text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {testBusy ? "합성 중…" : "합성 후 재생"}
-                </button>
+              <div className="flex flex-col justify-end gap-1">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onTest}
+                    disabled={testBusy || !testProfileId}
+                    className="flex-1 rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-4 py-2 font-mono text-xs text-cyan-100 hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {testBusy ? `합성 중… (${testElapsed}s)` : "합성 후 재생"}
+                  </button>
+                  {testBusy && (
+                    <button
+                      type="button"
+                      onClick={onCancelTest}
+                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs text-white/60 hover:bg-white/10"
+                    >
+                      취소
+                    </button>
+                  )}
+                </div>
+                {testBusy && testElapsed > 20 && (
+                  <div className="font-mono text-[10px] text-white/40">
+                    CPU 합성은 문장 길이에 따라 30–60초까지 걸릴 수 있습니다.
+                  </div>
+                )}
               </div>
             </div>
             <label className="flex flex-col gap-1 text-xs text-white/60">
@@ -406,9 +488,9 @@ export default function VoicePage() {
               />
             </label>
             {testError && (
-              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 font-mono text-xs text-rose-200">
+              <StatusBox tone="error" title="합성 실패">
                 {testError}
-              </div>
+              </StatusBox>
             )}
             {testAudioUrl && (
               <audio
