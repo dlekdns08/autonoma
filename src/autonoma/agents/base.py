@@ -1038,21 +1038,33 @@ Rules:
         """
         await bus.emit("agent.emote", agent=self.name, icon=icon, ttl_ms=ttl_ms)
 
-    def _resolve_voice(self) -> str:
-        """Return the voice id for this agent. Memoized on ``voice_id``
-        so the same character always sounds the same across a run."""
-        if getattr(self, "voice_id", ""):
-            return self.voice_id
-        import hashlib
-        seed = hashlib.md5(
-            f"{self.persona.role}:{self.persona.name}:autonoma-world-v1".encode()
-        ).hexdigest()
-        self.voice_id = pick_voice_for(
-            seed_hash=seed,
-            provider=settings.tts_provider,
-            language=settings.tts_default_language,
-        )
-        return self.voice_id
+    async def _resolve_voice(self) -> tuple[str, str]:
+        """Return ``(profile_id, vrm_file)`` for this agent's voice.
+
+        OmniVoice is zero-shot cloning — the "voice" is a reference-audio
+        profile configured by admins on the /voice page and bound to the
+        VRM character the agent renders as. No binding → no voice → the
+        caller skips enqueuing (agent stays silent rather than speaking
+        in a random fallback).
+
+        Memoized on ``voice_id`` per-run so repeated lines share one DB
+        lookup. Binding edits propagate on the next run (or when the
+        frontend re-pins an agent) — that's the intended cache-staleness
+        tradeoff: one DB hit per agent per run.
+        """
+        from autonoma.voice import get_binding, vrm_file_for_agent
+
+        vrm_file = vrm_file_for_agent(self.name)
+        cached = getattr(self, "voice_id", "")
+        if cached:
+            return cached, vrm_file
+        if not vrm_file:
+            return "", ""
+        binding = await get_binding(vrm_file)
+        if binding is None:
+            return "", vrm_file
+        self.voice_id = binding.profile_id
+        return self.voice_id, vrm_file
 
     async def _set_state(self, state: AgentState) -> None:
         self.state = state
