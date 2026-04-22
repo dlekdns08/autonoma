@@ -72,6 +72,11 @@ interface Props {
   forcePinnedAgent?: string | null;
   /** Live emote map from the pixel stage — VRMCharacter reacts with a gesture. */
   emotes?: Record<string, AgentEmote>;
+  /** Resolves the active mocap clip id for a given agent + emote snapshot.
+   *  When returned id is non-null, the spotlight VRM plays that clip on
+   *  bones the clip covers (body idle keeps driving uncovered bones).
+   *  ``undefined`` / ``null`` falls back to the procedural pose pipeline. */
+  mocapClipIdFor?: (agent: AgentData, emote: AgentEmote | null) => string | null;
 }
 
 const MOOD_COLORS: Record<string, string> = {
