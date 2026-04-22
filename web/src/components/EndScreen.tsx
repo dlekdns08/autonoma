@@ -4,6 +4,7 @@ import { useState } from "react";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 import type { CheckpointEntry } from "@/hooks/useSwarm";
 import type { FileEntry } from "@/lib/types";
+import { STRINGS } from "@/lib/strings";
 
 interface Props {
   finalAnswer: string;
@@ -135,7 +136,7 @@ export default function EndScreen({
             {downloadsDisabled ? (
               <span
                 aria-disabled="true"
-                title="재연결 중…"
+                title={STRINGS.common.reconnecting}
                 className="rounded border border-white/15 bg-white/5 px-3 py-1 text-xs font-mono text-white/30 cursor-not-allowed select-none"
               >
                 ⬇ 전체 .zip 다운로드
@@ -170,7 +171,7 @@ export default function EndScreen({
                 {downloadsDisabled ? (
                   <span
                     aria-disabled="true"
-                    title="재연결 중…"
+                    title={STRINGS.common.reconnecting}
                     className="text-white/20 text-xs cursor-not-allowed select-none"
                   >
                     ⬇
