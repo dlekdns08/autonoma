@@ -43,7 +43,6 @@ import { MocapSolver } from "@/lib/mocap/solver";
 /** Target recording framerate. 30fps is the Tasks Vision default and
  *  fits inside webcam capture on every laptop we tested. */
 const RECORD_FPS = 30;
-const RECORD_DT = 1 / RECORD_FPS;
 /** Hard ceiling on clip length. Matches ``validate_payload`` on the
  *  server — bigger uploads are rejected. */
 const MAX_CLIP_SECONDS = 60;
