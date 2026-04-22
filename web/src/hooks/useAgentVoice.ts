@@ -233,7 +233,12 @@ export function useAgentVoice(): UseAgentVoiceResult {
         }
 
         case "agent.speech_audio_end": {
-          if (data.seq !== slot.seq) return;
+          if (data.seq !== slot.seq) {
+            // Orphan end for a superseded utterance — its chunks have
+            // already been dropped at the matching audio_start. Nothing
+            // else to free here.
+            return;
+          }
           if (slot.chunks.length === 0) {
             // Stub provider yields no bytes; nothing to play, but we
             // still want a brief speaking flicker so the UI shows the
@@ -242,16 +247,28 @@ export function useAgentVoice(): UseAgentVoiceResult {
             window.setTimeout(() => setSpeaking(agent, false), 200);
             return;
           }
-          // Concatenate into one Blob and hand off to the audio element.
+          // Detach the chunk list up-front. Two reasons:
+          //   1) peak memory — otherwise chunks + merged both live
+          //      through the whole copy loop; by working off a local
+          //      reference we can null out entries as we consume them
+          //      so the Uint8Arrays are GC-able mid-loop.
+          //   2) re-entrancy — if a fresh audio_start arrives while the
+          //      rest of this branch is running (e.g. via a microtask
+          //      in .play()), slot.chunks is already an empty array
+          //      ready for the new utterance.
+          const chunks = slot.chunks;
+          slot.chunks = [];
           let total = 0;
-          for (const c of slot.chunks) total += c.byteLength;
+          for (const c of chunks) total += c.byteLength;
           const merged = new Uint8Array(total);
           let off = 0;
-          for (const c of slot.chunks) {
-            merged.set(c, off);
-            off += c.byteLength;
+          for (let i = 0; i < chunks.length; i++) {
+            merged.set(chunks[i], off);
+            off += chunks[i].byteLength;
+            // Drop our reference so the chunk can be collected
+            // before the loop finishes.
+            (chunks as (Uint8Array | null)[])[i] = null;
           }
-          slot.chunks = [];
           const mime = data.mime || "audio/mpeg";
           const blob = new Blob([merged.buffer], { type: mime });
           const url = URL.createObjectURL(blob);
@@ -486,6 +503,9 @@ export function useAgentVoice(): UseAgentVoiceResult {
       } catch {
         /* element may already be torn down */
       }
+      // Release any mid-utterance chunks so despawning an agent during
+      // speech doesn't leak the accumulated bytes until the next GC.
+      slot.chunks = [];
       slotsRef.current.delete(agentName);
     }
     const fallback = fallbackTimersRef.current.get(agentName);
@@ -516,6 +536,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
       } catch {
         /* element may already be torn down */
       }
+      slot.chunks = [];
     }
     slotsRef.current.clear();
     for (const t of fallbackTimersRef.current.values()) {
