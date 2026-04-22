@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 
 interface Props {
   intensity?: number; // 0-1, controls star density & speed
@@ -54,7 +54,7 @@ function getTheme(sky: string): (typeof SKY_THEMES)["night"] {
   return SKY_THEMES.night;
 }
 
-export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
+function StarfieldImpl({ intensity = 0.5, sky = "" }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
   const animRef = useRef<number>(0);
@@ -204,3 +204,8 @@ export default function Starfield({ intensity = 0.5, sky = "" }: Props) {
     />
   );
 }
+
+// Parent re-renders on every event arrival; intensity/sky rarely change.
+// memo keeps the canvas component stable so React skips the VDOM diff.
+const Starfield = memo(StarfieldImpl);
+export default Starfield;
