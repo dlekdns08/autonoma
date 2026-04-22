@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { EventLogEntry } from "@/lib/types";
 
 const TIMELINE_EVENTS = new Set([
