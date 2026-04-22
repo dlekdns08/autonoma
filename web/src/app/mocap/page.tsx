@@ -213,16 +213,11 @@ export default function MocapPage() {
     }
   };
 
-  // Which preview to show: draft clip when recorded, else the live webcam solve.
-  //
-  // ``liveSampleRef`` is a stable box that MocapPreview reads from every
-  // frame via ``useFrame``; we repoint it in an effect so React's
-  // "don't-access-refs-during-render" rule stays happy and the consumer
-  // still always sees the freshest solver output.
+  // ``mocap.latestSample`` is the solver's internal ref, mutated in place
+  // every frame — same object identity for the lifetime of the hook.
+  // Boxing it once is enough; MocapPreview reads ``.current`` via
+  // ``useFrame`` and always sees the freshest bones.
   const liveSampleRef = useRef<ClipSample>(mocap.latestSample);
-  useEffect(() => {
-    liveSampleRef.current = mocap.latestSample;
-  }, [mocap.latestSample]);
   const previewSampleRef = stage === "recorded" ? trimSampleRef : liveSampleRef;
 
   const tracking = useMemo(() => {
