@@ -69,6 +69,16 @@ export default function MocapPage() {
   const { user, loading: authLoading } = useAuth();
 
   const isActive = user?.status === "active";
+  const isAdmin = user?.role === "admin";
+
+  // ``?debug=1`` in the URL unhides developer scaffolding (axis-test
+  // buttons and the hand-diagnostic badge). Lazy-init on the client so
+  // SSR doesn't trip on ``window`` and so we don't trigger the
+  // set-state-in-effect lint rule.
+  const [debugMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("debug") === "1";
+  });
 
   // Fetch the server's max clip duration once so the recorder auto-stops
   // at exactly the ceiling ``validate_payload`` will enforce. Falls back
@@ -119,11 +129,18 @@ export default function MocapPage() {
   // latest ``targetVrm``) without re-initialising the whole hook each
   // time these deps change.
   const autoStopRef = useRef<() => void>(() => {});
+  // Flipped by the auto-stop path so ``onStopRecord`` can distinguish a
+  // user-driven stop from the server-limit cutoff and surface the right
+  // toast. Reset inside ``onStopRecord`` after it's been consumed.
+  const autoStoppedByMaxRef = useRef(false);
   const mocap = useMocap({
     mirror: true,
     hands: handsEnabled,
     maxDurationS,
-    onMaxDurationReached: () => autoStopRef.current(),
+    onMaxDurationReached: () => {
+      autoStoppedByMaxRef.current = true;
+      autoStopRef.current();
+    },
   });
   const [targetVrm, setTargetVrm] = useState<string | null>(null);
 
@@ -240,13 +257,21 @@ export default function MocapPage() {
     mocap.startRecording();
   };
   const onStopRecord = () => {
+    const wasAutoStop = autoStoppedByMaxRef.current;
+    autoStoppedByMaxRef.current = false;
     const clip = mocap.stopRecording();
     if (clip) {
       const bound = { ...clip, sourceVrm: targetVrm ?? "" };
       setDraftClip(bound);
       setClipName(`${bound.sourceVrm || "clip"} ${new Date().toLocaleTimeString()}`);
       setStage("recorded");
-      setStageMessage(null);
+      if (wasAutoStop) {
+        setStageMessage(
+          `녹화가 ${maxDurationS}초 한도에 도달해 자동 정지됨 — 업로드하거나 버리세요`,
+        );
+      } else {
+        setStageMessage(null);
+      }
     } else {
       setStageMessage("녹화가 너무 짧습니다 (2프레임 미만).");
     }
@@ -391,6 +416,11 @@ export default function MocapPage() {
                 tracking={tracking}
                 mirror={true}
               />
+              {mocap.handsError && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-mono text-amber-200">
+                  손 모델 로드 실패 — body/face만 캡처됩니다: {mocap.handsError}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
                 {mocap.status !== "running" ? (
                   <button
@@ -426,7 +456,7 @@ export default function MocapPage() {
                   />
                   손 캡처
                 </label>
-                {mocap.handDiagnostics && (
+                {debugMode && mocap.handDiagnostics && (
                   <span
                     className="rounded border border-cyan-500/30 bg-cyan-500/5 px-2 py-1 text-cyan-200/80"
                     title="손 감지 수 · 손가락 curl(라디안). curl이 0이면 본은 움직이지 않는 상태."
@@ -437,23 +467,28 @@ export default function MocapPage() {
                 {/* Finger-axis bisection. Each button forces a 3-second
                     60° rotation on every finger proximal around that
                     axis. Whichever axis visibly bends the fingers is
-                    the rig's curl axis. See docstring in MocapPreview. */}
-                <span className="text-[10px] text-white/30">축 테스트:</span>
-                {(["x", "y", "z"] as const).map((axis) => (
-                  <button
-                    key={axis}
-                    onClick={() => runAxisTest(axis)}
-                    title={`${axis.toUpperCase()}축으로 60° 회전 (3초). 손가락이 안쪽으로 굽으면 그 축이 정답.`}
-                    className={
-                      "rounded border px-2 py-1 " +
-                      (testFingerAxis === axis
-                        ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
-                        : "border-white/15 bg-slate-950/70 text-white/70 hover:border-white/35")
-                    }
-                  >
-                    {axis.toUpperCase()}축
-                  </button>
-                ))}
+                    the rig's curl axis. See docstring in MocapPreview.
+                    Developer-only — gated behind ?debug=1. */}
+                {debugMode && (
+                  <>
+                    <span className="text-[10px] text-white/30">축 테스트:</span>
+                    {(["x", "y", "z"] as const).map((axis) => (
+                      <button
+                        key={axis}
+                        onClick={() => runAxisTest(axis)}
+                        title={`${axis.toUpperCase()}축으로 60° 회전 (3초). 손가락이 안쪽으로 굽으면 그 축이 정답.`}
+                        className={
+                          "rounded border px-2 py-1 " +
+                          (testFingerAxis === axis
+                            ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
+                            : "border-white/15 bg-slate-950/70 text-white/70 hover:border-white/35")
+                        }
+                      >
+                        {axis.toUpperCase()}축
+                      </button>
+                    ))}
+                  </>
+                )}
                 {mocap.status === "running" && !mocap.recording && stage !== "recorded" && (
                   <button
                     onClick={onRecord}
@@ -539,6 +574,8 @@ export default function MocapPage() {
                 loading={clipsApi.loading}
                 selectedClipId={null}
                 sourceVrmFilter={targetVrm}
+                currentUserId={user?.id != null ? String(user.id) : ""}
+                isAdmin={isAdmin}
                 onSelect={() => {}}
                 onRename={clipsApi.rename}
                 onDelete={clipsApi.remove}
@@ -552,6 +589,7 @@ export default function MocapPage() {
                 vrmFile={targetVrm}
                 clips={clipsApi.clips}
                 bindings={bindingsApi}
+                isAdmin={isAdmin}
               />
             </div>
           </section>
