@@ -28,17 +28,38 @@ from autonoma.harness.strategies import register
 logger = logging.getLogger(__name__)
 
 
+def _classify(harness: Any, action_type: str) -> tuple[bool, str | None]:
+    """Prefer :meth:`check_action` when the harness exposes it; fall back
+    to :meth:`can_perform` for mocks/test doubles that only implement the
+    boolean predicate.
+    """
+    check = getattr(harness, "check_action", None)
+    if callable(check):
+        return check(action_type)
+    return bool(harness.can_perform(action_type)), None
+
+
 @register("action.harness_enforcement", "strict")
 def _strict(agent_name: str, action_type: str, harness: Any) -> bool:
-    return bool(harness.can_perform(action_type))
+    allowed, reason = _classify(harness, action_type)
+    if not allowed:
+        logger.warning(
+            f"[{agent_name}] harness '{harness.name}' blocked action "
+            f"'{action_type}'"
+            + (f": {reason}" if reason else "")
+        )
+    return allowed
 
 
 @register("action.harness_enforcement", "permissive")
 def _permissive(agent_name: str, action_type: str, harness: Any) -> bool:
-    if not harness.can_perform(action_type):
+    allowed, reason = _classify(harness, action_type)
+    if not allowed:
         logger.warning(
-            f"[{agent_name}] (permissive) action '{action_type}' not in "
-            f"harness '{harness.name}' capabilities — allowing anyway"
+            f"[{agent_name}] (permissive) harness '{harness.name}' would "
+            f"block action '{action_type}'"
+            + (f" ({reason})" if reason else "")
+            + " — allowing anyway"
         )
     return True
 
