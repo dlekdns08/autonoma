@@ -28,7 +28,31 @@ export interface VoiceProfileSummary {
 
 export type VoiceCreateResult =
   | { ok: true; profile: VoiceProfileSummary }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; code?: string };
+
+/** Translate a FastAPI error body into a UI-friendly string.
+ *
+ *  The voice router emits ``detail`` as ``{code, message}`` (structured
+ *  for the admin UI). Older endpoints and generic FastAPI errors return
+ *  ``detail`` as a plain string. Normalize both shapes.
+ */
+export function parseVoiceErrorBody(
+  body: unknown,
+  fallbackStatus: number,
+): { reason: string; code?: string } {
+  if (body && typeof body === "object" && "detail" in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (detail && typeof detail === "object") {
+      const d = detail as { code?: unknown; message?: unknown };
+      const code = typeof d.code === "string" ? d.code : undefined;
+      const message =
+        typeof d.message === "string" ? d.message : code ?? `http_${fallbackStatus}`;
+      return { reason: message, code };
+    }
+    if (typeof detail === "string") return { reason: detail };
+  }
+  return { reason: `http_${fallbackStatus}` };
+}
 
 export interface UseVoiceProfiles {
   profiles: VoiceProfileSummary[];
@@ -96,9 +120,8 @@ export function useVoiceProfiles(): UseVoiceProfiles {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          const reason =
-            typeof body?.detail === "string" ? body.detail : `http_${res.status}`;
-          return { ok: false, reason };
+          const { reason, code } = parseVoiceErrorBody(body, res.status);
+          return { ok: false, reason, code };
         }
         const data = (await res.json()) as { profile: VoiceProfileSummary };
         setProfiles((prev) => [data.profile, ...prev]);
@@ -121,8 +144,7 @@ export function useVoiceProfiles(): UseVoiceProfiles {
         return { ok: true };
       }
       const body = await res.json().catch(() => ({}));
-      const reason =
-        typeof body?.detail === "string" ? body.detail : `http_${res.status}`;
+      const { reason } = parseVoiceErrorBody(body, res.status);
       return { ok: false, reason };
     },
     [],
@@ -138,7 +160,11 @@ export function voiceProfileAudioUrl(id: string): string {
 export async function testVoiceProfile(args: {
   id: string;
   text: string;
-}): Promise<{ ok: true; blob: Blob } | { ok: false; reason: string }> {
+  signal?: AbortSignal;
+}): Promise<
+  | { ok: true; blob: Blob }
+  | { ok: false; reason: string; code?: string; aborted?: true }
+> {
   try {
     const res = await fetch(
       `${API_BASE_URL}/api/voice-profiles/${encodeURIComponent(args.id)}/test`,
@@ -150,17 +176,20 @@ export async function testVoiceProfile(args: {
           Accept: "audio/wav",
         },
         body: JSON.stringify({ text: args.text }),
+        signal: args.signal,
       },
     );
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const reason =
-        typeof body?.detail === "string" ? body.detail : `http_${res.status}`;
-      return { ok: false, reason };
+      const { reason, code } = parseVoiceErrorBody(body, res.status);
+      return { ok: false, reason, code };
     }
     const blob = await res.blob();
     return { ok: true, blob };
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return { ok: false, reason: "요청이 취소되었습니다.", aborted: true };
+    }
     return { ok: false, reason: "network" };
   }
 }
