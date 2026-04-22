@@ -91,7 +91,7 @@ def _row_to_binding(row: Any) -> Binding:
         trigger_kind=m["trigger_kind"],
         trigger_value=m["trigger_value"],
         clip_id=m["clip_id"],
-        updated_by=m.get("updated_by") if hasattr(m, "get") else m["updated_by"],
+        updated_by=m["updated_by"],
         updated_at=str(m["updated_at"]),
     )
 
