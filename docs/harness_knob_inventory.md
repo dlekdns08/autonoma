@@ -1,8 +1,11 @@
-# Harness Knob Inventory — Phase 0 Scan
+# Harness Knob Inventory — Phase 0 Scan (historical)
 
 > Source: read-only audit of `src/autonoma/agents/{base,director,swarm}.py` plus supporting modules.
 > **Total: 68 behavioral knobs** (44 numeric/boolean, 24 algorithmic/branch).
-> This document is the input to Phase 1 (`HarnessPolicy` model design).
+> This document was the input to Phase 1 (`HarnessPolicyContent` model
+> design). Phase 1 has shipped — the authoritative list of knobs now lives
+> in [`src/autonoma/harness/policy.py`](../src/autonoma/harness/policy.py);
+> this file is preserved for historical context and section-count rationale.
 
 ## Summary by section
 
@@ -80,10 +83,17 @@
 
 Enforce bounds: `max_rounds ≥ 10`, `max_agents ≥ 1`, `sandbox_memory_mb ≥ 64`.
 
-## Implementation notes for Phase 1+
+## Implementation notes for Phase 1+ (historical)
 
-- Policy delivered via `SwarmPolicy` Pydantic model, fields 1-to-1 with knob list.
+These were the design commitments going into Phase 1. They are mostly
+reflected in the shipped code today; any divergence is the shipped code.
+
+- Policy delivered via `HarnessPolicyContent` Pydantic model (renamed
+  from the originally-scoped `SwarmPolicy`); fields are 1-to-1 with the
+  knob list above.
 - Merge order at swarm init: **defaults → global config → per-user preset → per-run inline overrides**.
-- Emit `swarm.initialized` event with full policy snapshot for audit trail.
-- XP/threshold changes may retroactively affect persisted character state — needs policy versioning (revisit in Phase 7).
-- Exact file:line references per knob were produced during the scan but not persisted in this summary pass; re-run grep during Phase 2/3 refactor when we need them.
+- Emit `swarm.initialized` / `session.metadata` events with the full
+  effective policy snapshot for the audit trail.
+- XP/threshold changes may retroactively affect persisted character
+  state — policy versioning was deferred; when it lands, see this doc for
+  the original scope.
