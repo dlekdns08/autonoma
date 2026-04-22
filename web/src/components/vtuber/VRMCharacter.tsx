@@ -525,6 +525,7 @@ interface ModelProps {
   spotlight: boolean;
   cameraResetNonce?: number;
   emote?: AgentEmote | null;
+  mocapClipId?: string | null;
 }
 
 function VRMModel({
@@ -536,6 +537,7 @@ function VRMModel({
   spotlight,
   cameraResetNonce,
   emote,
+  mocapClipId,
 }: ModelProps) {
   const { camera } = useThree();
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
