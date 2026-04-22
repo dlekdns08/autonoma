@@ -84,6 +84,12 @@ interface Props {
   state?: string;
   /** Current reaction emote from the pixel stage — triggers a matching gesture. */
   emote?: AgentEmote | null;
+  /** Mocap clip to play instead of procedural gestures on bones the clip
+   *  covers. ``null`` / ``undefined`` disables mocap playback and the
+   *  character returns to the idle + gesture pipeline. The clip is
+   *  fetched lazily via ``clipCache``; while it loads the character
+   *  keeps using its procedural pose. */
+  mocapClipId?: string | null;
 }
 
 // ── Mood → VRM standard emote ────────────────────────────────────────
