@@ -67,16 +67,13 @@ class Settings(BaseSettings):
     # ── TTS (agent voices) ──
     # Master kill-switch. When False no TTS module runs; agents are silent.
     tts_enabled: bool = False
-    # Which backend to use: "azure" | "openai" | "none"
-    # ``none`` is a stub that just emits audio-start/end events with no
-    # audio bytes — useful for UI development without provider credentials.
-    tts_provider: Literal["azure", "openai", "none"] = "none"
-    # Azure Neural TTS credentials (Region + subscription key). ``region``
-    # is e.g. "eastus", "koreacentral".
-    tts_azure_key: str = ""
-    tts_azure_region: str = ""
-    # OpenAI TTS: reuses openai_api_key if empty.
-    tts_openai_voice_default: str = "alloy"
+    # Which backend to use: "omnivoice" | "none"
+    # - ``omnivoice``: zero-shot cloning via k2-fsa/OmniVoice. Requires
+    #   the ``omnivoice`` + ``torch`` packages installed. Device auto-
+    #   detected: cuda > mps (Apple Silicon) > cpu.
+    # - ``none``: stub that emits audio-start/end events without bytes —
+    #   keeps the UI flowing while the model isn't available.
+    tts_provider: Literal["omnivoice", "none"] = "none"
     # Budgets: soft caps per round / per session. When exceeded the
     # worker drops the line and emits ``agent.speech_audio_dropped``.
     tts_char_budget_per_round: int = 800
@@ -86,8 +83,9 @@ class Settings(BaseSettings):
     # When True, only the room owner hears TTS (server-side gate; viewer
     # audio is stripped). Used in Phase 4 once rooms exist — harmless now.
     tts_require_owner: bool = False
-    # Language preference for voice selection pools. "ko" picks Korean
-    # voices by default; callers can override per-character.
+    # Language hint forwarded to the TTS client. OmniVoice is language-
+    # agnostic (driven by the reference audio's language), so this is
+    # advisory only — it still flows through for future backends.
     tts_default_language: str = "ko"
 
     # ── Swarm ──
