@@ -142,6 +142,76 @@ async def _migration_006_voice(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_007_voice_fs_storage(conn) -> None:
+    """Move voice reference audio from in-column BLOBs to filesystem.
+
+    Online migration — the app keeps serving while this runs:
+      1. Add the nullable ``ref_audio_path`` column.
+      2. Relax the NOT NULL constraint on ``ref_audio`` so new FS-backed
+         rows can leave it empty.
+      3. Leave existing BLOB rows as-is; the store reads them as a
+         fallback when ``ref_audio_path`` is NULL.
+
+    SQLite can't DROP NOT NULL via plain ALTER TABLE, so the column
+    relax is done by rebuilding the table on older SQLite. We probe for
+    the state first so re-runs on already-migrated DBs are no-ops.
+    """
+    # Step 1: add ref_audio_path if it doesn't already exist.
+    result = await conn.execute(text("PRAGMA table_info(voice_profiles)"))
+    cols = {row[1]: row for row in result.fetchall()}  # name → full row
+
+    if "ref_audio_path" not in cols:
+        await conn.execute(
+            text("ALTER TABLE voice_profiles ADD COLUMN ref_audio_path VARCHAR(128)")
+        )
+
+    # Step 2: relax ref_audio NOT NULL. SQLite's PRAGMA row layout is
+    # (cid, name, type, notnull, dflt_value, pk). We only rebuild when
+    # needed — rebuilding an empty or already-relaxed table is wasteful.
+    ref_audio_row = cols.get("ref_audio")
+    if ref_audio_row is not None and ref_audio_row[3]:  # notnull==1
+        # Rebuild the table with ref_audio nullable. Keep column order
+        # compatible with the ORM so inspection matches.
+        await conn.execute(text("""
+            CREATE TABLE voice_profiles__new (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL
+                    REFERENCES users(id) ON DELETE RESTRICT,
+                name VARCHAR(128) NOT NULL,
+                ref_text TEXT NOT NULL DEFAULT '',
+                ref_audio BLOB,
+                ref_audio_path VARCHAR(128),
+                ref_audio_mime VARCHAR(32) NOT NULL DEFAULT 'audio/wav',
+                duration_s FLOAT NOT NULL DEFAULT 0.0,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        await conn.execute(text("""
+            INSERT INTO voice_profiles__new (
+                id, owner_user_id, name, ref_text, ref_audio,
+                ref_audio_path, ref_audio_mime, duration_s, size_bytes,
+                created_at, updated_at
+            )
+            SELECT
+                id, owner_user_id, name, ref_text, ref_audio,
+                ref_audio_path, ref_audio_mime, duration_s, size_bytes,
+                created_at, updated_at
+            FROM voice_profiles
+        """))
+        await conn.execute(text("DROP TABLE voice_profiles"))
+        await conn.execute(text(
+            "ALTER TABLE voice_profiles__new RENAME TO voice_profiles"
+        ))
+        # voice_bindings has a FK into voice_profiles — the rebuild
+        # preserves the PK names so existing bindings stay valid.
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_voice_profiles_owner_user_id "
+            "ON voice_profiles(owner_user_id)"
+        ))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -149,6 +219,7 @@ MIGRATIONS: list[Migration] = [
     (4, _migration_004_feature_tables),
     (5, _migration_005_mocap),
     (6, _migration_006_voice),
+    (7, _migration_007_voice_fs_storage),
 ]
 
 

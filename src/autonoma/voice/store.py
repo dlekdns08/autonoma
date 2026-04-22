@@ -1,9 +1,11 @@
 """Database access for voice_profiles and voice_bindings.
 
 Same style as ``autonoma.mocap.store``: thin async SQLAlchemy Core
-wrappers. Profile audio is held in-column as ``LargeBinary`` — small
-payloads (< 2 MB typical for 5-30s WAV samples), so disk indirection
-would cost more than it saves.
+wrappers. Ref audio bytes live on the filesystem under
+``{data_dir}/voice_refs/`` (see ``autonoma.voice.fs``); the DB row only
+stores the basename in ``ref_audio_path``. Rows written before migration
+007 still have bytes inline in the legacy ``ref_audio`` column — the
+read path falls back to it transparently.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from autonoma.db.engine import get_engine
 from autonoma.db.schema import voice_bindings, voice_profiles
+from autonoma.voice import fs as voice_fs
 
 
 @dataclass(slots=True)
@@ -123,25 +126,35 @@ async def create_profile(
     duration_s: float,
 ) -> ProfileSummary:
     profile_id = str(uuid.uuid4())
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(
-            insert(voice_profiles).values(
-                id=profile_id,
-                owner_user_id=owner_user_id,
-                name=name,
-                ref_text=ref_text,
-                ref_audio=ref_audio,
-                ref_audio_mime=ref_audio_mime,
-                duration_s=duration_s,
-                size_bytes=len(ref_audio),
-            )
-        )
-        row = (
+    # Persist the audio to disk before the DB insert so a successful
+    # insert always references a real file. If the insert fails
+    # afterward we clean up the orphan — cheap since files live under
+    # a known dir.
+    basename = voice_fs.write_ref_audio(profile_id, ref_audio, ref_audio_mime)
+    try:
+        engine = get_engine()
+        async with engine.begin() as conn:
             await conn.execute(
-                select(voice_profiles).where(voice_profiles.c.id == profile_id)
+                insert(voice_profiles).values(
+                    id=profile_id,
+                    owner_user_id=owner_user_id,
+                    name=name,
+                    ref_text=ref_text,
+                    ref_audio=None,
+                    ref_audio_path=basename,
+                    ref_audio_mime=ref_audio_mime,
+                    duration_s=duration_s,
+                    size_bytes=len(ref_audio),
+                )
             )
-        ).first()
+            row = (
+                await conn.execute(
+                    select(voice_profiles).where(voice_profiles.c.id == profile_id)
+                )
+            ).first()
+    except Exception:
+        voice_fs.delete_ref_audio(basename)
+        raise
     assert row is not None
     return _row_to_summary(row)
 
@@ -190,6 +203,22 @@ async def get_profile_summary(profile_id: str) -> ProfileSummary | None:
     return _row_to_summary(row) if row else None
 
 
+def _resolve_audio_bytes(row_mapping: Any) -> bytes:
+    """Get the ref audio bytes for a row, preferring FS over legacy BLOB.
+
+    Returns ``b""`` if neither source has data — the caller decides
+    whether that's an error (synth path) or just an empty response
+    (audio endpoint).
+    """
+    basename = row_mapping["ref_audio_path"]
+    if basename:
+        data = voice_fs.read_ref_audio(basename)
+        if data is not None:
+            return data
+    legacy = row_mapping["ref_audio"]
+    return bytes(legacy) if legacy else b""
+
+
 async def get_profile(profile_id: str) -> Profile | None:
     """Full profile including ref audio bytes. Used by the synth path
     and the audio-serving endpoint."""
@@ -202,7 +231,7 @@ async def get_profile(profile_id: str) -> Profile | None:
         ).first()
     if row is None:
         return None
-    return Profile(summary=_row_to_summary(row), ref_audio=row._mapping["ref_audio"])
+    return Profile(summary=_row_to_summary(row), ref_audio=_resolve_audio_bytes(row._mapping))
 
 
 async def get_profile_audio(profile_id: str) -> tuple[bytes, str] | None:
@@ -213,6 +242,7 @@ async def get_profile_audio(profile_id: str) -> tuple[bytes, str] | None:
             await conn.execute(
                 select(
                     voice_profiles.c.ref_audio,
+                    voice_profiles.c.ref_audio_path,
                     voice_profiles.c.ref_audio_mime,
                 ).where(voice_profiles.c.id == profile_id)
             )
@@ -220,7 +250,8 @@ async def get_profile_audio(profile_id: str) -> tuple[bytes, str] | None:
     if row is None:
         return None
     m = row._mapping
-    return bytes(m["ref_audio"]), str(m["ref_audio_mime"] or "audio/wav")
+    data = _resolve_audio_bytes(m)
+    return data, str(m["ref_audio_mime"] or "audio/wav")
 
 
 async def delete_profile(profile_id: str) -> bool:
@@ -228,10 +259,24 @@ async def delete_profile(profile_id: str) -> bool:
     profile (FK ON DELETE RESTRICT)."""
     engine = get_engine()
     async with engine.begin() as conn:
+        # Capture the basename first so we can clean up disk even when
+        # the DB row's FK integrity check is what succeeds last.
+        basename_row = (
+            await conn.execute(
+                select(voice_profiles.c.ref_audio_path).where(
+                    voice_profiles.c.id == profile_id
+                )
+            )
+        ).first()
         result = await conn.execute(
             delete(voice_profiles).where(voice_profiles.c.id == profile_id)
         )
-    return result.rowcount > 0
+    deleted = result.rowcount > 0
+    if deleted and basename_row is not None:
+        basename = basename_row._mapping["ref_audio_path"]
+        if basename:
+            voice_fs.delete_ref_audio(basename)
+    return deleted
 
 
 async def profile_is_bound(profile_id: str) -> bool:
