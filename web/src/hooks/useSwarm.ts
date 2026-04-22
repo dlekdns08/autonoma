@@ -139,6 +139,18 @@ export interface CheckpointEntry {
   created_at: string;
 }
 
+/** Row-level binding change event carried by the WS bridge. ``seq`` is a
+ *  monotonic counter, so even if the same row is edited twice back to
+ *  back the subscriber's ``useEffect`` on this event sees each tick. */
+export interface MocapBindingEvent {
+  vrm_file: string;
+  trigger_kind: string;
+  trigger_value: string;
+  clip_id: string | null;
+  removed: boolean;
+  seq: number;
+}
+
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -937,6 +949,11 @@ export function useSwarm() {
       setConnected(true);
       setConnectionFailed(false);
       reconnectAttemptsRef.current = 0; // reset backoff on successful connect
+      // Mocap bindings are broadcast-only — nothing in ``snapshot``
+      // re-sends them on reconnect, so any edits that happened while
+      // the socket was down would otherwise be missed. Bump the refresh
+      // token so ``useMocapBindings`` does a full GET on reconnect.
+      setMocapBindingsRefreshToken((n) => n + 1);
       // Set up heartbeat ping every 30 seconds
       clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
@@ -1229,5 +1246,6 @@ export function useSwarm() {
     checkpoints,
     resumeFromCheckpoint,
     mocapBindingsRefreshToken,
+    mocapBindingEvent,
   };
 }
