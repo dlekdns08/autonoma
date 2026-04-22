@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.exc import IntegrityError
 
 from autonoma.db.engine import get_engine
 from autonoma.db.schema import voice_bindings, voice_profiles
@@ -315,6 +316,7 @@ async def delete_binding(vrm_file: str) -> bool:
 
 __all__ = [
     "Binding",
+    "IntegrityError",
     "Profile",
     "ProfileSummary",
     "create_profile",
