@@ -35,11 +35,7 @@ import type {
   PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import * as THREE from "three";
-import {
-  MOCAP_BONES,
-  type MocapBone,
-  type MocapExpression,
-} from "./clipFormat";
+import type { MocapBone, MocapExpression } from "./clipFormat";
 import type { ClipSample } from "./clipPlayer";
 import { OneEuroQuat, OneEuroScalar, type OneEuroConfig } from "./oneEuro";
 
