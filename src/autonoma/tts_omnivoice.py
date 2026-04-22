@@ -224,3 +224,36 @@ class OmniVoiceTTSClient(BaseTTSClient):
                 pass
         except Exception:  # pragma: no cover — shutdown path
             pass
+
+
+# ── Process-wide singleton ────────────────────────────────────────────
+# Model load is multi-GB and takes tens of seconds on CPU. Creating a
+# new client per request pays that cost every time — nginx then cuts
+# the request at its 60s proxy_read_timeout (504). Share one instance.
+
+_shared_client: OmniVoiceTTSClient | None = None
+
+
+def get_shared_client() -> OmniVoiceTTSClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = OmniVoiceTTSClient()
+    return _shared_client
+
+
+async def warmup_shared_client() -> None:
+    """Load the model into memory so the first real request doesn't
+    pay the cold-load cost. Safe to call multiple times — ``_ensure_model``
+    short-circuits once loaded. Intended for FastAPI startup hook."""
+    client = get_shared_client()
+    try:
+        await client._ensure_model()
+        logger.info(
+            "[tts] OmniVoice warm-load complete (device=%s dtype=%s)",
+            client.device,
+            client.dtype,
+        )
+    except TTSError as exc:
+        logger.warning("[tts] OmniVoice warm-load skipped: %s", exc)
+    except Exception:  # pragma: no cover — startup path
+        logger.exception("[tts] OmniVoice warm-load failed")
