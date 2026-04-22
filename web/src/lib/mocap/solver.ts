@@ -510,8 +510,11 @@ export class MocapSolver {
    *    from forward (+X) toward the palm-ward direction (+Y-ish),
    *    which is anatomical curl.
    *
-   *  Chirality: VRM's normalized humanoid bakes handedness into the
-   *  local axes, so both hands use the same sign convention.
+   *  Chirality: we expected three-vrm's normalized humanoid to mirror
+   *  the finger bones' local axes per hand so both sides could use the
+   *  same sign, but empirically (Midori rig) left and right hands
+   *  share the same Z direction — +Z flexes the left hand but
+   *  hyperextends the right. We negate for the right hand to compensate.
    *
    *  Trade-off: fingers can't spread apart (abduction) — only flex.
    *  That's fine for the headline "open hand / closed fist / point"
@@ -533,6 +536,9 @@ export class MocapSolver {
     _palmY.normalize();
 
     const fingers = vrmIsLeft ? LEFT_FINGERS : RIGHT_FINGERS;
+    // See docstring "Chirality" section — right hand rotates the opposite
+    // way around the local Z axis on this rig family.
+    const curlSign = vrmIsLeft ? 1 : -1;
     for (const [boneName, baseIdx, tipIdx] of fingers) {
       _hMcp.set(lm[baseIdx].x, lm[baseIdx].y, lm[baseIdx].z);
       _hPip.set(lm[tipIdx].x, lm[tipIdx].y, lm[tipIdx].z);
@@ -552,12 +558,12 @@ export class MocapSolver {
         0,
         Math.min(1, (curl - CURL_REST_RAD) / (CURL_FIST_RAD - CURL_REST_RAD)),
       );
-      const boneRot = norm * CURL_OUT_RANGE_RAD;
+      const boneRot = norm * CURL_OUT_RANGE_RAD * curlSign;
 
-      // Positive rotation around local Z = bend toward palm (flexion)
-      // in VRoid's normalized finger convention. Both hands use the
-      // same sign — chirality is already baked into the rig's local
-      // axes by three-vrm.
+      // Rotation around local Z = flexion/extension axis. The sign is
+      // applied per-hand above (``curlSign``) because left and right
+      // hands on this rig share the same axis direction rather than
+      // being mirrored.
       _curlEuler.set(0, 0, boneRot, "XYZ");
       _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(
