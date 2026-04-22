@@ -56,6 +56,17 @@ import * as THREE from "three";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { AgentData, AgentEmote } from "@/lib/types";
 import { vrmFileForAgent } from "./vrmCredits";
+import {
+  ClipRuntime,
+  clipCache,
+  createSampleBuffer,
+  type ClipSample,
+} from "@/lib/mocap/clipPlayer";
+import {
+  collectMocapBones,
+  type MocapBoneMap,
+} from "@/lib/mocap/vrmShared";
+import type { MocapBone, MocapExpression } from "@/lib/mocap/clipFormat";
 
 interface Props {
   agent: AgentData;
