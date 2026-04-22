@@ -152,10 +152,16 @@ export function useSwarm() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [emotes, setEmotes] = useState<Record<string, AgentEmote>>({});
   const emoteSeqRef = useRef(0);
-  // Bumped whenever a ``mocap.bindings.updated`` event arrives. Consumed
-  // by ``useMocapBindings(refreshToken)`` on the dashboard so any viewer
-  // picks up a peer's edit within one round-trip.
+  // ``mocapBindingsRefreshToken`` forces a full GET of the bindings
+  // table — used for hard resyncs (mount, WS reconnect). Routine
+  // row-level edits flow through ``mocapBindingEvent`` instead, which
+  // carries the patch payload so consumers can splice without a
+  // round-trip. Having both lets us fall back to a full refetch if the
+  // event stream ever drops (e.g., socket closed mid-edit).
   const [mocapBindingsRefreshToken, setMocapBindingsRefreshToken] = useState(0);
+  const [mocapBindingEvent, setMocapBindingEvent] =
+    useState<MocapBindingEvent | null>(null);
+  const mocapBindingEventSeqRef = useRef(0);
   // Multi-viewer state — defaults to a private room of one. The host
   // gets `code` filled in on `swarm.starting`; viewers get it from the
   // ?room= query param on first connect.
@@ -266,6 +272,25 @@ export function useSwarm() {
             ...prev,
             [agent]: { icon, expiresAt: Date.now() + ttl, seq },
           }));
+          return;
+        }
+
+        // Global mocap binding table changed (another viewer saved in
+        // the ``/mocap`` editor). Emit a fresh event object so hooks
+        // subscribed to ``mocapBindingEvent`` can apply a row-level
+        // patch without a full GET. The event itself is a system-level
+        // signal — suppress the event-log entry so the dashboard log
+        // doesn't get noisy on every binding save.
+        if (event === "mocap.bindings.updated") {
+          setMocapBindingEvent({
+            vrm_file: String(data.vrm_file ?? ""),
+            trigger_kind: String(data.trigger_kind ?? ""),
+            trigger_value: String(data.trigger_value ?? ""),
+            clip_id:
+              data.clip_id == null ? null : String(data.clip_id),
+            removed: !!data.removed,
+            seq: ++mocapBindingEventSeqRef.current,
+          });
           return;
         }
 
@@ -540,15 +565,6 @@ export function useSwarm() {
 
         if (event === "pong") {
           // Silently ignore pong responses
-          return;
-        }
-
-        // Global mocap binding table changed (another viewer saved in the
-        // ``/mocap`` editor). Bump a counter so hooks subscribed to
-        // ``mocapBindingsRefreshToken`` re-fetch — there's no per-row
-        // payload, just the signal. Event body is intentionally empty.
-        if (event === "mocap.bindings.updated") {
-          setMocapBindingsRefreshToken((n) => n + 1);
           return;
         }
 
