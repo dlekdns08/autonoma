@@ -1011,13 +1011,31 @@ def _log_startup_summary() -> None:
     )
 
 
+async def _warmup_omnivoice() -> None:
+    """Kick off OmniVoice model load in the background at startup.
+
+    On CPU the first ``_ensure_model`` call takes 30–60s. Without this
+    warmup the first admin /test request pays that cost and nginx cuts
+    it at its default 60s ``proxy_read_timeout`` (504 Gateway Timeout).
+    We run it as a detached task so startup (and the /api/health probe)
+    isn't blocked on the load.
+    """
+    try:
+        from autonoma.tts_omnivoice import warmup_shared_client
+    except ImportError:
+        return
+    await warmup_shared_client()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _register_event_bridge()
     await _bootstrap_admin_user()
     await _bootstrap_default_harness_policy()
     _log_startup_summary()
+    warmup_task = asyncio.create_task(_warmup_omnivoice())
     yield
+    warmup_task.cancel()
     _unregister_event_bridge()
 
 
@@ -3667,18 +3685,20 @@ async def voice_test_profile(
 
     from autonoma.tts_base import TTSError
 
-    # Instantiate the OmniVoice client directly (skip the factory's stub
-    # fallback) so that a missing package surfaces as a clear error rather
-    # than "empty_synthesis" after the stub silently emits zero bytes.
+    # Use the process-wide singleton so we don't pay the multi-GB model
+    # load cost on every test request (nginx's 60s proxy_read_timeout
+    # will cut a cold-load request as a 504). Skip the factory's stub
+    # fallback — a missing package should surface as a clear error, not
+    # "empty_synthesis" after the stub silently emits zero bytes.
     try:
-        from autonoma.tts_omnivoice import OmniVoiceTTSClient
+        from autonoma.tts_omnivoice import get_shared_client
     except ImportError as exc:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"omnivoice_not_available: {exc}",
         )
 
-    client = OmniVoiceTTSClient()
+    client = get_shared_client()
     buf = bytearray()
     try:
         async for chunk in client.synthesize(
