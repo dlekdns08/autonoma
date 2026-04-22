@@ -232,7 +232,19 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       };
       rafHandleRef.current = requestAnimationFrame(tick);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // MediaPipe WASM load failures surface as raw ErrorEvent objects,
+      // which stringify to "[object Event]". Dig out a useful message.
+      let msg: string;
+      if (err instanceof Error) {
+        msg = err.message;
+      } else if (err instanceof ErrorEvent) {
+        msg = err.message || "MediaPipe WASM 로드 실패 (/mediapipe 404?)";
+      } else if (err instanceof Event) {
+        msg = `${err.type}: MediaPipe 자원 로드 실패 (/mediapipe 404?)`;
+      } else {
+        msg = String(err);
+      }
+      setError(msg);
       setStatus("error");
       stop();
     }
