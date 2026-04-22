@@ -102,6 +102,17 @@ export default function VTuberStage({
   const useSubtitles = subtitles ?? obsMode;
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
+  // Separated "target speaker" (spotlightName, what the rules say
+  // should be on stage) from "currently displayed" (displaySpeaker)
+  // so speaker changes can cross-fade instead of snap. While a
+  // transition is in flight, the old character plays spotlight-out,
+  // then the DOM fully swaps, then the new character plays
+  // spotlight-in — only one VRM is mounted at any moment so we never
+  // double up WebGL contexts during the swap.
+  const [displaySpeaker, setDisplaySpeaker] = useState<string | null>(null);
+  const [transitionPhase, setTransitionPhase] = useState<
+    "stable" | "out" | "in"
+  >("stable");
   // Bumped when the user clicks "reset view" — VRMCharacter watches this
   // and snaps the camera back to the default full-body framing.
   const [resetNonce, setResetNonce] = useState(0);
@@ -151,8 +162,66 @@ export default function VTuberStage({
   }, [revealFlash]);
 
   const spotlightName = pinned ?? lastSpeaker ?? agents[0]?.name ?? null;
-  const spotlightAgent = spotlightName
-    ? agents.find((a) => a.name === spotlightName)
+
+  // Cross-fade sequencing between speakers.
+  //
+  // - `fade-out` / `fade-in` are deliberately short enough that a
+  //   follow-up speaker taking the stage mid-transition doesn't feel
+  //   "laggy" — combined ~600ms means a quick back-to-back hand-off
+  //   reads as "A exhales, B takes it" rather than "A finishes, then
+  //   beat, then B". We don't add a holdover timer on top, so the
+  //   switch fires the same instant the `lastSpeaker` rule picks a
+  //   new target — only the framing is softened.
+  // - If the target flips again mid-transition (rare but possible in
+  //   busy scenes), the cleanup below clears the pending timers and
+  //   the new effect run schedules fresh ones — the fade-out CSS
+  //   already keeps the outgoing character invisible with
+  //   `forwards`, so extending the out phase doesn't look wrong.
+  const FADE_OUT_MS = 180;
+  const FADE_IN_MS = 420;
+
+  // First assignment happens during render so the stage appears on the
+  // initial commit without a fade (a brand-new mount doesn't need to
+  // fade in from nothing). Subsequent speaker changes are handled by
+  // the transition effect below.
+  if (displaySpeaker === null && spotlightName !== null) {
+    setDisplaySpeaker(spotlightName);
+  }
+
+  useEffect(() => {
+    if (displaySpeaker === null) return;
+    if (spotlightName === displaySpeaker) return;
+    // Target cleared (e.g., all agents despawned transiently) — keep
+    // the current frame rather than fading to black.
+    if (!spotlightName) return;
+
+    // Kicks off a visual state machine (fade-out → swap → fade-in).
+    // The timers below drive subsequent phase transitions — this
+    // first state update is the orchestration entry point, not a
+    // derived-from-props sync, so the lint rule doesn't apply.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTransitionPhase("out");
+    const swap = window.setTimeout(() => {
+      setDisplaySpeaker(spotlightName);
+      setTransitionPhase("in");
+    }, FADE_OUT_MS);
+    const settle = window.setTimeout(
+      () => setTransitionPhase("stable"),
+      FADE_OUT_MS + FADE_IN_MS,
+    );
+    return () => {
+      window.clearTimeout(swap);
+      window.clearTimeout(settle);
+    };
+  }, [spotlightName, displaySpeaker]);
+
+  // `spotlightAgent` is kept as an alias of the *displayed* agent so the
+  // existing render block (mood tint, name tag, speech bubble, etc.) can
+  // stay pinned to whoever is actually on screen during the fade. The
+  // gallery tile `isFocus` uses the raw `spotlightName` so a pin click
+  // highlights instantly.
+  const spotlightAgent = displaySpeaker
+    ? agents.find((a) => a.name === displaySpeaker)
     : null;
 
   if (agents.length === 0) {
@@ -207,7 +276,11 @@ export default function VTuberStage({
         {spotlightAgent && (
           <div
             key={spotlightAgent.name}
-            className="relative flex h-full flex-col items-center justify-center animate-[spotlight-in_420ms_ease-out]"
+            className={`relative flex h-full flex-col items-center justify-center ${
+              transitionPhase === "out"
+                ? "animate-[spotlight-out_180ms_ease-out_forwards]"
+                : "animate-[spotlight-in_420ms_ease-out]"
+            }`}
           >
             <div className="relative h-full w-full">
               <VRMCharacter
@@ -402,6 +475,16 @@ export default function VTuberStage({
           100% {
             opacity: 1;
             transform: scale(1);
+          }
+        }
+        @keyframes spotlight-out {
+          0% {
+            opacity: 1;
+            transform: scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: scale(0.985);
           }
         }
         @keyframes bubble-in {
