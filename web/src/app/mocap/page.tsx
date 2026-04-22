@@ -73,10 +73,10 @@ export default function MocapPage() {
   const trimRuntimeRef = useRef<ClipRuntime | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
-  // 녹화 경과 라벨용 tick. ``performance.now()`` 를 render 중에 부르면
+  // 녹화 경과 초. ``performance.now()`` 를 render 중에 부르면
   // react-hooks/refs 가 impure 함수 호출이라고 경고하므로, 10Hz 로 state
-  // 를 밀어 "녹화 중인 동안만 tick" 하고 정지하면 갱신도 멈춘다.
-  const [recordTick, setRecordTick] = useState(0);
+  // 를 갱신해 "녹화 중인 동안만 tick" 하고 정지하면 갱신도 멈춘다.
+  const [recordElapsed, setRecordElapsed] = useState(0);
   const playheadRef = useRef(0);
   const rafRef = useRef<number | null>(null);
 
