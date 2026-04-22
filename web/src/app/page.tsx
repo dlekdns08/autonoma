@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
 import { useAuth } from "@/hooks/useAuth";
 import { useKeyNav } from "@/hooks/useKeyNav";
@@ -179,6 +179,13 @@ function Dashboard() {
   });
 
   const needsAuth = authState.status !== "authenticated";
+
+  // If auth is lost while the settings modal is open, drop the open
+  // state so the modal doesn't silently re-appear once the user
+  // re-authenticates through AuthModal.
+  useEffect(() => {
+    if (needsAuth && settingsOpen) setSettingsOpen(false);
+  }, [needsAuth, settingsOpen]);
 
   // Floating user chrome (chip + settings modal). Rendered inside every
   // Dashboard layout variant so the ⚙ action is reachable from idle,
