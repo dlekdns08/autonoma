@@ -32,6 +32,37 @@ export interface EventLogEntry {
   timestamp: number;
 }
 
+/** Typed shape per backend-emitted event we actively consume in the UI.
+ *
+ * The WebSocket payload is still transported as ``Record<string,
+ * unknown>`` (see :func:`handleMessage` in useSwarm) because we can't
+ * validate arbitrary events at the boundary — the backend adds new ones
+ * regularly and blocking on unknown event names would regress features.
+ *
+ * This map exists so code that *does* want to read fields off a known
+ * event can narrow once via :func:`payloadOf` instead of scattering
+ * ``data.X as string`` casts that silently break if the backend renames
+ * or drops a field. The narrowing helper also emits a console warning on
+ * first mismatch, which is the "runtime guard for backend drift".
+ */
+export interface EventPayloadMap {
+  "agent.spawned": { emoji?: string; name?: string; role?: string };
+  "agent.speech": { agent?: string; text?: string };
+  "agent.level_up": { agent?: string; level?: number };
+  "agent.dream": { agent?: string; dream?: string; dream_type?: string };
+  "task.completed": { agent?: string; title?: string };
+  "file.created": { agent?: string; path?: string };
+  "world.event": { title?: string };
+  "guild.formed": { name?: string; members?: string[] };
+  "campfire.complete": { stories?: number };
+  "fortune.given": { agent?: string; fortune?: string };
+  "boss.appeared": { name?: string; level?: number; hp?: number };
+  "boss.defeated": { name?: string; xp_reward?: number };
+  "boss.damage": { message?: string };
+  "ghost.appears": { message?: string };
+  "swarm.round": { round?: number };
+}
+
 export interface FileEntry {
   path: string;
   size: number;
