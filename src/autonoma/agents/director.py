@@ -688,10 +688,19 @@ Rules:
             if self._stall_counter >= 3:
                 review_tasks = [t for t in project.tasks if t.status == TaskStatus.REVIEW]
                 open_candidates = [t for t in project.tasks if t.status == TaskStatus.OPEN]
+                # Pass full status map so stall strategies can respect
+                # the critical path (don't clear deps pointing to live
+                # upstream work).
+                task_status_map = {t.id: t.status for t in project.tasks}
                 plan_fn = _strategy_lookup(
                     "loop.stall_policy", self.policy.loop.stall_policy
                 )
-                plan = plan_fn(review_tasks, open_candidates, len(available_agents))
+                plan = plan_fn(
+                    review_tasks,
+                    open_candidates,
+                    len(available_agents),
+                    task_status_map=task_status_map,
+                )
                 action = plan.get("action", "none")
 
                 if action == "approve_reviews":
@@ -718,11 +727,19 @@ Rules:
                     cleared = plan.get("cleared", [])
                     did_reset = False
                     async with get_tasks_lock():
-                        target.depends_on.clear()
+                        # Only drop the explicit subset the strategy
+                        # flagged as safe — live critical-path deps
+                        # (IN_PROGRESS/ASSIGNED upstream) must stay.
+                        if cleared:
+                            to_remove = set(cleared)
+                            target.depends_on = [
+                                d for d in target.depends_on if d not in to_remove
+                            ]
                         did_reset = True
                     logger.warning(
-                        f"[Director] Forcibly unblocking '{target.title}' "
-                        f"by clearing its dependencies={cleared}"
+                        f"[Director] Unblocking '{target.title}': "
+                        f"cleared stale deps={cleared}, "
+                        f"remaining live deps={target.depends_on}"
                     )
                     await self._say("Unblocking stuck task!", style="bold red")
                     if did_reset:
