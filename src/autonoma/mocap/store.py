@@ -8,16 +8,19 @@ from the shared engine.
 from __future__ import annotations
 
 import base64
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, delete, insert, select, update
+from sqlalchemy import and_, delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from autonoma.db.engine import get_engine
 from autonoma.db.schema import mocap_bindings, mocap_clips
 from autonoma.mocap.validator import ValidatedClip
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -174,7 +177,13 @@ async def get_clip_summary(clip_id: str) -> ClipSummary | None:
 
 
 async def get_clip_payload(clip_id: str) -> tuple[ClipSummary, str] | None:
-    """Return (summary, base64-encoded gzipped payload)."""
+    """Return (summary, base64-encoded gzipped payload).
+
+    Also bumps ``last_accessed_at`` so orphan sweeps see recent reads
+    as "still in use". The touch happens in a separate transaction so
+    a write failure (locked DB, etc.) never breaks playback — it's a
+    bookkeeping side effect, not part of the read contract.
+    """
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
@@ -184,6 +193,19 @@ async def get_clip_payload(clip_id: str) -> tuple[ClipSummary, str] | None:
         return None
     summary = _row_to_summary(row)
     payload = base64.b64encode(row._mapping["payload_gz"]).decode("ascii")
+
+    # Best-effort touch; swallow errors so a locked DB or a missing
+    # column on a partially-migrated deployment doesn't 500 the request.
+    try:
+        async with engine.begin() as touch_conn:
+            await touch_conn.execute(
+                update(mocap_clips)
+                .where(mocap_clips.c.id == clip_id)
+                .values(last_accessed_at=func.current_timestamp())
+            )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("failed to touch last_accessed_at for clip %s: %s", clip_id, exc)
+
     return summary, payload
 
 
@@ -212,6 +234,70 @@ async def delete_clip(clip_id: str) -> bool:
             delete(mocap_clips).where(mocap_clips.c.id == clip_id)
         )
     return result.rowcount > 0
+
+
+async def get_user_storage_usage(user_id: str) -> tuple[int, int]:
+    """Return ``(clip_count, total_bytes)`` for ``user_id``'s owned clips.
+
+    Drives the per-user quota enforcement in ``mocap_create_clip``. Uses
+    ``COALESCE`` on the SUM so an empty user still reports 0 bytes
+    rather than NULL.
+    """
+    engine = get_engine()
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(
+                    func.count(mocap_clips.c.id),
+                    func.coalesce(func.sum(mocap_clips.c.size_bytes), 0),
+                ).where(mocap_clips.c.owner_user_id == user_id)
+            )
+        ).first()
+    if row is None:
+        return 0, 0
+    count = int(row[0] or 0)
+    total = int(row[1] or 0)
+    return count, total
+
+
+async def list_orphan_clips(
+    older_than_days: int = 90,
+) -> tuple[list[ClipSummary], int]:
+    """Return clips with no referencing binding and a stale
+    ``last_accessed_at``.
+
+    "Stale" means ``last_accessed_at < now - older_than_days days``.
+    Returns ``(clips, total_bytes)`` — the byte total is useful for an
+    admin UI that wants to show "reclaimable storage" without summing
+    client-side.
+
+    This function only *reports* orphans; the policy contract forbids
+    automatic deletion. A human admin decides what to purge.
+    """
+    if older_than_days < 0:
+        older_than_days = 0
+    engine = get_engine()
+    # Portable-ish across SQLite and Postgres: SQLite understands
+    # datetime('now', '-N days'); Postgres would need ``now() - interval
+    # '<n> days'``. The dev/prod DB is SQLite so we target it directly
+    # via ``text()`` rather than pretending Core covers it.
+    threshold_sql = text(f"datetime('now', '-{int(older_than_days)} days')")
+    stmt = (
+        select(mocap_clips)
+        .select_from(
+            mocap_clips.outerjoin(
+                mocap_bindings, mocap_clips.c.id == mocap_bindings.c.clip_id
+            )
+        )
+        .where(mocap_bindings.c.clip_id.is_(None))
+        .where(mocap_clips.c.last_accessed_at < threshold_sql)
+        .order_by(mocap_clips.c.last_accessed_at.asc())
+    )
+    async with engine.connect() as conn:
+        rows = (await conn.execute(stmt)).all()
+    clips = [_row_to_summary(r) for r in rows]
+    total_bytes = sum(c.size_bytes for c in clips)
+    return clips, total_bytes
 
 
 async def clip_is_bound(clip_id: str) -> bool:
@@ -342,8 +428,10 @@ __all__ = [
     "get_binding",
     "get_clip_payload",
     "get_clip_summary",
+    "get_user_storage_usage",
     "list_bindings",
     "list_clips_for_user",
+    "list_orphan_clips",
     "rename_clip",
     "upsert_binding",
 ]
