@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
 import { useAuth } from "@/hooks/useAuth";
 import { useKeyNav } from "@/hooks/useKeyNav";
+import { useMocapBindings } from "@/hooks/mocap/useMocapBindings";
 import Header from "@/components/Header";
 import Stage from "@/components/Stage";
 import TaskPanel from "@/components/TaskPanel";
@@ -22,10 +23,11 @@ import ChatPanel from "@/components/ChatPanel";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
+import { vrmFileForAgent } from "@/components/vtuber/vrmCredits";
 import KeyboardHelpModal from "@/components/KeyboardHelpModal";
 import ReviewQueue from "@/components/ReviewQueue";
 import ExecutionTimeline from "@/components/ExecutionTimeline";
-import type { AgentData } from "@/lib/types";
+import type { AgentData, AgentEmote } from "@/lib/types";
 
 // ── Top-level gate ─────────────────────────────────────────────────────
 // The backend expects a logged-in user for everything meaningful, so the
@@ -143,7 +145,37 @@ function Dashboard() {
     sandboxMetrics,
     checkpoints,
     resumeFromCheckpoint,
+    mocapBindingsRefreshToken,
   } = useSwarm();
+  // Global mocap clip bindings (vrm file × trigger → clip). Refreshes
+  // whenever another viewer saves in /mocap — useSwarm converts the
+  // ``mocap.bindings.updated`` WS event into a bump on this token.
+  const mocapBindings = useMocapBindings(mocapBindingsRefreshToken);
+  const mocapLookup = mocapBindings.lookup;
+  const mocapClipIdFor = useCallback(
+    (agent: AgentData, emote: AgentEmote | null): string | null => {
+      const vrmFile = vrmFileForAgent(agent.name);
+      // Priority: active emote > non-idle state > mood. An ephemeral
+      // emote should win because it represents a momentary reaction; a
+      // non-idle state (thinking/working/talking/celebrating) beats the
+      // baseline mood; mood is the always-on fallback.
+      if (emote?.icon) {
+        const hit = mocapLookup({ vrmFile, kind: "emote", value: emote.icon });
+        if (hit) return hit.clip_id;
+      }
+      const st = agent.state;
+      if (st && st !== "idle") {
+        const hit = mocapLookup({ vrmFile, kind: "state", value: st });
+        if (hit) return hit.clip_id;
+      }
+      if (agent.mood) {
+        const hit = mocapLookup({ vrmFile, kind: "mood", value: agent.mood });
+        if (hit) return hit.clip_id;
+      }
+      return null;
+    },
+    [mocapLookup],
+  );
   const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -346,6 +378,7 @@ function Dashboard() {
             backdrop="studio"
             forcePinnedAgent={vtPinned}
             emotes={emotes}
+            mocapClipIdFor={mocapClipIdFor}
           />
         </div>
 
