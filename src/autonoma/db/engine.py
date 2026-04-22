@@ -122,11 +122,22 @@ async def _migration_004_feature_tables(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_005_mocap(conn) -> None:
+    """Create mocap_clips and mocap_bindings tables.
+
+    See ``db.schema`` for the column rationale. These tables power the
+    ``/mocap`` page's clip library + trigger-to-clip bindings used by
+    the VTuber character playback path.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
     (3, _migration_003_harness_policies),
     (4, _migration_004_feature_tables),
+    (5, _migration_005_mocap),
 ]
 
 
