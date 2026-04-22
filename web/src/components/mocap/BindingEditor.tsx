@@ -34,6 +34,7 @@ interface Props {
   vrmFile: string;
   clips: ClipSummary[];
   bindings: UseMocapBindings;
+  isAdmin: boolean;
 }
 
 type Row = {
@@ -60,7 +61,7 @@ function buildRows(): Row[] {
   return rows;
 }
 
-export default function BindingEditor({ vrmFile, clips, bindings }: Props) {
+export default function BindingEditor({ vrmFile, clips, bindings, isAdmin }: Props) {
   const rows = buildRows();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +91,11 @@ export default function BindingEditor({ vrmFile, clips, bindings }: Props) {
           {error}
         </div>
       )}
+      {!isAdmin && (
+        <div className="rounded border border-rose-500/30 bg-slate-950/60 px-2 py-1 text-[11px] font-mono text-rose-200">
+          바인딩 수정은 admin만 가능합니다
+        </div>
+      )}
       <div className="overflow-hidden rounded-lg border border-white/10">
         <table className="w-full text-[11px] font-mono">
           <thead>
@@ -117,7 +123,7 @@ export default function BindingEditor({ vrmFile, clips, bindings }: Props) {
                   <td className="px-3 py-1 text-white/80">{row.label}</td>
                   <td className="px-3 py-1">
                     <select
-                      disabled={busy}
+                      disabled={busy || !isAdmin}
                       value={match?.clip_id ?? ""}
                       onChange={(e) => onPick(row, e.target.value)}
                       className="w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white outline-none focus:border-fuchsia-500/60"
