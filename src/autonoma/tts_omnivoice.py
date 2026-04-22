@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 
 
 # Model card: https://huggingface.co/k2-fsa/OmniVoice
-OMNIVOICE_MODEL_ID = "k2-fsa/OmniVoice"
+# Reads from ``AUTONOMA_OMNIVOICE_MODEL_ID`` so the Dockerfile ARG can
+# pin a specific revision at build time without editing the source.
+# Falls back to the upstream default for local dev.
+OMNIVOICE_MODEL_ID = os.environ.get("AUTONOMA_OMNIVOICE_MODEL_ID", "k2-fsa/OmniVoice")
 OMNIVOICE_SAMPLE_RATE = 24000
 
 
@@ -239,6 +242,22 @@ def get_shared_client() -> OmniVoiceTTSClient:
     if _shared_client is None:
         _shared_client = OmniVoiceTTSClient()
     return _shared_client
+
+
+def shared_client_status() -> dict[str, object]:
+    """Snapshot the shared client's load state for /api/health.
+
+    Returns ``{"loaded": bool, "device": str, "dtype": str}``. Never
+    instantiates the client — if nothing has touched the singleton yet
+    we report ``loaded=False`` without triggering a load.
+    """
+    if _shared_client is None:
+        return {"loaded": False, "device": "", "dtype": ""}
+    return {
+        "loaded": _shared_client._model is not None,
+        "device": _shared_client._device,
+        "dtype": _shared_client._dtype,
+    }
 
 
 async def warmup_shared_client() -> None:
