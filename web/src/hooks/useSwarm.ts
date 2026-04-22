@@ -151,6 +151,16 @@ export interface MocapBindingEvent {
   seq: number;
 }
 
+/** Voice binding change event. Same row-level patch pattern as the mocap
+ *  event: the dashboard applies the delta without refetching and resets
+ *  any cached voice resolution for the affected VRM. */
+export interface VoiceBindingEvent {
+  vrm_file: string;
+  profile_id: string | null;
+  removed: boolean;
+  seq: number;
+}
+
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -174,6 +184,11 @@ export function useSwarm() {
   const [mocapBindingEvent, setMocapBindingEvent] =
     useState<MocapBindingEvent | null>(null);
   const mocapBindingEventSeqRef = useRef(0);
+  // Same pattern as mocap bindings, for voice profile bindings.
+  const [voiceBindingsRefreshToken, setVoiceBindingsRefreshToken] = useState(0);
+  const [voiceBindingEvent, setVoiceBindingEvent] =
+    useState<VoiceBindingEvent | null>(null);
+  const voiceBindingEventSeqRef = useRef(0);
   // Multi-viewer state — defaults to a private room of one. The host
   // gets `code` filled in on `swarm.starting`; viewers get it from the
   // ?room= query param on first connect.
