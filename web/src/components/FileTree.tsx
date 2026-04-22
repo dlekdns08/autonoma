@@ -2,6 +2,7 @@
 
 import type { FileEntry } from "@/lib/types";
 import { API_BASE_URL } from "@/hooks/useSwarm";
+import { STRINGS } from "@/lib/strings";
 
 interface Props {
   files: FileEntry[];
@@ -34,7 +35,7 @@ export default function FileTree({ files, sessionId }: Props) {
           (downloadsDisabled ? (
             <span
               aria-disabled="true"
-              title="재연결 중…"
+              title={STRINGS.common.reconnecting}
               className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-mono text-white/30 cursor-not-allowed select-none"
             >
               ⬇ .zip
@@ -72,7 +73,7 @@ export default function FileTree({ files, sessionId }: Props) {
               {downloadsDisabled ? (
                 <span
                   aria-disabled="true"
-                  title="재연결 중…"
+                  title={STRINGS.common.reconnecting}
                   className="text-white/20 text-[11px] opacity-0 group-hover:opacity-100 transition-opacity cursor-not-allowed select-none"
                 >
                   ⬇
