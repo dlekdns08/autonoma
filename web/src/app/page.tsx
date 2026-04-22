@@ -146,26 +146,37 @@ function Dashboard() {
     checkpoints,
     resumeFromCheckpoint,
     mocapBindingsRefreshToken,
+    mocapBindingEvent,
   } = useSwarm();
-  // Global mocap clip bindings (vrm file × trigger → clip). Refreshes
-  // whenever another viewer saves in /mocap — useSwarm converts the
-  // ``mocap.bindings.updated`` WS event into a bump on this token.
-  const mocapBindings = useMocapBindings(mocapBindingsRefreshToken);
-  const mocapLookup = mocapBindings.lookup;
+  // Global mocap clip bindings (vrm_file × trigger → clip). Refreshes
+  // fully on mount + WS reconnect via ``mocapBindingsRefreshToken``;
+  // routine peer edits are applied row-wise via ``mocapBindingEvent``.
+  const { lookup: mocapLookup, error: mocapBindingsError } = useMocapBindings(
+    mocapBindingsRefreshToken,
+    mocapBindingEvent,
+  );
+  useEffect(() => {
+    if (mocapBindingsError) {
+      console.warn("[mocap] bindings fetch failed:", mocapBindingsError);
+    }
+  }, [mocapBindingsError]);
   const mocapClipIdFor = useCallback(
     (agent: AgentData, emote: AgentEmote | null): string | null => {
       const vrmFile = vrmFileForAgent(agent.name);
-      // Priority: active emote > non-idle state > mood. An ephemeral
-      // emote should win because it represents a momentary reaction; a
-      // non-idle state (thinking/working/talking/celebrating) beats the
-      // baseline mood; mood is the always-on fallback.
-      if (emote?.icon) {
-        const hit = mocapLookup({ vrmFile, kind: "emote", value: emote.icon });
-        if (hit) return hit.clip_id;
-      }
+      // Priority mirrors the procedural gesture stack (ambient → mood →
+      // talking → emote → state, highest wins):
+      //   1. non-idle state  — active work/talk/celebrate
+      //   2. live emote      — momentary reaction (only if not expired)
+      //   3. mood            — always-on baseline
+      // Picking anything else would leave the procedural system driving
+      // one pose layer while mocap drives a conflicting one.
       const st = agent.state;
       if (st && st !== "idle") {
         const hit = mocapLookup({ vrmFile, kind: "state", value: st });
+        if (hit) return hit.clip_id;
+      }
+      if (emote?.icon && emote.expiresAt > Date.now()) {
+        const hit = mocapLookup({ vrmFile, kind: "emote", value: emote.icon });
         if (hit) return hit.clip_id;
       }
       if (agent.mood) {
