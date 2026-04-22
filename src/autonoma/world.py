@@ -29,7 +29,7 @@ import hashlib
 import logging
 import random
 import threading
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -431,6 +431,10 @@ class AgentMemory:
     MAX_PRIVATE_MEMORIES = 20
     MAX_HINDSIGHT_NOTES = 15
 
+    # Bounded summary cache: more than this many distinct
+    # (version, formatter, limit) keys are unlikely in practice.
+    _SUMMARY_CACHE_MAX = 8
+
     def __init__(self) -> None:
         # Layer 1: Private episodic memory
         self.private: list[MemoryEntry] = []
@@ -444,6 +448,13 @@ class AgentMemory:
         # conservative choice that covers both sync and any future cross-
         # thread callers without forcing the API to become async.
         self._private_lock = threading.Lock()
+        # Summary cache — keyed by (memory_version, formatter-id, limit).
+        # Strategies today are cheap Python, but the prompt path is LLM-
+        # hot and future strategies may be LLM-backed; caching keeps the
+        # per-round cost O(1) even if the formatter grows expensive.
+        self._summary_cache: OrderedDict[tuple, str] = OrderedDict()
+        self._cache_lock = threading.Lock()
+        self._memory_version: int = 0
 
     def remember(self, text: str, memory_type: str = "observation", round_number: int = 0) -> None:
         """Add a private memory."""
@@ -455,6 +466,9 @@ class AgentMemory:
                     key=lambda e: (e.memory_type in ("lesson", "failure"), e.round_number)
                 )
                 self.private = self.private[-self.MAX_PRIVATE_MEMORIES:]
+            self._memory_version += 1
+        with self._cache_lock:
+            self._summary_cache.clear()
 
     def add_hindsight(
         self,
@@ -477,6 +491,10 @@ class AgentMemory:
             # Keep most-upvoted notes
             self.hindsight.sort(key=lambda n: (n.upvotes, n.round_number))
             self.hindsight = self.hindsight[-self.MAX_HINDSIGHT_NOTES:]
+        with self._private_lock:
+            self._memory_version += 1
+        with self._cache_lock:
+            self._summary_cache.clear()
         return note
 
     def search_hindsight(self, query: str) -> list[HindsightNote]:
@@ -497,10 +515,23 @@ class AgentMemory:
         callable from ``autonoma.harness.memory_strategies``. Passing ``None``
         preserves the pre-harness default (last 6 verbatim) so direct
         callers (tests, status dumps) don't need to know about policy.
+
+        Cached by ``(memory_version, formatter-id, limit)``. Any
+        ``remember``/``add_hindsight`` write invalidates the cache, so
+        stale reads are not possible.
         """
-        lines = []
         with self._private_lock:
             private_snapshot = list(self.private)
+            version = self._memory_version
+
+        cache_key = (version, id(private_formatter), private_limit)
+        with self._cache_lock:
+            cached = self._summary_cache.get(cache_key)
+            if cached is not None:
+                self._summary_cache.move_to_end(cache_key)
+                return cached
+
+        lines = []
         if private_snapshot:
             lines.append("  [Private Memories]")
             if private_formatter is None:
@@ -515,7 +546,12 @@ class AgentMemory:
             for n in self.hindsight[-4:]:
                 lines.append(f"    {n}")
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        with self._cache_lock:
+            self._summary_cache[cache_key] = result
+            while len(self._summary_cache) > self._SUMMARY_CACHE_MAX:
+                self._summary_cache.popitem(last=False)
+        return result
 
     def to_dict(self) -> dict:
         with self._private_lock:
