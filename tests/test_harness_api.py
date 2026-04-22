@@ -15,28 +15,14 @@ walks the same validator.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Scratch SQLite per test. Identical shape to test_auth.py."""
-    from autonoma import config as config_module
-    from autonoma.db import engine as engine_module
-
-    monkeypatch.setattr(config_module.settings, "data_dir", tmp_path)
-    monkeypatch.setattr(config_module.settings, "db_filename", "harness_api.db")
-    engine_module._engine = None
-    engine_module._initialized = False
-    yield tmp_path
-    engine_module._engine = None
-    engine_module._initialized = False
+# ``fresh_db`` is shared across the DB-touching test suite (see
+# tests/conftest.py). Only the HTTP client fixture is local to this file.
 
 
 @pytest.fixture
