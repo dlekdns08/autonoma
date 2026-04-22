@@ -75,15 +75,51 @@ function Grid({ children }: { children: React.ReactNode }) {
   );
 }
 
+// IntersectionObserver-gated render. Each PixelCharacter/PixelMap is a
+// small but non-trivial canvas render; the gallery has ~90 cells, so
+// mounting them all up-front hit first-paint hard on modest hardware.
+// Deferring offscreen cells keeps initial layout cheap while preserving
+// the grid shape (the placeholder reserves exact cell height).
+function LazyVisible({
+  minHeight,
+  children,
+  rootMargin = "200px",
+}: {
+  minHeight: number;
+  children: React.ReactNode;
+  rootMargin?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (!ref.current || visible) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin },
+    );
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [visible, rootMargin]);
+  return (
+    <div
+      ref={ref}
+      className="flex items-end justify-center w-full"
+      style={{ minHeight }}
+    >
+      {visible ? children : null}
+    </div>
+  );
+}
+
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-end bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-      <div
-        className="flex items-end justify-center"
-        style={{ height: CHAR_PX_H + 8 }}
-      >
-        {children}
-      </div>
+      <LazyVisible minHeight={CHAR_PX_H + 8}>{children}</LazyVisible>
       <div className="mt-2 text-xs text-slate-200 font-mono text-center">{label}</div>
     </div>
   );
@@ -98,7 +134,9 @@ function MapCard({ theme, sky }: { theme: MapTheme; sky: SkyMode }) {
           aspectRatio: `${STAGE.width} / ${STAGE.height}`,
         }}
       >
-        <PixelMap theme={theme} sky={sky} />
+        <LazyVisible minHeight={0}>
+          <PixelMap theme={theme} sky={sky} />
+        </LazyVisible>
       </div>
       <div className="text-xs font-mono text-slate-200 text-center">
         {theme} · {sky}
