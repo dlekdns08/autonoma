@@ -15,7 +15,8 @@ import type { MocapClip } from "./clipFormat";
 export interface EncodedClip {
   payloadGzB64: string;
   /** Raw JSON size in bytes, pre-gzip. Matches the server's tolerance
-   *  check — within 512KiB and at least a couple hundred bytes. */
+   *  check — within MAX_PAYLOAD_SIZE_BYTES on the server (currently 4 MB)
+   *  and at least a couple hundred bytes. */
   rawSizeBytes: number;
   compressedSizeBytes: number;
 }
