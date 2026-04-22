@@ -16,32 +16,9 @@ from httpx import ASGITransport, AsyncClient
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the DB engine at a scratch dir + dispose any cached engine.
-
-    The engine is a module-level singleton, so without disposing, later
-    tests get handed the previous test's DB path. Clearing
-    ``_initialized`` forces migrations to re-run against the new file.
-    """
-    from autonoma import config as config_module
-    from autonoma.db import engine as engine_module
-
-    monkeypatch.setattr(config_module.settings, "data_dir", tmp_path)
-    monkeypatch.setattr(config_module.settings, "db_filename", "auth_test.db")
-
-    # Reset engine singleton state.
-    engine_module._engine = None
-    engine_module._initialized = False
-
-    yield tmp_path
-
-    # Tear down any engine this test constructed so the next test starts
-    # clean.
-    engine_module._engine = None
-    engine_module._initialized = False
+# ``fresh_db`` lives in tests/conftest.py so every DB-touching test uses
+# the same scratch-DB recipe. Locally-scoped fixtures here are only for
+# things specific to this file (the HTTP client).
 
 
 @pytest.fixture
