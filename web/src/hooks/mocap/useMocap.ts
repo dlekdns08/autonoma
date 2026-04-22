@@ -233,6 +233,25 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       });
       faceRef.current = face;
       poseRef.current = pose;
+      // Hand landmarker is optional. If the model is missing from
+      // ``public/mediapipe`` (a dev machine that never ran the fetch
+      // with the hand URL added) we log and carry on without hands
+      // rather than failing the whole mocap session.
+      if (opts.hands) {
+        try {
+          const hand = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "GPU" },
+            runningMode: "VIDEO",
+            numHands: 2,
+          });
+          handRef.current = hand;
+        } catch (err) {
+          // Surface a warning so the user knows why fingers aren't
+          // moving, but don't throw — face+pose still work.
+          console.warn("HandLandmarker init failed — fingers disabled", err);
+          handRef.current = null;
+        }
+      }
       solverRef.current = new MocapSolver({ mirror: opts.mirror ?? true });
 
       runningRef.current = true;
@@ -248,6 +267,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         }
         let faceRes: FaceLandmarkerResult | null = null;
         let poseRes: PoseLandmarkerResult | null = null;
+        let handRes: HandLandmarkerResult | null = null;
         try {
           faceRes = faceRef.current?.detectForVideo(video, tsMs) ?? null;
         } catch {
@@ -258,8 +278,19 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         } catch {
           poseRes = null;
         }
+        try {
+          handRes = handRef.current?.detectForVideo(video, tsMs) ?? null;
+        } catch {
+          handRes = null;
+        }
         const tsSec = tsMs / 1000;
-        solverRef.current?.solveInto(faceRes, poseRes, tsSec, sampleRef.current);
+        solverRef.current?.solveInto(
+          faceRes,
+          poseRes,
+          handRes,
+          tsSec,
+          sampleRef.current,
+        );
 
         if (recordingRef.current) {
           appendRawFrame(sampleRef.current, tsSec);

@@ -66,6 +66,12 @@ export default function MocapPage() {
     };
   }, []);
 
+  // Hand-capture toggle. Off by default — the extra HandLandmarker pass
+  // costs a few fps on low-end laptops, and plenty of clips (talk, mood
+  // idle) don't need fingers. Flipping the toggle takes effect on the
+  // next ``start()``; we disable the checkbox while the camera is live.
+  const [handsEnabled, setHandsEnabled] = useState<boolean>(false);
+
   // Recording + preview wiring. ``onMaxDurationReached`` is a ref so
   // ``useMocap`` invokes the *current* ``onStopRecord`` (which reads the
   // latest ``targetVrm``) without re-initialising the whole hook each
@@ -73,6 +79,7 @@ export default function MocapPage() {
   const autoStopRef = useRef<() => void>(() => {});
   const mocap = useMocap({
     mirror: true,
+    hands: handsEnabled,
     maxDurationS,
     onMaxDurationReached: () => autoStopRef.current(),
   });
@@ -359,6 +366,24 @@ export default function MocapPage() {
                     카메라 끄기
                   </button>
                 )}
+                <label
+                  title="손 캡처를 켜면 카메라 성능이 떨어질 수 있어요. 카메라가 꺼진 상태에서만 바꿀 수 있습니다."
+                  className={
+                    "flex items-center gap-1.5 rounded border px-2 py-1 " +
+                    (mocap.status === "running"
+                      ? "cursor-not-allowed border-white/10 bg-slate-950/40 text-white/30"
+                      : "cursor-pointer border-white/15 bg-slate-950/70 text-white/70 hover:border-white/35")
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-fuchsia-500"
+                    checked={handsEnabled}
+                    disabled={mocap.status === "running"}
+                    onChange={(e) => setHandsEnabled(e.target.checked)}
+                  />
+                  손 캡처
+                </label>
                 {mocap.status === "running" && !mocap.recording && stage !== "recorded" && (
                   <button
                     onClick={onRecord}
