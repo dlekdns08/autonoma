@@ -43,19 +43,40 @@ export const MOCAP_BONES = [
   "rightLowerArm",
   "leftHand",
   "rightHand",
-  // Hand fingers — proximal only. See ``solveHands`` in ``solver.ts``
-  // for why we stop at proximal (Intermediate/Distal read as noise at
-  // webcam resolution).
+  // Hand fingers — full articulation (proximal / intermediate / distal
+  // per finger). See ``solveHands`` in ``solver.ts`` for the
+  // per-joint relative-angle solver and calibration table. Thumb has
+  // no Intermediate joint (VRM 1.0 humanoid spec) and we skip thumb
+  // Metacarpal because its rest reference is ambiguous at webcam
+  // resolution.
   "leftThumbProximal",
+  "leftThumbDistal",
   "leftIndexProximal",
+  "leftIndexIntermediate",
+  "leftIndexDistal",
   "leftMiddleProximal",
+  "leftMiddleIntermediate",
+  "leftMiddleDistal",
   "leftRingProximal",
+  "leftRingIntermediate",
+  "leftRingDistal",
   "leftLittleProximal",
+  "leftLittleIntermediate",
+  "leftLittleDistal",
   "rightThumbProximal",
+  "rightThumbDistal",
   "rightIndexProximal",
+  "rightIndexIntermediate",
+  "rightIndexDistal",
   "rightMiddleProximal",
+  "rightMiddleIntermediate",
+  "rightMiddleDistal",
   "rightRingProximal",
+  "rightRingIntermediate",
+  "rightRingDistal",
   "rightLittleProximal",
+  "rightLittleIntermediate",
+  "rightLittleDistal",
 ] as const;
 
 export type MocapBone = (typeof MOCAP_BONES)[number];

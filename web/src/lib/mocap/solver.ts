@@ -193,41 +193,118 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
 
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
+//   0: WRIST
+//   1-4: THUMB       (CMC, MCP, IP, TIP)
+//   5-8: INDEX       (MCP, PIP, DIP, TIP)
+//   9-12: MIDDLE     (MCP, PIP, DIP, TIP)
+//   13-16: RING      (MCP, PIP, DIP, TIP)
+//   17-20: LITTLE    (MCP, PIP, DIP, TIP)
 const WRIST_LM = 0;
-const INDEX_MCP_LM = 5;
-const INDEX_PIP_LM = 6;
 const MIDDLE_MCP_LM = 9;
-const MIDDLE_PIP_LM = 10;
-const RING_MCP_LM = 13;
-const RING_PIP_LM = 14;
-const PINKY_MCP_LM = 17;
-const PINKY_PIP_LM = 18;
-// Thumb landmarks CMC(1) → MCP(2) → IP(3) → TIP(4) are intentionally
-// NOT used — see the note in ``LEFT_FINGERS`` below.
 
-/** (boneName, start-landmark, end-landmark). Each pair spans the bone
- *  whose rotation we're computing — start is the bone's base joint and
- *  end is where the bone points toward at rest.
- *
- *  Thumbs are omitted: our curl metric (angle between MCP→PIP and
- *  wrist→middle-MCP) assumes the finger's rest direction is palm-
- *  forward. That's true for index/middle/ring/little but not the
- *  thumb, which pokes out orthogonal to the palm at rest. Without a
- *  thumb-specific rest reference the thumb would read as ~60°-curled
- *  even in a relaxed hand. We'll add thumbs back with their own
- *  reference once the main four fingers are validated visually. */
-type FingerBone = readonly [MocapBone, number, number];
-const LEFT_FINGERS: readonly FingerBone[] = [
-  ["leftIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
-  ["leftMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
-  ["leftRingProximal", RING_MCP_LM, RING_PIP_LM],
-  ["leftLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
+/** Joint type — selects calibration constants (rest/fist/out-range).
+ *  Different joints have different anatomical ranges: a PIP joint
+ *  flexes to ~90° at a full fist, a DIP to ~70°, a thumb MCP to ~70°
+ *  etc. Sharing the proximal's 50°/90° calibration across them would
+ *  leave intermediate/distal dead for the first half of their range. */
+type JointType =
+  | "proximal"        // MCP joint of index/middle/ring/little
+  | "intermediate"    // PIP joint
+  | "distal"          // DIP joint
+  | "thumbProximal"   // MCP of thumb (measured relative to metacarpal)
+  | "thumbDistal";    // IP of thumb (measured relative to proximal)
+
+const CALIBRATION: Record<
+  JointType,
+  { restRad: number; fistRad: number; outRangeRad: number }
+> = {
+  // Validated empirically with Midori rig. Any mis-tuning shows as
+  // "joint feels stuck at rest" (rest too high) or "joint over-curls
+  // before user closes" (rest too low).
+  proximal: {
+    restRad: (50 * Math.PI) / 180,
+    fistRad: (90 * Math.PI) / 180,
+    outRangeRad: (90 * Math.PI) / 180,
+  },
+  intermediate: {
+    restRad: (10 * Math.PI) / 180,
+    fistRad: (90 * Math.PI) / 180,
+    outRangeRad: (90 * Math.PI) / 180,
+  },
+  distal: {
+    restRad: (10 * Math.PI) / 180,
+    fistRad: (70 * Math.PI) / 180,
+    outRangeRad: (70 * Math.PI) / 180,
+  },
+  thumbProximal: {
+    restRad: (20 * Math.PI) / 180,
+    fistRad: (70 * Math.PI) / 180,
+    outRangeRad: (60 * Math.PI) / 180,
+  },
+  thumbDistal: {
+    restRad: (10 * Math.PI) / 180,
+    fistRad: (60 * Math.PI) / 180,
+    outRangeRad: (50 * Math.PI) / 180,
+  },
+};
+
+/** Parent direction reference for a joint's curl metric.
+ *  - ``"palm"`` — use palm-forward (wrist→middle-MCP). Used by
+ *    non-thumb proximals because their rest-pose direction aligns with
+ *    the palm's long axis.
+ *  - ``[from, to]`` — use a specific landmark segment as the parent
+ *    direction. Used for every joint below proximal (intermediate /
+ *    distal) and for the thumb (whose rest-pose is orthogonal to the
+ *    palm, so the parent-segment reference is more accurate). */
+type ParentRef = "palm" | readonly [number, number];
+
+/** [bone, parent-dir, child-start, child-end, joint-type]. Each entry
+ *  computes ``curl = acos(dot(parent_dir, child_dir))`` and applies
+ *  the calibrated rotation to ``bone`` around local Z. */
+type FingerJoint = readonly [
+  bone: MocapBone,
+  parent: ParentRef,
+  childFrom: number,
+  childTo: number,
+  joint: JointType,
 ];
-const RIGHT_FINGERS: readonly FingerBone[] = [
-  ["rightIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
-  ["rightMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
-  ["rightRingProximal", RING_MCP_LM, RING_PIP_LM],
-  ["rightLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
+
+const LEFT_JOINTS: readonly FingerJoint[] = [
+  // Thumb (2 of 3 segments — thumbMetacarpal skipped; see module doc)
+  ["leftThumbProximal",      [1, 2], 2, 3, "thumbProximal"],
+  ["leftThumbDistal",        [2, 3], 3, 4, "thumbDistal"],
+  // Index
+  ["leftIndexProximal",      "palm", 5, 6, "proximal"],
+  ["leftIndexIntermediate",  [5, 6], 6, 7, "intermediate"],
+  ["leftIndexDistal",        [6, 7], 7, 8, "distal"],
+  // Middle
+  ["leftMiddleProximal",     "palm", 9, 10, "proximal"],
+  ["leftMiddleIntermediate", [9, 10], 10, 11, "intermediate"],
+  ["leftMiddleDistal",       [10, 11], 11, 12, "distal"],
+  // Ring
+  ["leftRingProximal",       "palm", 13, 14, "proximal"],
+  ["leftRingIntermediate",   [13, 14], 14, 15, "intermediate"],
+  ["leftRingDistal",         [14, 15], 15, 16, "distal"],
+  // Little
+  ["leftLittleProximal",     "palm", 17, 18, "proximal"],
+  ["leftLittleIntermediate", [17, 18], 18, 19, "intermediate"],
+  ["leftLittleDistal",       [18, 19], 19, 20, "distal"],
+];
+const RIGHT_JOINTS: readonly FingerJoint[] = [
+  ["rightThumbProximal",      [1, 2], 2, 3, "thumbProximal"],
+  ["rightThumbDistal",        [2, 3], 3, 4, "thumbDistal"],
+  ["rightIndexProximal",      "palm", 5, 6, "proximal"],
+  ["rightIndexIntermediate",  [5, 6], 6, 7, "intermediate"],
+  ["rightIndexDistal",        [6, 7], 7, 8, "distal"],
+  ["rightMiddleProximal",     "palm", 9, 10, "proximal"],
+  ["rightMiddleIntermediate", [9, 10], 10, 11, "intermediate"],
+  ["rightMiddleDistal",       [10, 11], 11, 12, "distal"],
+  ["rightRingProximal",       "palm", 13, 14, "proximal"],
+  ["rightRingIntermediate",   [13, 14], 14, 15, "intermediate"],
+  ["rightRingDistal",         [14, 15], 15, 16, "distal"],
+  ["rightLittleProximal",     "palm", 17, 18, "proximal"],
+  ["rightLittleIntermediate", [17, 18], 18, 19, "intermediate"],
+  ["rightLittleDistal",       [18, 19], 19, 20, "distal"],
 ];
 
 // Pre-allocated scratch vectors / quaternions used by ``solveHands``.
@@ -235,27 +312,15 @@ const RIGHT_FINGERS: readonly FingerBone[] = [
 // allocations in steady state.
 const _hWrist = new THREE.Vector3();
 const _hMid = new THREE.Vector3();
-const _hMcp = new THREE.Vector3();
-const _hPip = new THREE.Vector3();
-const _hDir = new THREE.Vector3();
+const _hParentA = new THREE.Vector3();
+const _hParentB = new THREE.Vector3();
+const _hChildA = new THREE.Vector3();
+const _hChildB = new THREE.Vector3();
+const _parentDir = new THREE.Vector3();
+const _childDir = new THREE.Vector3();
 const _palmY = new THREE.Vector3();
 const _curlEuler = new THREE.Euler();
 const _handQ = new THREE.Quaternion();
-
-// Curl range calibration. Empirically ``Math.acos(dot(MCP→PIP,
-// wrist→middleMCP))`` doesn't map 0°→straight / 90°→fist because:
-//   - At an open "rest" hand the MAX finger splays ~50° from palm-
-//     forward (pinky naturally abducts; fingers aren't perfectly
-//     parallel to the palm midline).
-//   - At a full fist the max tops out around 90° (MediaPipe's 2D
-//     dominance compresses the 3D curl into image-plane angles).
-// Without remapping, the output bone rotation at rest is already a
-// visible 50° and the full-fist delta is only 40° — looks subtle.
-// We normalise [REST..FIST] → [0..OUT_RANGE] so open hand reads as
-// identity and fist reads as a clean 90° bone rotation.
-const CURL_REST_RAD = (50 * Math.PI) / 180;
-const CURL_FIST_RAD = (90 * Math.PI) / 180;
-const CURL_OUT_RANGE_RAD = (90 * Math.PI) / 180;
 
 export interface SolverOptions {
   /** Mirror the webcam on horizontal axis so the user's left hand drives
@@ -492,41 +557,32 @@ export class MocapSolver {
     }
   }
 
-  /** Curl-only finger solver. Computes one scalar — the angle between
-   *  the finger's MCP→PIP segment and the palm-forward axis
-   *  (wrist→middle-MCP) — then writes that as a positive rotation
-   *  around the VRM bone's local Z axis.
+  /** Full-articulation finger solver. For each of 14 finger joints per
+   *  hand (proximal + intermediate + distal for index/middle/ring/
+   *  little, plus proximal + distal for thumb) we compute:
    *
-   *  Why curl-only instead of full 3D rotation:
-   *  - The palm-local X/Z axes we derived from landmarks don't reliably
-   *    line up with the VRM rig's hand-bone local frame (different
-   *    exporters, different resting palm orientation). Full 3D
-   *    ``setFromUnitVectors`` in the wrong frame silently produces zero
-   *    visible motion because the rotation vanishes when projected onto
-   *    the wrong axes.
-   *  - Curl angle is axis-independent — it's a scalar derived from a
-   *    dot product, so it's robust to every frame convention.
+   *    curl = acos(dot(parent_direction, child_direction))
    *
-   *  Why +Z specifically (validated with the finger-axis test harness
-   *  in ``MocapPreview`` on a VRoid-exported rig):
-   *  - Local +X points along the finger (rest direction toward tip), so
-   *    rotation around X is an invisible twist on cylindrical geometry.
-   *  - Local Y is the abduction/adduction axis — rotation around Y
-   *    swings the finger sideways (pinky-ward for the left hand),
-   *    which is NOT flexion.
-   *  - Local Z is the flexion/extension axis; +Z brings the finger tip
-   *    from forward (+X) toward the palm-ward direction (+Y-ish),
-   *    which is anatomical curl.
+   *  where ``parent_direction`` is either the palm-forward axis
+   *  (wrist→middle-MCP, for non-thumb proximals) or the parent bone's
+   *  landmark segment (for every other joint). Because VRM bone
+   *  transforms are stored parent-relative, using the parent's current
+   *  direction as the rest reference means our per-joint rotation
+   *  composes naturally through the finger chain.
    *
-   *  Chirality: we expected three-vrm's normalized humanoid to mirror
-   *  the finger bones' local axes per hand so both sides could use the
-   *  same sign, but empirically (Midori rig) left and right hands
-   *  share the same Z direction — +Z flexes the left hand but
-   *  hyperextends the right. We negate for the right hand to compensate.
+   *  Per-joint-type calibration (see ``CALIBRATION``) normalises the
+   *  raw curl range to a visible bone rotation — PIP/DIP rest near 10°
+   *  while proximal rests near 50°, so a single global remap would
+   *  leave intermediate/distal dead through half their range.
    *
-   *  Trade-off: fingers can't spread apart (abduction) — only flex.
-   *  That's fine for the headline "open hand / closed fist / point"
-   *  vocabulary; we can layer in spread once curl is visually correct.
+   *  Axis + chirality: all joints rotate around the VRM bone's local Z
+   *  (validated with the finger-axis test harness on VRoid rigs — X is
+   *  an invisible twist, Y is abduction, Z is flexion). Right hand
+   *  uses the opposite sign — empirically the normalized humanoid
+   *  doesn't mirror finger-bone local axes per-side.
+   *
+   *  Trade-off: still curl-only — no finger spread (abduction) and no
+   *  thumb opposition. Those need explicit 2nd-axis rotation work.
    */
   private solveOneHand(
     lm: { x: number; y: number; z: number }[],
@@ -537,41 +593,53 @@ export class MocapSolver {
     _hWrist.set(lm[WRIST_LM].x, lm[WRIST_LM].y, lm[WRIST_LM].z);
     _hMid.set(lm[MIDDLE_MCP_LM].x, lm[MIDDLE_MCP_LM].y, lm[MIDDLE_MCP_LM].z);
 
-    // Palm forward direction (wrist → middle MCP). This is what we
-    // measure each finger's curl against.
+    // Palm-forward direction (wrist → middle-MCP). Cached so every
+    // "palm"-referenced proximal can read it without recomputation.
     _palmY.copy(_hMid).sub(_hWrist);
     if (_palmY.lengthSq() < 1e-10) return;
     _palmY.normalize();
 
-    const fingers = vrmIsLeft ? LEFT_FINGERS : RIGHT_FINGERS;
-    // See docstring "Chirality" section — right hand rotates the opposite
-    // way around the local Z axis on this rig family.
+    const joints = vrmIsLeft ? LEFT_JOINTS : RIGHT_JOINTS;
+    // Right hand's local Z is flipped relative to the left on VRoid-
+    // family rigs — see docstring "chirality" paragraph.
     const curlSign = vrmIsLeft ? 1 : -1;
-    for (const [boneName, baseIdx, tipIdx] of fingers) {
-      _hMcp.set(lm[baseIdx].x, lm[baseIdx].y, lm[baseIdx].z);
-      _hPip.set(lm[tipIdx].x, lm[tipIdx].y, lm[tipIdx].z);
-      _hDir.copy(_hPip).sub(_hMcp);
-      if (_hDir.lengthSq() < 1e-10) continue;
-      _hDir.normalize();
 
-      // Cosine of angle between finger direction and palm-forward.
-      // Raw curl ranges empirically ~50° (open rest) → ~90° (full
-      // fist); we normalise that span to a visible 0° → 90° bone
-      // rotation. See ``CURL_REST_RAD`` comment.
-      const cos = Math.max(-1, Math.min(1, _hDir.dot(_palmY)));
+    for (const [boneName, parent, childFrom, childTo, jointType] of joints) {
+      // --- Parent direction (rest reference for this joint) ---
+      let parentVec: THREE.Vector3;
+      if (parent === "palm") {
+        parentVec = _palmY;
+      } else {
+        const [pFrom, pTo] = parent;
+        _hParentA.set(lm[pFrom].x, lm[pFrom].y, lm[pFrom].z);
+        _hParentB.set(lm[pTo].x, lm[pTo].y, lm[pTo].z);
+        _parentDir.copy(_hParentB).sub(_hParentA);
+        if (_parentDir.lengthSq() < 1e-10) continue;
+        _parentDir.normalize();
+        parentVec = _parentDir;
+      }
+
+      // --- Child direction (this bone's actual direction) ---
+      _hChildA.set(lm[childFrom].x, lm[childFrom].y, lm[childFrom].z);
+      _hChildB.set(lm[childTo].x, lm[childTo].y, lm[childTo].z);
+      _childDir.copy(_hChildB).sub(_hChildA);
+      if (_childDir.lengthSq() < 1e-10) continue;
+      _childDir.normalize();
+
+      // --- Curl angle, calibrated + signed ---
+      const cos = Math.max(-1, Math.min(1, parentVec.dot(_childDir)));
       const curl = Math.acos(cos);
+      // Track peak across ALL joints for the "is anything moving?"
+      // diagnostic. Proximals dominate at open/close; intermediate/
+      // distal reach similar magnitudes only at full fist.
       this.latestFingerMaxCurl = Math.max(this.latestFingerMaxCurl, curl);
 
-      const norm = Math.max(
-        0,
-        Math.min(1, (curl - CURL_REST_RAD) / (CURL_FIST_RAD - CURL_REST_RAD)),
-      );
-      const boneRot = norm * CURL_OUT_RANGE_RAD * curlSign;
+      const cal = CALIBRATION[jointType];
+      const span = cal.fistRad - cal.restRad;
+      const norm =
+        span > 1e-6 ? Math.max(0, Math.min(1, (curl - cal.restRad) / span)) : 0;
+      const boneRot = norm * cal.outRangeRad * curlSign;
 
-      // Rotation around local Z = flexion/extension axis. The sign is
-      // applied per-hand above (``curlSign``) because left and right
-      // hands on this rig share the same axis direction rather than
-      // being mirrored.
       _curlEuler.set(0, 0, boneRot, "XYZ");
       _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(

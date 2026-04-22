@@ -44,19 +44,40 @@ ALLOWED_BONES: frozenset[str] = frozenset(
         "rightLowerArm",
         "leftHand",
         "rightHand",
-        # Finger proximal joints (one per finger, each hand). Recorded
-        # from MediaPipe HandLandmarker — webcam doesn't have the spatial
-        # resolution for Intermediate/Distal to read better than identity.
+        # Finger bones — full articulation (proximal + intermediate +
+        # distal). Driven from MediaPipe HandLandmarker via the
+        # "relative angle at each joint" metric in ``solver.ts``. The
+        # thumb skips Intermediate (VRM spec has only Metacarpal /
+        # Proximal / Distal for thumb) and we also skip Metacarpal for
+        # now because its rest reference is ill-defined on a webcam.
         "leftThumbProximal",
+        "leftThumbDistal",
         "leftIndexProximal",
+        "leftIndexIntermediate",
+        "leftIndexDistal",
         "leftMiddleProximal",
+        "leftMiddleIntermediate",
+        "leftMiddleDistal",
         "leftRingProximal",
+        "leftRingIntermediate",
+        "leftRingDistal",
         "leftLittleProximal",
+        "leftLittleIntermediate",
+        "leftLittleDistal",
         "rightThumbProximal",
+        "rightThumbDistal",
         "rightIndexProximal",
+        "rightIndexIntermediate",
+        "rightIndexDistal",
         "rightMiddleProximal",
+        "rightMiddleIntermediate",
+        "rightMiddleDistal",
         "rightRingProximal",
+        "rightRingIntermediate",
+        "rightRingDistal",
         "rightLittleProximal",
+        "rightLittleIntermediate",
+        "rightLittleDistal",
     ]
 )
 
@@ -78,11 +99,13 @@ ALLOWED_EXPRESSIONS: frozenset[str] = frozenset(
     ]
 )
 
-# Decompressed (pre-JSON) size cap. With the v2 bone set (24 tracked
-# bones: 14 body + 10 finger-proximal) a full 60-second clip at 30fps is
-# ~1.7 MB un-gzipped. 2 MB gives a little headroom without letting
-# abusers plant multi-megabyte blobs.
-MAX_PAYLOAD_SIZE_BYTES = 2 * 1024 * 1024
+# Decompressed (pre-JSON) size cap. With the v3 bone set (42 tracked
+# bones: 14 body + 28 finger — every proximal/intermediate/distal joint
+# of both hands) a full 60-second clip at 30fps is ~3.4 MB un-gzipped.
+# 4 MB gives headroom for the occasional verbose expression track.
+# Post-gzip transfer is typically 5-10% of this; the cap is purely an
+# anti-abuse guard.
+MAX_PAYLOAD_SIZE_BYTES = 4 * 1024 * 1024
 
 # Maximum clip length, in seconds. Shared with the recorder frontend via
 # ``/api/mocap/triggers`` so the client stops capture before it produces
