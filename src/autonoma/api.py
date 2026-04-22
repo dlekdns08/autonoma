@@ -41,10 +41,13 @@ import zipfile
 from fastapi import (
     Depends,
     FastAPI,
+    File,
+    Form,
     HTTPException,
     Query,
     Request,
     Response as FastAPIResponse,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status as http_status,
@@ -396,6 +399,8 @@ FORWARDED_EVENTS = [
     "debate.resolved",
     # Mocap — global character binding changes (broadcast site-wide).
     "mocap.bindings.updated",
+    # Voice — global character voice-binding changes (broadcast site-wide).
+    "voice.bindings.updated",
 ]
 
 
@@ -3481,6 +3486,271 @@ async def mocap_delete_binding(
         trigger_kind=trigger_kind,
         trigger_value=trigger_value,
         clip_id=None,
+        removed=True,
+    )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+# ── /api/voice/* ──────────────────────────────────────────────────────
+#
+# OmniVoice reference-audio profiles + per-VRM voice bindings. Each
+# profile is a short reference clip (WAV preferred) + its transcript;
+# the TTS worker reads the binding at speech time and feeds the profile
+# to the zero-shot synthesizer.
+#
+# Binding mutations emit ``voice.bindings.updated`` on the shared bus
+# so every connected viewer re-resolves the character's voice.
+
+from autonoma import voice as voice_service  # noqa: E402  — grouped at feature boundary
+from autonoma.voice.store import IntegrityError as _VoiceIntegrityError  # noqa: E402
+
+
+MAX_VOICE_REF_BYTES = 4 * 1024 * 1024  # 4 MB — plenty for 30s PCM16 WAV
+ALLOWED_VOICE_MIMES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "audio/webm",
+    "audio/ogg",
+    "audio/mpeg",
+    "audio/mp3",
+}
+
+
+def _infer_duration_from_wav(data: bytes) -> float:
+    """Best-effort duration estimate for WAV bytes. Returns 0.0 on any
+    parse failure — the field is informational only (displayed in the
+    admin UI) so we never block uploads over it."""
+    try:
+        import io
+        import wave
+
+        with wave.open(io.BytesIO(data), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            return frames / float(rate) if rate else 0.0
+    except Exception:
+        return 0.0
+
+
+@app.get("/api/voice-profiles")
+async def voice_list_profiles(
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    profiles = await voice_service.list_profile_summaries()
+    return {"profiles": [p.to_dict() for p in profiles]}
+
+
+@app.post("/api/voice-profiles", status_code=http_status.HTTP_201_CREATED)
+async def voice_create_profile(
+    name: str = Form(...),
+    ref_text: str = Form(...),
+    ref_audio: UploadFile = File(...),
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Upload a reference audio sample + its transcript.
+
+    Multipart form: ``name``, ``ref_text``, ``ref_audio`` (audio file).
+    """
+    name = (name or "").strip()
+    ref_text = (ref_text or "").strip()
+    if not (1 <= len(name) <= 128):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name"
+        )
+    if not (1 <= len(ref_text) <= 2048):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_ref_text"
+        )
+
+    mime = (ref_audio.content_type or "").lower()
+    if mime and mime not in ALLOWED_VOICE_MIMES:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="unsupported_audio_mime",
+        )
+
+    data = await ref_audio.read()
+    if not data:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="empty_audio"
+        )
+    if len(data) > MAX_VOICE_REF_BYTES:
+        raise HTTPException(
+            status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="audio_too_large",
+        )
+
+    duration = _infer_duration_from_wav(data) if "wav" in (mime or "") else 0.0
+    summary = await voice_service.create_profile(
+        owner_user_id=user.id,
+        name=name,
+        ref_text=ref_text,
+        ref_audio=data,
+        ref_audio_mime=mime or "audio/wav",
+        duration_s=duration,
+    )
+    return {"profile": summary.to_dict()}
+
+
+@app.get("/api/voice-profiles/{profile_id}/audio")
+async def voice_get_profile_audio(
+    profile_id: str,
+    _user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    """Serve the reference audio bytes for in-browser preview."""
+    result = await voice_service.get_profile_audio(profile_id)
+    if result is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
+        )
+    data, mime = result
+    return FastAPIResponse(content=data, media_type=mime)
+
+
+@app.delete(
+    "/api/voice-profiles/{profile_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def voice_delete_profile(
+    profile_id: str,
+    user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    summary = await voice_service.get_profile_summary(profile_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
+        )
+    if summary.owner_user_id != user.id and user.role != "admin":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
+        )
+    if await voice_service.profile_is_bound(profile_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="profile_in_use"
+        )
+    try:
+        ok = await voice_service.delete_profile(profile_id)
+    except _VoiceIntegrityError:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="profile_in_use"
+        )
+    if not ok:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
+        )
+    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/voice-profiles/{profile_id}/test")
+async def voice_test_profile(
+    profile_id: str,
+    payload: dict[str, Any],
+    _user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    """Synthesize ``text`` with the given profile and return WAV bytes.
+
+    Pure round-trip: the result is streamed back to the browser for a
+    quick listen. No events, no worker, no budget — this is explicitly a
+    test endpoint for the admin UI.
+    """
+    text_in = str(payload.get("text") or "").strip()
+    if not (1 <= len(text_in) <= 500):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_text"
+        )
+    profile = await voice_service.get_profile(profile_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
+        )
+
+    from autonoma.tts import TTSConfig, TTSError, create_tts_client
+
+    # Force the OmniVoice client for tests regardless of settings.tts_provider,
+    # so admins can audition voices even with tts_enabled=False.
+    client = create_tts_client(TTSConfig(provider="omnivoice"))
+    buf = bytearray()
+    try:
+        async for chunk in client.synthesize(
+            text=text_in,
+            voice=profile.id,
+            ref_audio=profile.ref_audio,
+            ref_audio_mime=profile.ref_audio_mime,
+            ref_text=profile.ref_text,
+        ):
+            buf.extend(chunk)
+    except TTSError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"tts_error:{exc}",
+        )
+    if not buf:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="empty_synthesis",
+        )
+    return FastAPIResponse(content=bytes(buf), media_type="audio/wav")
+
+
+@app.get("/api/voice-bindings")
+async def voice_list_bindings(
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    bindings = await voice_service.list_bindings()
+    return {"bindings": [b.to_dict() for b in bindings]}
+
+
+@app.put("/api/voice-bindings")
+async def voice_upsert_binding(
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    vrm_file = str(payload.get("vrm_file") or "").strip()
+    profile_id = str(payload.get("profile_id") or "").strip()
+
+    if not is_known_vrm(vrm_file):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
+        )
+    profile = await voice_service.get_profile_summary(profile_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
+        )
+
+    binding = await voice_service.upsert_binding(
+        vrm_file=vrm_file, profile_id=profile_id, updated_by=user.id
+    )
+    await bus.emit(
+        "voice.bindings.updated",
+        vrm_file=vrm_file,
+        profile_id=profile_id,
+        removed=False,
+    )
+    return {"binding": binding.to_dict()}
+
+
+@app.delete(
+    "/api/voice-bindings", status_code=http_status.HTTP_204_NO_CONTENT
+)
+async def voice_delete_binding(
+    vrm_file: str = Query(...),
+    _user: User = Depends(require_active_user),
+) -> FastAPIResponse:
+    if not is_known_vrm(vrm_file):
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
+        )
+    ok = await voice_service.delete_binding(vrm_file=vrm_file)
+    if not ok:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found"
+        )
+    await bus.emit(
+        "voice.bindings.updated",
+        vrm_file=vrm_file,
+        profile_id=None,
         removed=True,
     )
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
