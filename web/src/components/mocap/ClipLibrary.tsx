@@ -15,6 +15,8 @@ interface Props {
   loading: boolean;
   selectedClipId: string | null;
   sourceVrmFilter?: string;
+  currentUserId: string;
+  isAdmin: boolean;
   onSelect: (clipId: string) => void;
   onRename: (clipId: string, name: string) => Promise<boolean>;
   onDelete: (clipId: string) => Promise<boolean>;
@@ -25,6 +27,8 @@ export default function ClipLibrary({
   loading,
   selectedClipId,
   sourceVrmFilter,
+  currentUserId,
+  isAdmin,
   onSelect,
   onRename,
   onDelete,
@@ -59,6 +63,7 @@ export default function ClipLibrary({
       {visible.map((clip) => {
         const isSel = clip.id === selectedClipId;
         const isEditing = editingId === clip.id;
+        const canEdit = clip.owner_user_id === currentUserId || isAdmin;
         return (
           <li
             key={clip.id}
@@ -101,31 +106,35 @@ export default function ClipLibrary({
             <span className="text-white/40">
               {clip.duration_s.toFixed(1)}s · {clip.source_vrm}
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setEditingId(clip.id);
-                setDraftName(clip.name);
-              }}
-              disabled={busyId === clip.id}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-white/50 hover:border-white/25 hover:text-white"
-            >
-              이름
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!confirm(`"${clip.name}" 클립을 삭제할까요?`)) return;
-                setBusyId(clip.id);
-                const ok = await onDelete(clip.id);
-                setBusyId(null);
-                if (!ok) alert("삭제 실패 — 바인딩에서 사용 중일 수 있습니다.");
-              }}
-              disabled={busyId === clip.id}
-              className="rounded border border-rose-500/30 px-1.5 py-0.5 text-rose-300 hover:border-rose-500/60"
-            >
-              삭제
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingId(clip.id);
+                  setDraftName(clip.name);
+                }}
+                disabled={busyId === clip.id}
+                className="rounded border border-white/10 px-1.5 py-0.5 text-white/50 hover:border-white/25 hover:text-white"
+              >
+                이름
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!confirm(`"${clip.name}" 클립을 삭제할까요?`)) return;
+                  setBusyId(clip.id);
+                  const ok = await onDelete(clip.id);
+                  setBusyId(null);
+                  if (!ok) alert("삭제 실패 — 바인딩에서 사용 중일 수 있습니다.");
+                }}
+                disabled={busyId === clip.id}
+                className="rounded border border-rose-500/30 px-1.5 py-0.5 text-rose-300 hover:border-rose-500/60"
+              >
+                삭제
+              </button>
+            )}
           </li>
         );
       })}
