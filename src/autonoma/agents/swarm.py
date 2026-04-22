@@ -243,10 +243,13 @@ class AgentSwarm:
         if live.voice_id:
             agent.voice_id = live.voice_id
         else:
-            # First time this character speaks: pick now, store on live so
-            # finish_project persists it.
-            voice = agent._resolve_voice()
-            live.voice_id = voice
+            # First time this character speaks: resolve now, store on
+            # live so finish_project persists the profile id. No binding
+            # for this VRM yet → leave voice_id blank; the next speech
+            # will re-resolve and pick up a binding added after spawn.
+            voice, _vrm = await agent._resolve_voice()
+            if voice:
+                live.voice_id = voice
         # Apply persisted growth: level + total XP carry over, stats carry over
         # (they hold lifetime averages). The per-run counters (tasks_completed
         # etc. on AgentStats) intentionally restart at 0 — AgentStats tracks
