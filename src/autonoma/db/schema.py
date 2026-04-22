@@ -477,6 +477,16 @@ mocap_clips = Table(
         nullable=False,
         server_default=func.current_timestamp(),
     ),
+    # Playback-fetch timestamp used by the orphan-clip sweeper (admin
+    # query only — never auto-delete). Seeded to the current timestamp
+    # at insert time, bumped by ``get_clip_payload`` on every successful
+    # read, and carried forward by migration 010 for pre-existing rows.
+    Column(
+        "last_accessed_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
 )
 
 
