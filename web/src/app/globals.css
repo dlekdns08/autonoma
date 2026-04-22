@@ -56,6 +56,21 @@
   /* Legacy compat */
   --background: var(--bg-void);
   --foreground:  var(--text-primary);
+
+  /* ── Z-index scale ───────────────────────────────────────────────
+   * Single source of truth. Reference via ``z-[var(--z-modal)]`` in
+   * JSX (the Tailwind arbitrary-value syntax) so a layering change
+   * in one place propagates everywhere. Gaps in the numbers leave
+   * room to slot new layers without renumbering all callers.
+   */
+  --z-base:       0;
+  --z-stage:      10;
+  --z-overlay:    20;
+  --z-flash:      30;
+  --z-subtitle:   40;
+  --z-toast:      50;
+  --z-modal:      60;
+  --z-modal-top:  70;
 }
 
 /* ── Light theme ───────────────────────────────────────────────────── */
@@ -321,4 +336,39 @@ body {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+/* ── Keyboard focus ring ───────────────────────────────────────────── *
+ * Unified default so every focusable element has a visible indicator
+ * when the user navigates with Tab. Uses ``:focus-visible`` so mouse
+ * clicks don't trigger a ring (which would be noisy). Components that
+ * define their own Tailwind focus utilities — e.g.
+ * ``focus-visible:ring-cyan-400/60`` — still win via higher class
+ * specificity, so this rule fills the gap for elements that currently
+ * have no focus treatment at all.
+ */
+:focus-visible {
+  outline: 2px solid var(--violet-400, #a78bfa);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────── *
+ * A single global override so individual components don't have to opt
+ * in. Covers both hand-rolled keyframe utilities above and Tailwind's
+ * transition/animate utilities. Ticker-style animations (float,
+ * spin-slow, speaking-ring, etc.) are force-stopped instead of sped
+ * up — users in reduced-motion mode want stillness, not "0.01s infinite".
+ * Visibility and state changes still happen; only the animation tweens
+ * are suppressed.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }
