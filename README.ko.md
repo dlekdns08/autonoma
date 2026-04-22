@@ -168,6 +168,47 @@ VRM 메타데이터는 JSON 한 파일에 모여 있습니다. 엔트리 추가 
 에이전트는 이름의 djb2 해시로 VRM에 결정론적으로 배정되므로, 같은
 에이전트는 세션을 바꿔도 항상 같은 캐릭터로 나옵니다.
 
+## Harness 엔지니어링
+
+각 스웜 런의 런타임 정책 — 라우팅, 루프 상한, 결정 전략, 안전
+레벨, 무드 전이 등 — 은 `harness_policies` 테이블에 저장되며
+매 `start` 명령마다 해석됩니다. 사용자는 Idle 화면의 ⚙ 패널에서
+프리셋을 고르거나 특정 섹션만 오버라이드할 수 있고, 병합된 정책은
+스웜이 부팅되기 전에 검증됩니다.
+
+- **프리셋** — 사용자별 프리셋 + 시스템 기본값. CRUD는
+  `/api/harness/presets`. 기본값은 읽기 전용이며, 사용자는 조정값을
+  새 프리셋으로 저장할 수 있습니다.
+- **검증** — Pydantic 위에 두 개의 직교하는 레이어:
+  위험한 조합(예: `code_execution=disabled` +
+  `harness_enforcement=off`)은 전체 사용자 거부, 관리자 전용 값
+  (예: `safety.enforcement_level=off`, `loop.max_rounds>200`)은
+  비관리자 거부. 상세는
+  [`src/autonoma/harness/validation.py`](./src/autonoma/harness/validation.py).
+- **옵저버빌리티** — 각 런은 `session_id`, `preset_id`, 오버라이드된
+  섹션, 유효 정책, 전략 선택을 기록합니다. 조회는
+  `GET /api/session/{id}/metadata`, 전역 롤업은
+  `GET /api/harness/metrics` (관리자). 런 종료 시
+  `session.metadata`로 WS 이벤트 버스에 발행됩니다.
+- **UI용 스키마** — `GET /api/harness/schema`는 런타임에
+  `HarnessPolicyContent`를 내부 조사해 필드별 타입 / 기본값 /
+  enum 옵션 / 숫자 범위를 반환합니다. Pydantic 모델에 `Literal`
+  값을 추가하면 프론트엔드 폼이 TS 변경 없이 자동으로 반영합니다.
+
+### 배포 관련 주의
+
+- 마이그레이션은 버전 게이트가 있어 기동 시 자동 적용됩니다
+  ([`src/autonoma/db/engine.py`](./src/autonoma/db/engine.py) 참고).
+  `harness_policies`는 마이그레이션 003이며, 프레임워크는
+  `create_all(checkfirst=True)` + `schema_version` 카운터를 써서
+  이미 채워진 DB에 프로세스를 다시 띄워도 안전한 no-op입니다.
+- 프로덕션에서는 `AUTONOMA_SESSION_SECRET`을 설정하세요. 없으면
+  쿠키 세션이 프로세스마다 바뀌는 임시 시크릿으로 서명되어
+  재시작할 때마다 모든 사용자가 로그아웃됩니다.
+- 관리자 전용 harness 정책은 `role=admin`인 쿠키 세션 사용자가
+  필요합니다. 레거시 WS 관리자 비밀번호 경로도 해당 연결의
+  `start` 명령에 한해 `is_admin`을 부여합니다.
+
 ## Docker 배포
 
 ```bash
@@ -183,6 +224,8 @@ docker compose up -d
 
 ```bash
 uv run pytest tests/ -v
+# 영문/한글 README의 구조적 일치 검사:
+python scripts/check_readme_drift.py
 ```
 
 ## 라이선스
