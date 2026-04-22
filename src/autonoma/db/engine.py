@@ -212,6 +212,26 @@ async def _migration_007_voice_fs_storage(conn) -> None:
         ))
 
 
+async def _migration_008_agent_journal(conn) -> None:
+    """Create agent_journal table (feature #5 — persistent agent identity).
+
+    Keyed by character_uuid so revived characters see their own history.
+    Uses ``create_all(checkfirst=True)`` for idempotency.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
+async def _migration_009_personas(conn) -> None:
+    """Create personas table (feature #6 — persona marketplace).
+
+    A persona is an exportable bundle: bones, voice profile id, VRM
+    preference, and a free-form ``prompt_style`` string. Kept in a
+    separate table from ``characters`` because personas are templates
+    shared between sessions; characters are instances that live in runs.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -220,6 +240,8 @@ MIGRATIONS: list[Migration] = [
     (5, _migration_005_mocap),
     (6, _migration_006_voice),
     (7, _migration_007_voice_fs_storage),
+    (8, _migration_008_agent_journal),
+    (9, _migration_009_personas),
 ]
 
 
