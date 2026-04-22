@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useMemo, useRef } from "react";
 import type { EventLogEntry } from "@/lib/types";
+import { payloadOf } from "@/lib/events";
 
 const EVENT_STYLES: Record<string, { icon: string; color: string }> = {
   "agent.spawned": { icon: "★", color: "text-green-400" },
@@ -29,41 +30,70 @@ const EVENT_STYLES: Record<string, { icon: string; color: string }> = {
 
 function formatEvent(entry: EventLogEntry): { icon: string; color: string; text: string } {
   const style = EVENT_STYLES[entry.event] || { icon: "•", color: "text-white/40" };
-  const d = entry.data;
 
   switch (entry.event) {
-    case "agent.spawned":
+    case "agent.spawned": {
+      const d = payloadOf(entry, "agent.spawned")!;
       return { ...style, text: `New agent: ${d.emoji ?? "🤖"} ${d.name ?? "unknown"} (${d.role ?? "agent"})` };
-    case "agent.speech":
+    }
+    case "agent.speech": {
+      const d = payloadOf(entry, "agent.speech")!;
       return { ...style, text: `${d.agent ?? "?"}: ${d.text ?? ""}` };
-    case "agent.level_up":
+    }
+    case "agent.level_up": {
+      const d = payloadOf(entry, "agent.level_up")!;
       return { ...style, text: `${d.agent ?? "?"} LEVELED UP to Lv${d.level ?? "?"}!` };
-    case "agent.dream":
+    }
+    case "agent.dream": {
+      const d = payloadOf(entry, "agent.dream")!;
       return { icon: d.dream_type === "nightmare" ? "👻" : "💤", color: style.color, text: `${d.agent ?? "?"} dreams: ${d.dream ?? ""}` };
-    case "task.completed":
+    }
+    case "task.completed": {
+      const d = payloadOf(entry, "task.completed")!;
       return { ...style, text: `${d.agent ?? "?"} done: ${d.title ?? ""}` };
-    case "file.created":
+    }
+    case "file.created": {
+      const d = payloadOf(entry, "file.created")!;
       return { ...style, text: `${d.agent ?? "?"} → ${d.path ?? ""}` };
-    case "world.event":
+    }
+    case "world.event": {
+      const d = payloadOf(entry, "world.event")!;
       return { ...style, text: `WORLD EVENT: ${d.title ?? ""}` };
-    case "guild.formed":
-      return { ...style, text: `Guild formed: ${d.name ?? "?"} (${(d.members as string[] | undefined)?.join(", ") ?? ""})` };
-    case "campfire.complete":
+    }
+    case "guild.formed": {
+      const d = payloadOf(entry, "guild.formed")!;
+      return { ...style, text: `Guild formed: ${d.name ?? "?"} (${d.members?.join(", ") ?? ""})` };
+    }
+    case "campfire.complete": {
+      const d = payloadOf(entry, "campfire.complete")!;
       return { ...style, text: `Campfire! ${d.stories ?? 0} stories shared~` };
-    case "fortune.given":
+    }
+    case "fortune.given": {
+      const d = payloadOf(entry, "fortune.given")!;
       return { ...style, text: `${d.agent ?? "?"}: ${d.fortune ?? ""}` };
-    case "boss.appeared":
+    }
+    case "boss.appeared": {
+      const d = payloadOf(entry, "boss.appeared")!;
       return { ...style, text: `BOSS: ${d.name ?? "???"} (Lv${d.level ?? "?"}, ${d.hp ?? "?"}HP)` };
-    case "boss.defeated":
+    }
+    case "boss.defeated": {
+      const d = payloadOf(entry, "boss.defeated")!;
       return { ...style, text: `BOSS DEFEATED: ${d.name ?? "???"}! +${d.xp_reward ?? 0}XP!` };
-    case "boss.damage":
+    }
+    case "boss.damage": {
+      const d = payloadOf(entry, "boss.damage")!;
       return { ...style, text: `${d.message ?? ""}` };
-    case "ghost.appears":
+    }
+    case "ghost.appears": {
+      const d = payloadOf(entry, "ghost.appears")!;
       return { ...style, text: `${d.message ?? ""}` };
-    case "swarm.round":
+    }
+    case "swarm.round": {
+      const d = payloadOf(entry, "swarm.round")!;
       return { ...style, text: `Round ${d.round ?? 0}` };
+    }
     default:
-      return { ...style, text: `${entry.event}: ${JSON.stringify(d).slice(0, 60)}` };
+      return { ...style, text: `${entry.event}: ${JSON.stringify(entry.data).slice(0, 60)}` };
   }
 }
 
