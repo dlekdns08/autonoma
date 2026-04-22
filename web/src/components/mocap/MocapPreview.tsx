@@ -49,12 +49,14 @@ function PreviewVRM({ url, sampleRef }: { url: string; sampleRef: RefObject<Clip
     // finger humanoid bones (some minimalist VRMs do); this log makes
     // that failure mode discoverable in the browser console.
     const stats = countResolvedBones(bonesRef.current);
-    if (stats.missing.length > 0) {
-      console.info(
-        `[mocap] VRM resolved ${stats.resolved}/${stats.total} bones. Missing:`,
-        stats.missing,
-      );
-    }
+    console.info(
+      `[mocap] VRM resolved ${stats.resolved}/${stats.total} bones`
+        + (stats.fallbacks.length
+          ? ` (${stats.fallbacks.length} via scene fallback)`
+          : "")
+        + (stats.missing.length ? ` — missing:` : ""),
+      stats.missing.length ? stats.missing : "",
+    );
     vrm.scene.traverse((o) => {
       o.frustumCulled = false;
     });

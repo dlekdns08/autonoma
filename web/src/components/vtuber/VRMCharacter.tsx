@@ -866,6 +866,9 @@ function VRMModel({
   const mocapBonesRef = useRef<MocapBoneMap>({});
   const mocapRuntimeRef = useRef<ClipRuntime | null>(null);
   const mocapSampleRef = useRef<ClipSample>(createSampleBuffer());
+  // Reused when composing a sample rotation on top of a raw scene
+  // bone's non-identity rest quaternion (finger fallback path).
+  const _mocapScratchQ = useRef(new THREE.Quaternion()).current;
 
   useEffect(() => {
     if (!vrm) return;
@@ -1341,7 +1344,17 @@ function VRMModel({
       for (const name of Object.keys(sample.bones) as MocapBone[]) {
         const q = sample.bones[name]!;
         const node = mocapBones[name];
-        if (node) node.quaternion.set(q[0], q[1], q[2], q[3]);
+        if (!node) continue;
+        // Raw scene bones (finger fallback) have a non-identity rest
+        // pose stashed in userData — compose to keep the rig's original
+        // finger splay instead of snapping to identity on each frame.
+        const rest = node.userData?.mocapRest as THREE.Quaternion | undefined;
+        if (rest) {
+          _mocapScratchQ.set(q[0], q[1], q[2], q[3]);
+          node.quaternion.copy(rest).multiply(_mocapScratchQ);
+        } else {
+          node.quaternion.set(q[0], q[1], q[2], q[3]);
+        }
       }
       if (em) {
         for (const [name, v] of Object.entries(sample.expressions) as [
