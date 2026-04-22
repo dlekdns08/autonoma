@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from sqlalchemy import event, text
+from sqlalchemy import event, inspect as sa_inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from autonoma.config import settings
@@ -147,11 +147,62 @@ async def _set_schema_version(conn, version: int) -> None:
     await conn.execute(text("INSERT INTO schema_version(version) VALUES(:v)"), {"v": version})
 
 
+async def _verify_schema(conn) -> None:
+    """Compare live table columns to the ORM metadata; raise on drift.
+
+    ``create_all(checkfirst=True)`` silently skips tables that already
+    exist, so an added-or-renamed column on a live table will NOT
+    reach the deployed DB — schema and code diverge without warning.
+    We inspect each registered table after migrations run and fail
+    loudly if any expected column is missing. Extra (legacy) columns
+    are informational only, because dropping/renaming in SQLite needs
+    a dedicated migration anyway.
+    """
+    def _sync_check(sync_conn) -> list[str]:
+        insp = sa_inspect(sync_conn)
+        errors: list[str] = []
+        for table in metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                errors.append(f"table '{table.name}' missing entirely")
+                continue
+            live_cols = {c["name"] for c in insp.get_columns(table.name)}
+            expected_cols = {c.name for c in table.columns}
+            missing = expected_cols - live_cols
+            extra = live_cols - expected_cols
+            if missing:
+                errors.append(
+                    f"table '{table.name}' missing columns {sorted(missing)} "
+                    f"(create_all(checkfirst=True) silently skipped; add an "
+                    f"explicit ALTER migration)"
+                )
+            if extra:
+                logger.info(
+                    "[schema] table '%s' has unknown columns %s — probably "
+                    "from an older code revision, leaving in place",
+                    table.name, sorted(extra),
+                )
+        return errors
+
+    errors = await conn.run_sync(_sync_check)
+    if errors:
+        for err in errors:
+            logger.error("[schema drift] %s", err)
+        raise RuntimeError(
+            "Database schema drift detected: "
+            + "; ".join(errors)
+            + ". Add an explicit ALTER migration for the affected "
+            "table(s)."
+        )
+
+
 async def init_db() -> None:
     """Create tables and apply pending migrations. Call once on startup.
 
     Safe to invoke repeatedly — every migration is guarded by the version
-    counter, and tables are created with checkfirst=True.
+    counter, and tables are created with checkfirst=True. After
+    migrations run, :func:`_verify_schema` compares the live schema to
+    the ORM metadata and raises if any expected column is missing, so
+    silent skips on pre-existing tables don't leak into production.
     """
     global _initialized
     # Side-effect imports: register the ``users`` and ``harness_policies``
@@ -173,4 +224,5 @@ async def init_db() -> None:
                     await runner(conn)
                     await _set_schema_version(conn, target)
                     current = target
+            await _verify_schema(conn)
         _initialized = True
