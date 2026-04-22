@@ -1035,6 +1035,9 @@ async def lifespan(app: FastAPI):
     await _bootstrap_admin_user()
     await _bootstrap_default_harness_policy()
     _log_startup_summary()
+    # Live/broadcast: route milestone events to clip-recorder triggers.
+    from autonoma.routers.live import register_autoclip_hooks
+    register_autoclip_hooks()
     warmup_task: asyncio.Task[None] | None = None
     if settings.tts_provider == "omnivoice":
         warmup_task = asyncio.create_task(_warmup_omnivoice())
@@ -3538,3 +3541,26 @@ async def mocap_delete_binding(
 
 from autonoma.routers import voice as _voice_router  # noqa: E402
 app.include_router(_voice_router.router)
+
+# New feature routers (2026 feature pack — streaming, vision, bridges,
+# agent profiles, personas, battle, playback, standup, sign language)
+from autonoma.routers import (  # noqa: E402
+    agents as _agents_router,
+    bridges as _bridges_router,
+    live as _live_router,
+    personas as _personas_router,
+    playback as _playback_router,
+    sign as _sign_router,
+    standup as _standup_router,
+    swarm_battle as _battle_router,
+    vision as _vision_router,
+)
+app.include_router(_agents_router.router)
+app.include_router(_bridges_router.router)
+app.include_router(_live_router.router)
+app.include_router(_personas_router.router)
+app.include_router(_playback_router.router)
+app.include_router(_sign_router.router)
+app.include_router(_standup_router.router)
+app.include_router(_battle_router.router)
+app.include_router(_vision_router.router)
