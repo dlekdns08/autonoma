@@ -23,8 +23,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FilesetResolver,
   FaceLandmarker,
+  HandLandmarker,
   PoseLandmarker,
   type FaceLandmarkerResult,
+  type HandLandmarkerResult,
   type PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import {
@@ -57,6 +59,10 @@ const WASM_BASE = "/mediapipe";
 /** Model files also shipped in ``public/mediapipe``. */
 const FACE_MODEL_URL = `${WASM_BASE}/face_landmarker.task`;
 const POSE_MODEL_URL = `${WASM_BASE}/pose_landmarker_full.task`;
+/** Optional — only fetched when the caller enables ``hands``. Missing
+ *  file does not block face+pose capture (the recorder logs a warning
+ *  and silently drops finger tracks). */
+const HAND_MODEL_URL = `${WASM_BASE}/hand_landmarker.task`;
 
 export type MocapStatus =
   | "idle"
@@ -73,6 +79,11 @@ export interface RecordingMeta {
 export interface UseMocapOptions {
   /** Mirror webcam horizontally. Default true. */
   mirror?: boolean;
+  /** Enable MediaPipe HandLandmarker and write finger-proximal bone
+   *  tracks for up to two hands. Off by default — the extra 8 MB model
+   *  and third detectForVideo call cost a few fps on laptops. Toggling
+   *  while running takes effect on the next ``start()``. */
+  hands?: boolean;
   /** Server-enforced max clip duration in seconds. Fetch this from
    *  ``/api/mocap/triggers`` (``fetchTriggerCatalog``) so the client and
    *  server agree on the ceiling. Defaults to 60s. */
