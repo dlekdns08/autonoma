@@ -32,6 +32,7 @@
 import * as Kalidokit from "kalidokit";
 import type {
   FaceLandmarkerResult,
+  HandLandmarkerResult,
   PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import * as THREE from "three";
@@ -170,7 +171,9 @@ function eulerToQuat(
 const _scratchEuler = new THREE.Euler();
 
 /** Per-bone Euler order — matches the one VRMCharacter's gesture code
- *  uses so the recorded rotations play back cleanly. */
+ *  uses so the recorded rotations play back cleanly. Finger proximals
+ *  don't appear here because ``solveHands`` writes their quaternions
+ *  directly (no Euler intermediate). */
 const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
   hips: "XYZ",
   spine: "XYZ",
@@ -187,6 +190,55 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
   leftHand: "YXZ",
   rightHand: "YXZ",
 };
+
+// MediaPipe hand landmark indices — 21 per hand.
+// Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
+const WRIST_LM = 0;
+const THUMB_MCP_LM = 1;
+const THUMB_IP_LM = 2;
+const INDEX_MCP_LM = 5;
+const INDEX_PIP_LM = 6;
+const MIDDLE_MCP_LM = 9;
+const MIDDLE_PIP_LM = 10;
+const RING_MCP_LM = 13;
+const RING_PIP_LM = 14;
+const PINKY_MCP_LM = 17;
+const PINKY_PIP_LM = 18;
+
+/** (boneName, start-landmark, end-landmark). Thumb uses CMC→MCP since
+ *  that's what VRM's thumbProximal spans; other fingers use MCP→PIP. */
+type FingerBone = readonly [MocapBone, number, number];
+const LEFT_FINGERS: readonly FingerBone[] = [
+  ["leftThumbProximal", THUMB_MCP_LM, THUMB_IP_LM],
+  ["leftIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
+  ["leftMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
+  ["leftRingProximal", RING_MCP_LM, RING_PIP_LM],
+  ["leftLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
+];
+const RIGHT_FINGERS: readonly FingerBone[] = [
+  ["rightThumbProximal", THUMB_MCP_LM, THUMB_IP_LM],
+  ["rightIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
+  ["rightMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
+  ["rightRingProximal", RING_MCP_LM, RING_PIP_LM],
+  ["rightLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
+];
+
+// Pre-allocated scratch vectors / quaternions used by ``solveHands``.
+// Keeping them module-scoped means the per-frame solve does zero
+// allocations in steady state.
+const _hWrist = new THREE.Vector3();
+const _hMid = new THREE.Vector3();
+const _hIdx = new THREE.Vector3();
+const _hPky = new THREE.Vector3();
+const _hMcp = new THREE.Vector3();
+const _hPip = new THREE.Vector3();
+const _hDir = new THREE.Vector3();
+const _hDirLocal = new THREE.Vector3();
+const _palmX = new THREE.Vector3();
+const _palmY = new THREE.Vector3();
+const _palmZ = new THREE.Vector3();
+const _restY = new THREE.Vector3(0, 1, 0);
+const _handQ = new THREE.Quaternion();
 
 export interface SolverOptions {
   /** Mirror the webcam on horizontal axis so the user's left hand drives
@@ -235,12 +287,13 @@ export class MocapSolver {
     return f;
   }
 
-  /** Resolve one frame. Either input can be null — e.g. face-only
-   *  recording omits pose. Output buffer is reused across calls, so
-   *  don't retain references to ``out.bones[name]`` between frames. */
+  /** Resolve one frame. Any input can be null — e.g. face-only
+   *  recording omits pose + hands. Output buffer is reused across calls,
+   *  so don't retain references to ``out.bones[name]`` between frames. */
   solveInto(
     face: FaceLandmarkerResult | null,
     pose: PoseLandmarkerResult | null,
+    hands: HandLandmarkerResult | null,
     tsSec: number,
     out: ClipSample,
   ): void {
@@ -252,6 +305,7 @@ export class MocapSolver {
     }
     if (face) this.solveFace(face, tsSec, out);
     if (pose) this.solvePose(pose, tsSec, out);
+    if (hands) this.solveHands(hands, tsSec, out);
   }
 
   private solveFace(
@@ -367,5 +421,106 @@ export class MocapSolver {
     const pool: [number, number, number, number] = out.bones[name] ?? [0, 0, 0, 1];
     this.quatFilter(name).filter(q[0], q[1], q[2], q[3], tsSec, pool);
     out.bones[name] = pool;
+  }
+
+  /** Drive each hand's finger-proximal bones from a HandLandmarker
+   *  result. Only one hand of each handedness wins — if MediaPipe
+   *  detects two "Left" hands (rare but possible with two people in
+   *  frame) we take the first and ignore the rest.
+   *
+   *  The landmark→bone pipeline for each finger:
+   *    1. Build a palm-local frame from wrist/index-MCP/pinky-MCP/
+   *       middle-MCP so "forward along fingers" is +Y regardless of
+   *       where the user's hand is in space.
+   *    2. Project the MCP→PIP direction into that frame.
+   *    3. Quaternion from rest (0,1,0) → observed direction becomes the
+   *       VRM proximal's local rotation relative to its parent hand.
+   *
+   *  Mirror convention: when ``mirror`` is on we swap MediaPipe's
+   *  ``Left``↔``Right`` output (the user sees themselves in a mirror so
+   *  their visual-left hand = VRM's left hand).
+   */
+  private solveHands(
+    result: HandLandmarkerResult,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const hands = result.landmarks;
+    const sides = result.handednesses;
+    if (!hands || !sides) return;
+    const seenLeft = { done: false };
+    const seenRight = { done: false };
+    for (let i = 0; i < hands.length; i++) {
+      const lm = hands[i];
+      const mpLabel = sides[i]?.[0]?.categoryName;
+      if (!lm || lm.length < 21 || !mpLabel) continue;
+      const mpIsLeft = mpLabel === "Left";
+      const vrmIsLeft = this.mirror ? !mpIsLeft : mpIsLeft;
+      if (vrmIsLeft && seenLeft.done) continue;
+      if (!vrmIsLeft && seenRight.done) continue;
+      if (vrmIsLeft) seenLeft.done = true;
+      else seenRight.done = true;
+      this.solveOneHand(lm, vrmIsLeft, tsSec, out);
+    }
+  }
+
+  private solveOneHand(
+    lm: { x: number; y: number; z: number }[],
+    vrmIsLeft: boolean,
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    // MediaPipe gives normalised image-space coords with Y pointing
+    // down. We use the coords directly; the rotation we derive is
+    // relative to the palm frame, so the absolute handedness of the
+    // axis system doesn't matter as long as it's internally consistent.
+    _hWrist.set(lm[WRIST_LM].x, lm[WRIST_LM].y, lm[WRIST_LM].z);
+    _hMid.set(lm[MIDDLE_MCP_LM].x, lm[MIDDLE_MCP_LM].y, lm[MIDDLE_MCP_LM].z);
+    _hIdx.set(lm[INDEX_MCP_LM].x, lm[INDEX_MCP_LM].y, lm[INDEX_MCP_LM].z);
+    _hPky.set(lm[PINKY_MCP_LM].x, lm[PINKY_MCP_LM].y, lm[PINKY_MCP_LM].z);
+
+    // Palm Y — forward along the fingers (wrist → middle-MCP).
+    _palmY.copy(_hMid).sub(_hWrist);
+    if (_palmY.lengthSq() < 1e-10) return;
+    _palmY.normalize();
+
+    // Palm X — across the palm. For a left hand seen from back: thumb
+    // is on the right side of the image, so index→pinky points in the
+    // +X palm direction. Right hand is mirrored. We normalise by the
+    // VRM side so the frame is consistent with the bone we'll write to.
+    _palmX.copy(_hPky).sub(_hIdx);
+    if (!vrmIsLeft) _palmX.negate();
+    const dotXY = _palmX.dot(_palmY);
+    _palmX.addScaledVector(_palmY, -dotXY);
+    if (_palmX.lengthSq() < 1e-10) return;
+    _palmX.normalize();
+
+    // Palm Z — palm normal (X × Y).
+    _palmZ.copy(_palmX).cross(_palmY).normalize();
+
+    const fingers = vrmIsLeft ? LEFT_FINGERS : RIGHT_FINGERS;
+    for (const [boneName, mcpIdx, pipIdx] of fingers) {
+      _hMcp.set(lm[mcpIdx].x, lm[mcpIdx].y, lm[mcpIdx].z);
+      _hPip.set(lm[pipIdx].x, lm[pipIdx].y, lm[pipIdx].z);
+      _hDir.copy(_hPip).sub(_hMcp);
+      if (_hDir.lengthSq() < 1e-10) continue;
+      _hDir.normalize();
+      // Project into palm frame.
+      _hDirLocal.set(
+        _hDir.dot(_palmX),
+        _hDir.dot(_palmY),
+        _hDir.dot(_palmZ),
+      );
+      if (_hDirLocal.lengthSq() < 1e-10) continue;
+      _hDirLocal.normalize();
+      // Quaternion from finger rest (palm +Y) to observed direction.
+      _handQ.setFromUnitVectors(_restY, _hDirLocal);
+      this.writeBoneSmoothed(
+        boneName,
+        [_handQ.x, _handQ.y, _handQ.z, _handQ.w],
+        tsSec,
+        out,
+      );
+    }
   }
 }
