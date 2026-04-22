@@ -103,6 +103,36 @@ class Settings(BaseSettings):
     trace_enabled: bool = True
     trace_dir: Path = Path("./traces")
 
+    # ── Live / broadcast (feature #1, #2) ──
+    # Secret shared with a streaming automation platform (Aitum, Streamer.bot,
+    # or a custom Twitch/YouTube bridge). Webhooks arriving without this
+    # secret in ``X-Autonoma-Signature`` are rejected.
+    live_webhook_secret: str = ""
+    # Auto-clip settings: when the listed events fire, a ``live.clip``
+    # event is emitted with the clip metadata so the browser /obs page
+    # grabs the last N seconds of MediaRecorder buffer.
+    live_autoclip_enabled: bool = True
+    live_autoclip_seconds: int = 20
+
+    # ── Vision agent (feature #3) ──
+    vision_agent_enabled: bool = False
+    # Minimum seconds between auto-comments so the agent doesn't spam.
+    vision_agent_cooldown_s: int = 60
+
+    # ── Persistence (feature #5) ──
+    # When False, agent identities, diaries, and relationships are
+    # session-scoped as they always were. When True they persist across
+    # sessions keyed by (owner_user_id, role, name).
+    persistent_agent_identities: bool = True
+
+    # ── Standup podcast (feature #10) ──
+    standup_enabled: bool = False
+    standup_output_dir: Path = Path("./output/standups")
+
+    # ── External bridges (feature #8) ──
+    slack_signing_secret: str = ""     # Slack Events API verification
+    discord_webhook_secret: str = ""   # shared secret for inbound Discord
+
     def model_post_init(self, __context: object) -> None:
         """Accept bare ANTHROPIC_API_KEY / OPENAI_API_KEY without the AUTONOMA_ prefix."""
         import os
