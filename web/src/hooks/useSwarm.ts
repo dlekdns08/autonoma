@@ -151,15 +151,12 @@ export interface MocapBindingEvent {
   seq: number;
 }
 
-/** Voice binding change event. Same row-level patch pattern as the mocap
- *  event: the dashboard applies the delta without refetching and resets
- *  any cached voice resolution for the affected VRM. */
-export interface VoiceBindingEvent {
-  vrm_file: string;
-  profile_id: string | null;
-  removed: boolean;
-  seq: number;
-}
+// Voice binding event state lives in ``useVoiceEventState`` so the WS
+// routing here stays thin — the hook below composes it. The exported
+// type is re-exposed from this module so existing consumers don't have
+// to retarget their imports.
+import { useVoiceEventState, type VoiceBindingEvent } from "./voice/useVoiceEventState";
+export type { VoiceBindingEvent };
 
 export function useSwarm() {
   const [state, setState] = useState<SwarmState>(INITIAL_STATE);
@@ -184,11 +181,12 @@ export function useSwarm() {
   const [mocapBindingEvent, setMocapBindingEvent] =
     useState<MocapBindingEvent | null>(null);
   const mocapBindingEventSeqRef = useRef(0);
-  // Same pattern as mocap bindings, for voice profile bindings.
-  const [voiceBindingsRefreshToken, setVoiceBindingsRefreshToken] = useState(0);
-  const [voiceBindingEvent, setVoiceBindingEvent] =
-    useState<VoiceBindingEvent | null>(null);
-  const voiceBindingEventSeqRef = useRef(0);
+  // Same pattern as mocap bindings, for voice profile bindings. The
+  // state lives in ``useVoiceEventState`` so the concrete refresh/patch
+  // plumbing is out of this file.
+  const voiceEvents = useVoiceEventState();
+  const voiceBindingsRefreshToken = voiceEvents.refreshToken;
+  const voiceBindingEvent = voiceEvents.latestEvent;
   // Multi-viewer state — defaults to a private room of one. The host
   // gets `code` filled in on `swarm.starting`; viewers get it from the
   // ?room= query param on first connect.
@@ -324,12 +322,11 @@ export function useSwarm() {
         // Same row-level patch channel for voice bindings. Suppress the
         // event-log entry so voice config churn doesn't flood the log.
         if (event === "voice.bindings.updated") {
-          setVoiceBindingEvent({
+          voiceEvents.applyPatch({
             vrm_file: String(data.vrm_file ?? ""),
             profile_id:
               data.profile_id == null ? null : String(data.profile_id),
             removed: !!data.removed,
-            seq: ++voiceBindingEventSeqRef.current,
           });
           return;
         }
@@ -983,7 +980,7 @@ export function useSwarm() {
       // token so ``useMocapBindings`` does a full GET on reconnect.
       setMocapBindingsRefreshToken((n) => n + 1);
       // Same treatment for voice bindings.
-      setVoiceBindingsRefreshToken((n) => n + 1);
+      voiceEvents.bumpRefresh();
       // Set up heartbeat ping every 30 seconds
       clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
