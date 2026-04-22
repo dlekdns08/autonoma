@@ -17,7 +17,7 @@
  * site-wide trigger → clip bindings.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useMocap } from "@/hooks/mocap/useMocap";
@@ -25,7 +25,7 @@ import { useMocapClips } from "@/hooks/mocap/useMocapClips";
 import { useMocapBindings } from "@/hooks/mocap/useMocapBindings";
 import CharacterPicker from "@/components/mocap/CharacterPicker";
 import WebcamPanel from "@/components/mocap/WebcamPanel";
-import MocapPreview from "@/components/mocap/MocapPreview";
+import MocapPreview, { type FingerTestAxis } from "@/components/mocap/MocapPreview";
 import TimelineTrimmer from "@/components/mocap/TimelineTrimmer";
 import ClipLibrary from "@/components/mocap/ClipLibrary";
 import BindingEditor from "@/components/mocap/BindingEditor";
@@ -91,6 +91,28 @@ export default function MocapPage() {
   // idle) don't need fingers. Flipping the toggle takes effect on the
   // next ``start()``; we disable the checkbox while the camera is live.
   const [handsEnabled, setHandsEnabled] = useState<boolean>(false);
+
+  // Finger-axis diagnostic. When set, MocapPreview bypasses the solver
+  // for finger proximals and forces a fixed 60° rotation around the
+  // chosen axis. Whichever axis visibly bends the fingers inward is
+  // the rig's actual curl axis — feed that back to the solver.
+  const [testFingerAxis, setTestFingerAxis] = useState<FingerTestAxis>(null);
+  const [testFingerUntil, setTestFingerUntil] = useState(0);
+  const testTimerRef = useRef<number | null>(null);
+  // Wrapped in useCallback so ``performance.now()`` inside only runs on
+  // the click, not during render — keeps the react-hooks/purity lint
+  // rule happy.
+  const runAxisTest = useCallback((axis: "x" | "y" | "z") => {
+    if (testTimerRef.current !== null) {
+      window.clearTimeout(testTimerRef.current);
+    }
+    setTestFingerAxis(axis);
+    setTestFingerUntil(performance.now() + 3000);
+    testTimerRef.current = window.setTimeout(() => {
+      setTestFingerAxis(null);
+      testTimerRef.current = null;
+    }, 3000);
+  }, []);
 
   // Recording + preview wiring. ``onMaxDurationReached`` is a ref so
   // ``useMocap`` invokes the *current* ``onStopRecord`` (which reads the
@@ -412,6 +434,26 @@ export default function MocapPage() {
                     {handDiagLabel(mocap.handDiagnostics)}
                   </span>
                 )}
+                {/* Finger-axis bisection. Each button forces a 3-second
+                    60° rotation on every finger proximal around that
+                    axis. Whichever axis visibly bends the fingers is
+                    the rig's curl axis. See docstring in MocapPreview. */}
+                <span className="text-[10px] text-white/30">축 테스트:</span>
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <button
+                    key={axis}
+                    onClick={() => runAxisTest(axis)}
+                    title={`${axis.toUpperCase()}축으로 60° 회전 (3초). 손가락이 안쪽으로 굽으면 그 축이 정답.`}
+                    className={
+                      "rounded border px-2 py-1 " +
+                      (testFingerAxis === axis
+                        ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
+                        : "border-white/15 bg-slate-950/70 text-white/70 hover:border-white/35")
+                    }
+                  >
+                    {axis.toUpperCase()}축
+                  </button>
+                ))}
                 {mocap.status === "running" && !mocap.recording && stage !== "recorded" && (
                   <button
                     onClick={onRecord}
@@ -479,7 +521,12 @@ export default function MocapPage() {
               )}
             </div>
 
-            <MocapPreview vrmFile={targetVrm} sampleRef={previewSampleRef} />
+            <MocapPreview
+              vrmFile={targetVrm}
+              sampleRef={previewSampleRef}
+              testFingerAxis={testFingerAxis}
+              testFingerUntil={testFingerUntil}
+            />
           </section>
         )}
 
