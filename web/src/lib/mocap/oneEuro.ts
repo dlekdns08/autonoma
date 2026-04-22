@@ -18,9 +18,17 @@ export interface OneEuroConfig {
   dCutoff: number;
 }
 
+// Default tuned for webcam mocap: face blendshapes, Kalidokit body,
+// and (crucially) the 28 finger bones added in the full-articulation
+// pass. The finger solver amplifies 15-30° of raw landmark angle to
+// ~90° of bone rotation, so even sub-degree landmark noise becomes
+// visible jitter without aggressive smoothing. These values squash
+// static tremor (low ``minCutoff``) while keeping fast motion snappy
+// (``beta`` high enough that the cutoff opens up once the signal
+// starts moving).
 const DEFAULT_CONFIG: OneEuroConfig = {
-  minCutoff: 1.0,
-  beta: 0.05,
+  minCutoff: 0.5,
+  beta: 0.4,
   dCutoff: 1.0,
 };
 
