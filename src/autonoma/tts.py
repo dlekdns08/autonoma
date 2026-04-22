@@ -74,8 +74,8 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
     or missing optional deps (OmniVoice package not installed)."""
     if cfg.provider == "omnivoice":
         try:
-            from autonoma.tts_omnivoice import OmniVoiceTTSClient
-            return OmniVoiceTTSClient()
+            from autonoma.tts_omnivoice import get_shared_client
+            return get_shared_client()
         except ImportError as exc:
             # Loud warning: silent fallback to stub means agents speak
             # nothing and the /voice test endpoint returns empty audio.
