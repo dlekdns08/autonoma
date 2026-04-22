@@ -560,6 +560,10 @@ export class MocapSolver {
    *  here, then apply the standard mirror-swap so the VRM mirrors the
    *  user visually (same side of screen moves together — matching the
    *  convention ``solvePose`` uses for the arms).
+   *
+   *  When a side is not detected this frame, its finger-joint entries
+   *  are removed from ``out`` so the playback layer falls back to
+   *  procedural idle rather than freezing on the last pose.
    */
   private solveHands(
     result: HandLandmarkerResult,
@@ -571,6 +575,37 @@ export class MocapSolver {
     this.latestHandCount = 0;
     this.latestHandSides.left = false;
     this.latestHandSides.right = false;
+    // First pass: figure out which VRM sides have a valid hand this
+    // frame (applying the same mirror-swap the solve pass uses). We
+    // do this up-front so we can purge stale finger bones for sides
+    // that went missing BEFORE the per-hand solve writes new ones.
+    const wantedSides = { left: false, right: false };
+    if (hands && sides) {
+      for (let i = 0; i < hands.length; i++) {
+        const lm = hands[i];
+        const mpLabel = sides[i]?.[0]?.categoryName;
+        if (!lm || lm.length < 21 || !mpLabel) continue;
+        const userIsLeft = mpLabel === "Right";
+        const vrmIsLeft = this.mirror ? !userIsLeft : userIsLeft;
+        if (vrmIsLeft) wantedSides.left = true;
+        else wantedSides.right = true;
+      }
+    }
+    // Purge finger-bone entries for sides that weren't detected, so
+    // the playback layer falls back to procedural idle rather than
+    // freezing on whatever pose was written last frame. Only finger
+    // joints (names from ``LEFT_JOINTS`` / ``RIGHT_JOINTS``) are
+    // removed — body bones are untouched.
+    if (!wantedSides.left) {
+      for (const [boneName] of LEFT_JOINTS) {
+        delete out.bones[boneName];
+      }
+    }
+    if (!wantedSides.right) {
+      for (const [boneName] of RIGHT_JOINTS) {
+        delete out.bones[boneName];
+      }
+    }
     if (!hands || !sides) return;
     const seenLeft = { done: false };
     const seenRight = { done: false };
@@ -664,7 +699,16 @@ export class MocapSolver {
       _hChildA.set(lm[childFrom].x, lm[childFrom].y, lm[childFrom].z);
       _hChildB.set(lm[childTo].x, lm[childTo].y, lm[childTo].z);
       _childDir.copy(_hChildB).sub(_hChildA);
-      if (_childDir.lengthSq() < 1e-10) continue;
+      // Thumb IP (``thumbDistal``) uses landmark 4 as its child-end,
+      // which MediaPipe frequently occludes at a closed fist — tip
+      // gets reported essentially on top of the IP (landmark 3),
+      // producing a near-zero direction that normalizes to a jittery
+      // quaternion. Use a more aggressive threshold for this joint
+      // and skip writing it; the OneEuroQuat filter will hold the
+      // last valid value, which is less disruptive than freezing on
+      // a numerically-unstable update.
+      const minChildLenSq = jointType === "thumbDistal" ? 1e-4 : 1e-10;
+      if (_childDir.lengthSq() < minChildLenSq) continue;
       _childDir.normalize();
 
       // --- Curl angle, calibrated + signed ---
