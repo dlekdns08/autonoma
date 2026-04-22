@@ -122,3 +122,6 @@ function ExecutionTimelineImpl({ events }: Props) {
     </div>
   );
 }
+
+const ExecutionTimeline = memo(ExecutionTimelineImpl);
+export default ExecutionTimeline;
