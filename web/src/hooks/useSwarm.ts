@@ -152,6 +152,10 @@ export function useSwarm() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [emotes, setEmotes] = useState<Record<string, AgentEmote>>({});
   const emoteSeqRef = useRef(0);
+  // Bumped whenever a ``mocap.bindings.updated`` event arrives. Consumed
+  // by ``useMocapBindings(refreshToken)`` on the dashboard so any viewer
+  // picks up a peer's edit within one round-trip.
+  const [mocapBindingsRefreshToken, setMocapBindingsRefreshToken] = useState(0);
   // Multi-viewer state — defaults to a private room of one. The host
   // gets `code` filled in on `swarm.starting`; viewers get it from the
   // ?room= query param on first connect.
@@ -536,6 +540,15 @@ export function useSwarm() {
 
         if (event === "pong") {
           // Silently ignore pong responses
+          return;
+        }
+
+        // Global mocap binding table changed (another viewer saved in the
+        // ``/mocap`` editor). Bump a counter so hooks subscribed to
+        // ``mocapBindingsRefreshToken`` re-fetch — there's no per-row
+        // payload, just the signal. Event body is intentionally empty.
+        if (event === "mocap.bindings.updated") {
+          setMocapBindingsRefreshToken((n) => n + 1);
           return;
         }
 
@@ -1199,5 +1212,6 @@ export function useSwarm() {
     sandboxMetrics,
     checkpoints,
     resumeFromCheckpoint,
+    mocapBindingsRefreshToken,
   };
 }
