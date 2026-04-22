@@ -15,6 +15,33 @@ COPY pyproject.toml uv.lock ./
 # synthesis endpoints fall back to the stub and return empty audio.
 RUN uv sync --no-dev --frozen --no-install-project --extra tts
 
+# Pre-download OmniVoice model weights (~2 GB) into a build-time HF cache
+# BEFORE copying source. This layer then only invalidates when
+# OMNIVOICE_MODEL_ID or the dep-install layer changes — not on every src
+# edit. The cache is copied into the runtime stage below and pinned via
+# the ``HF_HOME`` env var so ``OmniVoice.from_pretrained`` finds it
+# offline. Bump the ARG to force a re-download on a model upgrade.
+#
+# Default value mirrors ``autonoma.tts_omnivoice.OMNIVOICE_MODEL_ID``;
+# the ENV is propagated into the runtime stage so the Python side reads
+# from the same source instead of hardcoding it in two places.
+ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
+ENV HF_HOME=/opt/hf-cache
+ENV AUTONOMA_OMNIVOICE_MODEL_ID=${OMNIVOICE_MODEL_ID}
+RUN /app/.venv/bin/python - <<PY
+import os, pathlib, sys
+from huggingface_hub import snapshot_download
+path = snapshot_download(os.environ["AUTONOMA_OMNIVOICE_MODEL_ID"])
+# Sanity-check the download actually produced model files — silent
+# partial downloads were a past incident where /voice hit the network
+# on first request and 504'd under nginx's 60s timeout.
+root = pathlib.Path(path)
+total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+if total < 100 * 1024 * 1024:  # expect >100 MB for any real model
+    sys.exit(f"HF snapshot for {os.environ['AUTONOMA_OMNIVOICE_MODEL_ID']} is suspiciously small ({total} bytes)")
+print(f"[build] pre-downloaded {total // (1024 * 1024)} MB of weights to {path}")
+PY
+
 # Copy README (required by hatchling build)
 COPY README.md ./
 
@@ -23,20 +50,6 @@ COPY src/ src/
 
 # Install the project itself
 RUN uv sync --no-dev --frozen --extra tts
-
-# Pre-download OmniVoice model weights (~2 GB) into a build-time HF cache
-# so the first ``/voice`` synthesis doesn't block on a HuggingFace pull.
-# The cache is copied into the runtime stage below and pinned via the
-# ``HF_HOME`` env var so ``OmniVoice.from_pretrained`` finds it offline.
-#
-# This layer invalidates only when OMNIVOICE_MODEL_ID changes — bump the
-# ARG to force a re-download on a model upgrade.
-ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
-ENV HF_HOME=/opt/hf-cache
-RUN /app/.venv/bin/python - <<PY
-from huggingface_hub import snapshot_download
-snapshot_download("${OMNIVOICE_MODEL_ID}")
-PY
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
@@ -66,8 +79,12 @@ COPY --from=builder /app/pyproject.toml /app/
 # Bake the pre-downloaded OmniVoice weights into the runtime image.
 # ``HF_HOME`` pins the HuggingFace cache path so the library finds these
 # files without ever hitting the network — useful for air-gapped deploys.
+# ``AUTONOMA_OMNIVOICE_MODEL_ID`` is propagated so the Python client
+# reads the same ID the builder snapshotted (single source of truth).
+ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
 COPY --from=builder /opt/hf-cache /opt/hf-cache
 ENV HF_HOME=/opt/hf-cache
+ENV AUTONOMA_OMNIVOICE_MODEL_ID=${OMNIVOICE_MODEL_ID}
 
 # Add .venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
@@ -83,5 +100,16 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
-# Run the API server
+# Run the API server.
+#
+# IMPORTANT: --workers is intentionally absent (defaults to 1).
+# OmniVoice warm-loads a multi-GB model into each worker process
+# independently — N workers = N × ~2.5 GB resident. If you need to
+# scale, either:
+#   (a) keep workers=1 and scale the container horizontally
+#       (each container has its own warm model), or
+#   (b) switch to Gunicorn with ``--preload`` so the model is forked
+#       from a single parent (COW sharing). Note that the asyncio
+#       lifespan still re-runs per worker, so the preload needs to
+#       happen in the Python module, not the lifespan hook.
 CMD ["uvicorn", "autonoma.api:app", "--host", "0.0.0.0", "--port", "8000"]
