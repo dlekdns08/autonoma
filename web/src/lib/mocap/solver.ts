@@ -266,7 +266,7 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
   thumbProximal: {
     restRad: (5 * Math.PI) / 180,
     fistRad: (30 * Math.PI) / 180,
-    outRangeRad: (60 * Math.PI) / 180,
+    outRangeRad: (85 * Math.PI) / 180,
     axis: "x",
     flipSign: true,
   },
