@@ -256,9 +256,16 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
   // (bone's local +Z is along the thumb's own axis). Local -X is the
   // anatomical flexion direction — see axis-test report where pressing
   // X caused the thumb proximal to bend toward the palm.
+  //
+  // The thumb MCP (``thumbProximal``) range is much narrower than the
+  // IP (``thumbDistal``): when the whole thumb moves in opposition,
+  // the CMC→MCP and MCP→IP landmark segments rotate together, so the
+  // measured RELATIVE angle only varies ~5°-30° even at a full fist.
+  // We tune the rest/fist bounds tight around that observed range so
+  // the ~25° of signal maps to ~60° of visible bone rotation.
   thumbProximal: {
-    restRad: (20 * Math.PI) / 180,
-    fistRad: (70 * Math.PI) / 180,
+    restRad: (5 * Math.PI) / 180,
+    fistRad: (30 * Math.PI) / 180,
     outRangeRad: (60 * Math.PI) / 180,
     axis: "x",
     flipSign: true,
