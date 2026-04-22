@@ -24,6 +24,7 @@ from autonoma.voice.store import (
     profile_is_bound,
     upsert_binding,
 )
+from autonoma.voice.vrm_map import vrm_file_for_agent
 
 __all__ = [
     "Binding",
@@ -40,4 +41,5 @@ __all__ = [
     "list_profile_summaries",
     "profile_is_bound",
     "upsert_binding",
+    "vrm_file_for_agent",
 ]
