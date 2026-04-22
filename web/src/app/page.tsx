@@ -104,6 +104,14 @@ function UserChip({
       >
         mocap
       </a>
+      <span className="text-white/20">|</span>
+      <a
+        href="/voice"
+        className="text-cyan-300/70 hover:text-cyan-200 transition-colors underline underline-offset-2"
+        title="음성 프로파일"
+      >
+        voice
+      </a>
       {isAdmin && (
         <>
           <span className="text-white/20">|</span>
