@@ -271,9 +271,16 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
     flipSign: true,
   },
   thumbDistal: {
-    restRad: (10 * Math.PI) / 180,
-    fistRad: (60 * Math.PI) / 180,
-    outRangeRad: (50 * Math.PI) / 180,
+    // Like ``thumbProximal``, the observed IP-joint relative angle is
+    // narrower than the anatomical 60° range suggested — tuned down
+    // to match what MediaPipe actually reports and amplified on the
+    // output side so the tip of the thumb visibly curls. Sits at a
+    // smaller out-range than the proximal so the two joints together
+    // read as "proximal bends more than distal" — the natural ratio
+    // for human thumb flexion.
+    restRad: (5 * Math.PI) / 180,
+    fistRad: (30 * Math.PI) / 180,
+    outRangeRad: (75 * Math.PI) / 180,
     axis: "x",
     flipSign: true,
   },
