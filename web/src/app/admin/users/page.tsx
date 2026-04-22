@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, type AuthUser, type UserStatus } from "@/hooks/useAuth";
 import { API_BASE_URL } from "@/hooks/useSwarm";
+import { STRINGS } from "@/lib/strings";
 
 // Endpoint suffixes keyed by the action name. Each action POSTs to
 // /api/admin/users/{id}/{suffix} and expects a 204.
@@ -53,7 +54,7 @@ export default function AdminUsersPage() {
         headers: { Accept: "application/json" },
       });
       if (res.status === 401 || res.status === 403) {
-        setListError("관리자 권한이 필요합니다.");
+        setListError(STRINGS.admin.adminRequired);
         setUsers(null);
         return;
       }
@@ -122,7 +123,7 @@ export default function AdminUsersPage() {
           <div className="mb-3 text-4xl">⛔</div>
           <h1 className="text-2xl font-bold font-mono text-red-300">403</h1>
           <p className="mt-2 text-sm font-mono text-white/60">
-            관리자만 접근할 수 있습니다.
+            {STRINGS.admin.onlyAdmin}
           </p>
           {user && (
             <p className="mt-4 text-xs font-mono text-white/30">
