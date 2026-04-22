@@ -23,7 +23,11 @@ export const MOCAP_CLIP_VERSION = 1 as const;
 /** Humanoid bone names we record, mirroring ``ALLOWED_BONES`` on the
  *  server and the keys of ``VRM.humanoid.getNormalizedBoneNode``. Legs
  *  are intentionally omitted in v1 — webcam mocap quality is poor on
- *  lower-body joints and the noise reads worse than a clean idle. */
+ *  lower-body joints and the noise reads worse than a clean idle.
+ *
+ *  Finger proximal bones are populated only when the recorder's
+ *  HandLandmarker is enabled; otherwise their tracks are absent and the
+ *  playback path keeps whatever the idle/gesture loop writes. */
 export const MOCAP_BONES = [
   "hips",
   "spine",
@@ -39,6 +43,19 @@ export const MOCAP_BONES = [
   "rightLowerArm",
   "leftHand",
   "rightHand",
+  // Hand fingers — proximal only. See ``solveHands`` in ``solver.ts``
+  // for why we stop at proximal (Intermediate/Distal read as noise at
+  // webcam resolution).
+  "leftThumbProximal",
+  "leftIndexProximal",
+  "leftMiddleProximal",
+  "leftRingProximal",
+  "leftLittleProximal",
+  "rightThumbProximal",
+  "rightIndexProximal",
+  "rightMiddleProximal",
+  "rightRingProximal",
+  "rightLittleProximal",
 ] as const;
 
 export type MocapBone = (typeof MOCAP_BONES)[number];
