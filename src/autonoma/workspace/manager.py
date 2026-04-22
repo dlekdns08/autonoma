@@ -43,10 +43,20 @@ class WorkspaceManager:
         skipped: list[str] = []
         for artifact in artifacts:
             raw_path = artifact.path
-            # Robust path traversal defense:
-            # 1) no backslashes or null bytes
-            # 2) no absolute paths (POSIX leading slash or Windows drive)
-            # 3) resolved path must stay inside project_dir
+            # Robust path traversal defense (layered — each check catches
+            # a class of bypass the others miss):
+            # 1) empty / whitespace-only path (would overwrite project root)
+            # 2) null bytes or backslashes (filesystem/shell ambiguity)
+            # 3) no absolute paths (POSIX leading slash or Windows drive)
+            # 4) no ``..`` components in the raw path (defense in depth —
+            #    resolve() canonicalizes but TOCTOU-style symlink races
+            #    could still slip past an is_relative_to check)
+            # 5) resolved path must stay STRICTLY inside project_dir
+            if not raw_path or not raw_path.strip():
+                logger.warning("[Workspace] Skipping empty artifact path")
+                skipped.append(raw_path)
+                continue
+
             if "\x00" in raw_path or "\\" in raw_path:
                 logger.warning(
                     f"[Workspace] Skipping unsafe path (null byte or backslash): {raw_path!r}"
@@ -70,6 +80,16 @@ class WorkspaceManager:
                 skipped.append(raw_path)
                 continue
 
+            # Reject any ``..`` component before we touch the filesystem.
+            # PurePosixPath handles "foo/../bar" → parts=("foo","..","bar").
+            from pathlib import PurePosixPath
+            if ".." in PurePosixPath(safe_path).parts:
+                logger.warning(
+                    f"[Workspace] Skipping path with '..' component: {raw_path!r}"
+                )
+                skipped.append(raw_path)
+                continue
+
             try:
                 resolved = (project_dir / safe_path).resolve()
             except (OSError, RuntimeError) as e:
@@ -79,7 +99,11 @@ class WorkspaceManager:
                 skipped.append(raw_path)
                 continue
 
-            if not resolved.is_relative_to(project_root):
+            # Must be STRICTLY inside the project root — writing to the
+            # root itself would either hit an IsADirectoryError mid-loop
+            # or overwrite a caller-provided file outside this artifact's
+            # intent.
+            if resolved == project_root or not resolved.is_relative_to(project_root):
                 logger.warning(
                     f"[Workspace] Skipping path traversal attempt: {raw_path!r}"
                 )
