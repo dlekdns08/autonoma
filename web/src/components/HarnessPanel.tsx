@@ -285,37 +285,80 @@ function SectionBlock({
   );
 }
 
-// ── Policy validation (Feature 28) ───────────────────────────────────
+// ── Combo edges ──────────────────────────────────────────────────────
+//
+// Mirrors DANGEROUS_COMBOS in src/autonoma/harness/validation.py. When a
+// combo's predicate trips, the Pipeline canvas paints both endpoint
+// nodes red and the warnings panel lists the reason. Keep in sync with
+// the server — the server is authoritative and rejects the payload, we
+// just surface it ahead of the round-trip.
+
+interface ComboEdge {
+  from: string;
+  to: string;
+  reason: string;
+  isConflict: (content: HarnessContent) => boolean;
+}
+
+const COMBO_EDGES: ComboEdge[] = [
+  {
+    from: "safety.code_execution",
+    to: "action.harness_enforcement",
+    reason:
+      "code_execution=disabled + harness_enforcement=off disables both safety layers",
+    isConflict: (c) =>
+      c.safety?.code_execution === "disabled" &&
+      c.action?.harness_enforcement === "off",
+  },
+  {
+    from: "spawn.approval_mode",
+    to: "safety.enforcement_level",
+    reason:
+      "automatic spawning + enforcement=off removes every gate on uncontrolled agent growth",
+    isConflict: (c) =>
+      c.spawn?.approval_mode === "automatic" &&
+      c.safety?.enforcement_level === "off",
+  },
+];
+
+// ── Policy validation (client-side preview of server rules) ──────────
 
 function validatePolicy(working: HarnessContent): string[] {
   const warnings: string[] = [];
-
   const action = working.action ?? {};
-  const spawn = working.spawn ?? {};
   const safety = working.safety ?? {};
   const loop = working.loop ?? {};
+  const spawn = working.spawn ?? {};
 
+  for (const edge of COMBO_EDGES) {
+    if (edge.isConflict(working)) {
+      warnings.push(`🔴 ${edge.from} ↔ ${edge.to}: ${edge.reason}`);
+    }
+  }
+
+  if (safety.enforcement_level === "off") {
+    warnings.push(
+      "⚠️ safety.enforcement_level=off is admin-only and removes every safety gate",
+    );
+  }
   if (action.harness_enforcement === "off") {
-    warnings.push("⚠️ Harness enforcement is off — agents can use any action regardless of role");
+    warnings.push(
+      "⚠️ action.harness_enforcement=off is admin-only — agents ignore role restrictions",
+    );
   }
-
-  if (spawn.approval_mode === "automatic" && safety.enforcement_level === "off") {
-    warnings.push("🔴 Automatic spawning with no safety enforcement is dangerous");
+  const maxRounds = typeof loop.max_rounds === "number" ? loop.max_rounds : 0;
+  if (maxRounds > 200) {
+    warnings.push("⚠️ loop.max_rounds above 200 requires admin privileges");
   }
-
-  if (action.code_execution === "disabled" && action.harness_enforcement === "off") {
-    warnings.push("⚠️ Code execution disabled but enforcement is off — the restriction won't be applied");
-  }
-
-  const maxAgents = typeof loop.max_agents === "number" ? loop.max_agents : 0;
+  const maxAgents = typeof spawn.max_agents === "number" ? spawn.max_agents : 0;
   if (maxAgents > 16) {
-    warnings.push("⚠️ More than 16 agents may cause performance issues");
+    warnings.push("⚠️ spawn.max_agents above 16 requires admin privileges");
   }
 
   return warnings;
 }
 
-// ── Pipeline overview (read-only visual) ──────────────────────────────
+// ── Pipeline canvas (editable graph) ──────────────────────────────────
 
 function valueAtPath(content: HarnessContent, fieldPath: string): unknown {
   const [section, field] = fieldPath.split(".");
@@ -323,14 +366,177 @@ function valueAtPath(content: HarnessContent, fieldPath: string): unknown {
   return content[section]?.[field];
 }
 
-function PipelineOverview({
+function specAtPath(
+  schema: HarnessSchema,
+  fieldPath: string,
+): HarnessFieldSpec | undefined {
+  const [section, field] = fieldPath.split(".");
+  if (!section || !field) return undefined;
+  return schema.sections[section]?.[field];
+}
+
+function setValueAtPath(
+  prev: HarnessContent,
+  fieldPath: string,
+  next: unknown,
+): HarnessContent {
+  const [section, field] = fieldPath.split(".");
+  if (!section || !field) return prev;
+  return {
+    ...prev,
+    [section]: { ...(prev[section] ?? {}), [field]: next },
+  };
+}
+
+function CompactField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: HarnessFieldSpec;
+  value: unknown;
+  onChange: (next: unknown) => void;
+}) {
+  if (spec.type === "enum" && spec.options) {
+    const currentVal = String(value ?? spec.default ?? "");
+    return (
+      <select
+        value={currentVal}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded border border-white/15 bg-slate-950/80 px-1.5 py-1 text-[11px] font-mono font-semibold text-white outline-none focus:border-fuchsia-500/60"
+      >
+        {spec.options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (spec.type === "bool") {
+    const on = Boolean(value ?? spec.default);
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        onClick={() => onChange(!on)}
+        className={`w-full rounded px-2 py-1 text-[11px] font-mono font-bold transition-colors ${
+          on
+            ? "bg-fuchsia-600/80 text-white"
+            : "bg-white/10 text-white/60 hover:bg-white/15"
+        }`}
+      >
+        {on ? "ON" : "OFF"}
+      </button>
+    );
+  }
+  if (spec.type === "int" || spec.type === "float") {
+    const step = spec.type === "int" ? 1 : 0.01;
+    const num =
+      typeof value === "number"
+        ? value
+        : typeof spec.default === "number"
+          ? spec.default
+          : 0;
+    return (
+      <input
+        type="number"
+        value={num}
+        min={spec.min}
+        max={spec.max}
+        step={step}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") return;
+          const parsed =
+            spec.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
+          if (Number.isFinite(parsed)) onChange(parsed);
+        }}
+        className="w-full rounded border border-white/15 bg-slate-950/80 px-1.5 py-1 text-[11px] font-mono font-semibold text-white outline-none focus:border-fuchsia-500/60"
+      />
+    );
+  }
+  return <span className="text-[10px] font-mono italic text-white/30">—</span>;
+}
+
+function NodeCard({
+  node,
+  spec,
+  value,
+  onChange,
+  active,
+  modified,
+  conflict,
+}: {
+  node: HarnessPipelineNode;
+  spec: HarnessFieldSpec | undefined;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  active: boolean;
+  modified: boolean;
+  conflict: boolean;
+}) {
+  const borderClass = conflict
+    ? "border-red-400/60 bg-red-500/10"
+    : active
+      ? "border-amber-400/55 bg-amber-500/10"
+      : modified
+        ? "border-fuchsia-500/40 bg-fuchsia-500/5"
+        : "border-white/10 bg-slate-950/55";
+  return (
+    <div
+      className={`flex min-w-[170px] flex-1 basis-[170px] flex-col rounded-md border px-2.5 py-2 ${borderClass}`}
+    >
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span className="flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-white/55">
+          {node.label}
+        </span>
+        {node.admin_sensitive && (
+          <span
+            title="At least one value on this field is admin-only"
+            className="text-[8px] text-amber-400/70"
+          >
+            🔒
+          </span>
+        )}
+        {modified && (
+          <span
+            title="Modified from preset"
+            className="h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_5px_rgba(232,121,249,0.6)]"
+          />
+        )}
+      </div>
+      {spec ? (
+        <CompactField spec={spec} value={value} onChange={onChange} />
+      ) : (
+        <span className="text-[10px] font-mono italic text-white/30">
+          schema missing
+        </span>
+      )}
+      <div className="mt-1 font-mono text-[9px] text-white/25">
+        {node.field_path}
+      </div>
+    </div>
+  );
+}
+
+function PipelineCanvas({
   pipeline,
+  schema,
   working,
+  base,
+  onChange,
   activeFieldPaths,
+  comboConflicts,
 }: {
   pipeline: HarnessPipeline;
+  schema: HarnessSchema;
   working: HarnessContent;
+  base: HarnessContent;
+  onChange: (fieldPath: string, next: unknown) => void;
   activeFieldPaths?: ReadonlySet<string>;
+  comboConflicts: ReadonlySet<string>;
 }) {
   const nodesByGroup = useMemo(() => {
     const map = new Map<string, HarnessPipelineNode[]>();
@@ -343,49 +549,52 @@ function PipelineOverview({
   }, [pipeline.groups, pipeline.nodes]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-6">
-      <p className="mb-5 text-center text-[11px] font-mono text-white/30">
-        Read-only overview — edit values in the Settings tab
+    <div className="flex-1 overflow-y-auto px-5 py-4">
+      <p className="mb-4 text-center text-[11px] font-mono text-white/30">
+        Core knobs grouped by stage — edit inline. Open{" "}
+        <span className="mx-0.5 rounded bg-white/5 px-1.5 py-0.5 text-[10px]">
+          Advanced
+        </span>{" "}
+        for the full field list.
       </p>
-      <div className="mx-auto max-w-2xl flex flex-col gap-4">
-        {pipeline.groups.map((group, gi) => {
+      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        {pipeline.groups.map((group) => {
           const nodes = nodesByGroup.get(group.id) ?? [];
           return (
-            <div key={group.id}>
-              {gi > 0 && (
-                <div className="my-1 flex justify-center">
-                  <svg className="h-6 w-6 text-white/15" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 4 L12 20 M8 16 L12 20 L16 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              )}
-              <div className="rounded-lg border border-white/8 bg-slate-900/40 px-4 py-3">
-                <div className="mb-2">
-                  <span className="font-mono text-xs font-bold tracking-widest text-amber-300/70 uppercase">{group.id}</span>
-                  <span className="ml-2 text-[10px] font-mono text-white/30">{group.description}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {nodes.map((node) => {
-                    const val = valueAtPath(working, node.field_path);
-                    const active = activeFieldPaths?.has(node.field_path);
-                    return (
-                      <div
-                        key={node.id}
-                        className={`rounded-md border px-2.5 py-1.5 ${
-                          active ? "border-amber-400/50 bg-amber-500/10" : "border-white/10 bg-slate-950/50"
-                        }`}
-                      >
-                        <div className="font-mono text-[10px] text-white/50">{node.label}</div>
-                        <div className={`font-mono text-xs font-semibold ${active ? "text-amber-200" : "text-white/75"}`}>
-                          {formatValue(val)}
-                        </div>
-                        {node.admin_sensitive && (
-                          <span className="text-[8px] text-amber-400/60">🔒 admin</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+            <div
+              key={group.id}
+              className="rounded-lg border border-white/10 bg-slate-900/35 px-4 py-3"
+            >
+              <div className="mb-2.5 flex items-baseline gap-2">
+                <span className="font-mono text-xs font-bold tracking-widest text-amber-300/75">
+                  {group.label}
+                </span>
+                <span className="truncate text-[10px] font-mono text-white/35">
+                  {group.description}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {nodes.map((node) => {
+                  const spec = specAtPath(schema, node.field_path);
+                  const val = valueAtPath(working, node.field_path);
+                  const baseVal = valueAtPath(base, node.field_path);
+                  const modified = val !== baseVal;
+                  const active =
+                    activeFieldPaths?.has(node.field_path) ?? false;
+                  const conflict = comboConflicts.has(node.field_path);
+                  return (
+                    <NodeCard
+                      key={node.id}
+                      node={node}
+                      spec={spec}
+                      value={val}
+                      onChange={(next) => onChange(node.field_path, next)}
+                      active={active}
+                      modified={modified}
+                      conflict={conflict}
+                    />
+                  );
+                })}
               </div>
             </div>
           );
@@ -571,7 +780,7 @@ function basePresetContent(
   return schema ? defaultContentFromSchema(schema) : {};
 }
 
-type ViewTab = "settings" | "overview";
+type ViewTab = "pipeline" | "advanced";
 
 // ── Main panel ────────────────────────────────────────────────────────
 
@@ -598,7 +807,7 @@ export default function HarnessPanel({
   const [saveName, setSaveName] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<ViewTab>("settings");
+  const [tab, setTab] = useState<ViewTab>("pipeline");
   const [saveExpanded, setSaveExpanded] = useState(false);
 
   const base = useMemo(
@@ -694,6 +903,17 @@ export default function HarnessPanel({
 
   const policyWarnings = useMemo(() => validatePolicy(working), [working]);
 
+  const comboConflicts = useMemo(() => {
+    const paths = new Set<string>();
+    for (const edge of COMBO_EDGES) {
+      if (edge.isConflict(working)) {
+        paths.add(edge.from);
+        paths.add(edge.to);
+      }
+    }
+    return paths;
+  }, [working]);
+
   if (!open) return null;
 
   return (
@@ -746,25 +966,37 @@ export default function HarnessPanel({
 
             {/* Tabs */}
             <div className="flex gap-1 border-b border-white/10 px-5 pt-2">
-              {(["settings", "overview"] as ViewTab[]).map((t) => (
+              {(["pipeline", "advanced"] as ViewTab[]).map((t) => (
                 <button
                   key={t}
                   type="button"
                   onClick={() => setTab(t)}
-                  disabled={t === "overview" && !pipeline}
+                  disabled={t === "pipeline" && !pipeline}
                   className={`rounded-t px-3 py-1.5 text-[11px] font-mono font-bold capitalize transition-colors ${
                     tab === t
                       ? "border-b-2 border-fuchsia-400 text-white"
                       : "text-white/35 hover:text-white/65"
                   } disabled:opacity-25 disabled:cursor-not-allowed`}
                 >
-                  {t === "settings" ? "Settings" : "Pipeline Overview"}
+                  {t === "pipeline" ? "Pipeline" : "Advanced"}
                 </button>
               ))}
             </div>
 
             {/* Tab content */}
-            {tab === "settings" ? (
+            {tab === "pipeline" && pipeline ? (
+              <PipelineCanvas
+                pipeline={pipeline}
+                schema={schema}
+                working={working}
+                base={base}
+                onChange={(path, next) =>
+                  setWorking((prev) => setValueAtPath(prev, path, next))
+                }
+                activeFieldPaths={activeFieldPaths}
+                comboConflicts={comboConflicts}
+              />
+            ) : (
               <div className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-2">
                 {Object.entries(schema.sections).map(([section, fields]) => (
                   <SectionBlock
@@ -778,13 +1010,7 @@ export default function HarnessPanel({
                   />
                 ))}
               </div>
-            ) : pipeline ? (
-              <PipelineOverview
-                pipeline={pipeline}
-                working={working}
-                activeFieldPaths={activeFieldPaths}
-              />
-            ) : null}
+            )}
 
             {/* Footer */}
             <div className="border-t border-white/10 px-5 py-3 flex flex-col gap-2">
