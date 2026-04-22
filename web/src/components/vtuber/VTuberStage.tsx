@@ -296,6 +296,14 @@ export default function VTuberStage({
                 state={spotlightAgent.state ?? "idle"}
                 cameraResetNonce={resetNonce}
                 emote={emotes?.[spotlightAgent.name] ?? null}
+                mocapClipId={
+                  mocapClipIdFor
+                    ? mocapClipIdFor(
+                        spotlightAgent,
+                        emotes?.[spotlightAgent.name] ?? null,
+                      )
+                    : null
+                }
                 onClick={
                   onSelectAgent
                     ? () => onSelectAgent(spotlightAgent.name)
