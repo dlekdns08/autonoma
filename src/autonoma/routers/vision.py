@@ -22,6 +22,13 @@ from fastapi import status as http_status
 from autonoma.auth import User, require_active_user
 from autonoma.config import settings
 from autonoma.event_bus import bus
+from autonoma.llm import (
+    LLMAuthError,
+    LLMConnectionError,
+    LLMError,
+    create_llm_client,
+    llm_config_from_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,54 +103,129 @@ async def vision_observe(
     return reaction
 
 
+_VISION_SYSTEM = (
+    "You are a Vision Agent in the Autonoma AI swarm. The user shares a "
+    "screenshot or webcam frame of what they are currently doing. Decide "
+    "whether an AI teammate should proactively speak up. ONLY act when "
+    "you see something the user would genuinely benefit from: a visible "
+    "bug, a stuck UI state, a question they wrote down, or a clear "
+    "handoff opportunity. Otherwise stay silent (acted=false). Keep "
+    "messages to <=2 sentences, friendly and helpful. Respond STRICTLY "
+    "as a single JSON object and nothing else, matching:\n"
+    "  {\"acted\": boolean, \"agent\": string, \"message\": string, "
+    "\"reason\": string}"
+)
+
+
+def _build_multimodal_messages(
+    provider: str, image_b64: str, mime: str, prompt_text: str
+) -> list[dict[str, Any]]:
+    """Shape an image + text turn the way each provider expects.
+
+    Anthropic accepts ``{"type":"image","source":{"type":"base64",...}}``
+    inside the user message's content array. OpenAI chat-completions use
+    ``{"type":"image_url","image_url":{"url":"data:<mime>;base64,..."}}``.
+    Kept in one place so the router doesn't branch on provider.
+    """
+    if provider == "anthropic":
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime,
+                    "data": image_b64,
+                },
+            },
+            {"type": "text", "text": prompt_text},
+        ]
+    else:
+        # OpenAI + vLLM (OpenAI-compatible) shape.
+        content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+            },
+            {"type": "text", "text": prompt_text},
+        ]
+    return [{"role": "user", "content": content}]
+
+
 async def _decide_reaction(
     image_b64: str, mime: str, hint: str, target_agent: str
 ) -> dict[str, Any]:
     """Ask a multimodal model whether to say something.
 
-    Uses whichever admin LLM is configured. Returns ``{acted: bool,
-    agent, message, reason}``.
+    Uses whichever admin LLM is configured. Returns
+    ``{acted, agent, message, reason}``. On any model / parse failure
+    we return ``acted=false`` so the endpoint degrades gracefully — a
+    missing image model should never surface as a user-visible error.
     """
-    from autonoma.llm import LLMConfig, call_llm  # type: ignore[attr-defined]
+    import json as _json
 
-    prompt = (
-        "You are a Vision Agent in the Autonoma swarm. A user shared a "
-        "screenshot or webcam frame of what they are currently doing. "
-        "Decide whether an AI teammate should proactively speak up. "
-        "Only act if you see something the user would genuinely benefit "
-        "from: a visible bug, a stuck state, a question they wrote down, "
-        "or a clear handoff opportunity. Respond STRICTLY as JSON:\n\n"
-        "  {\"acted\": bool, \"agent\": \"Alice|Bear|...\", "
-        "\"message\": \"<=2 sentences\", \"reason\": \"internal note\"}\n\n"
-        f"User hint: {hint or '(none)'}\n"
-        f"Preferred agent: {target_agent or '(any)'}"
-    )
     try:
-        # ``call_llm`` is expected to accept a list of content blocks when
-        # doing multimodal. If this project's LLMConfig doesn't have a
-        # multimodal path yet, fall back to a text-only heuristic — the
-        # caller sees acted=false and the UI simply doesn't announce.
-        cfg = LLMConfig.from_settings()
-        raw = await call_llm(  # type: ignore[call-arg]
-            cfg,
-            [
-                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": image_b64}},
-                {"type": "text", "text": prompt},
-            ],
+        cfg = llm_config_from_settings()
+    except Exception as exc:  # pragma: no cover — bad settings
+        return {"acted": False, "reason": f"no_llm_config: {exc}"}
+    if not cfg.api_key and cfg.provider != "vllm":
+        return {"acted": False, "reason": "no_api_key"}
+
+    prompt_text = (
+        f"User hint: {hint or '(none)'}\n"
+        f"Preferred agent: {target_agent or '(any)'}\n\n"
+        "Look at the attached image and decide."
+    )
+    messages = _build_multimodal_messages(cfg.provider, image_b64, mime, prompt_text)
+
+    client = create_llm_client(cfg)
+    try:
+        # Capped output — this is a yes/no + 2-sentence message.
+        response = await client.create(
+            model=cfg.model,
+            max_tokens=256,
+            temperature=0.2,
+            system=_VISION_SYSTEM,
+            messages=messages,
         )
-    except (TypeError, AttributeError, NotImplementedError) as exc:
-        logger.info("[vision] multimodal path unavailable (%s) — skipping", exc)
-        return {"acted": False, "reason": f"unsupported: {exc}"}
+    except (LLMAuthError, LLMConnectionError) as exc:
+        logger.warning("[vision] model unreachable: %s", exc)
+        return {"acted": False, "reason": f"unreachable: {type(exc).__name__}"}
+    except LLMError as exc:
+        logger.warning("[vision] llm error: %s", exc)
+        return {"acted": False, "reason": f"llm_error: {exc}"}
     except Exception as exc:  # pragma: no cover — defensive
-        logger.exception("[vision] model call failed")
+        logger.exception("[vision] unexpected model failure")
         return {"acted": False, "reason": f"error: {exc}"}
 
-    import json
+    raw = (response.text or "").strip()
+    if not raw:
+        return {"acted": False, "reason": "empty_response"}
+    # Strip common wrappers the model sometimes produces (```json ... ```).
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
     try:
-        parsed = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(parsed, dict):
-            raise ValueError("non-dict response")
-    except Exception:
-        return {"acted": False, "reason": "unparseable model response"}
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError:
+        # Be forgiving — extract the outermost {...} block and retry.
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = _json.loads(raw[start:end + 1])
+            except _json.JSONDecodeError:
+                return {"acted": False, "reason": "unparseable"}
+        else:
+            return {"acted": False, "reason": "unparseable"}
+    if not isinstance(parsed, dict):
+        return {"acted": False, "reason": "non_dict_response"}
     parsed.setdefault("acted", False)
+    parsed.setdefault("agent", "")
+    parsed.setdefault("message", "")
+    parsed.setdefault("reason", "")
+    # Normalize bool (models sometimes emit "true" as a string).
+    if isinstance(parsed["acted"], str):
+        parsed["acted"] = parsed["acted"].strip().lower() in ("true", "yes", "1")
     return parsed
