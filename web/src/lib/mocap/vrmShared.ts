@@ -30,6 +30,23 @@ export function collectMocapBones(vrm: VRM): MocapBoneMap {
   return out;
 }
 
+/** Count how many bones in the map are non-null. Useful as a one-line
+ *  diagnostic when finger mocap "seems broken" — if the rig omits
+ *  finger bones there's nothing for the clip to drive. */
+export function countResolvedBones(map: MocapBoneMap): {
+  resolved: number;
+  total: number;
+  missing: MocapBone[];
+} {
+  let resolved = 0;
+  const missing: MocapBone[] = [];
+  for (const name of MOCAP_BONES) {
+    if (map[name]) resolved++;
+    else missing.push(name);
+  }
+  return { resolved, total: MOCAP_BONES.length, missing };
+}
+
 /** Scratch quaternion reused by ``applyBoneSample`` so writing a full
  *  clip sample stays allocation-free. */
 const _q = new THREE.Quaternion();

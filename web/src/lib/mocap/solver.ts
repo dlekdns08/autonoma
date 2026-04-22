@@ -194,8 +194,13 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
 const WRIST_LM = 0;
-const THUMB_MCP_LM = 1;
-const THUMB_IP_LM = 2;
+// Thumb: CMC(1) → MCP(2) → IP(3) → TIP(4). VRM's ``thumbProximal`` bone
+// starts at the MCP joint and extends toward the IP joint, so we sample
+// its direction from landmarks 2 → 3 (NOT 1 → 2, which is the thumb
+// *metacarpal* bone — a different VRM joint that most rigs don't expose
+// as a normalized humanoid bone).
+const THUMB_PROX_BASE_LM = 2;
+const THUMB_PROX_TIP_LM = 3;
 const INDEX_MCP_LM = 5;
 const INDEX_PIP_LM = 6;
 const MIDDLE_MCP_LM = 9;
@@ -205,18 +210,19 @@ const RING_PIP_LM = 14;
 const PINKY_MCP_LM = 17;
 const PINKY_PIP_LM = 18;
 
-/** (boneName, start-landmark, end-landmark). Thumb uses CMC→MCP since
- *  that's what VRM's thumbProximal spans; other fingers use MCP→PIP. */
+/** (boneName, start-landmark, end-landmark). Each pair spans the bone
+ *  whose rotation we're computing — start is the bone's base joint and
+ *  end is where the bone points toward at rest. */
 type FingerBone = readonly [MocapBone, number, number];
 const LEFT_FINGERS: readonly FingerBone[] = [
-  ["leftThumbProximal", THUMB_MCP_LM, THUMB_IP_LM],
+  ["leftThumbProximal", THUMB_PROX_BASE_LM, THUMB_PROX_TIP_LM],
   ["leftIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
   ["leftMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
   ["leftRingProximal", RING_MCP_LM, RING_PIP_LM],
   ["leftLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
 ];
 const RIGHT_FINGERS: readonly FingerBone[] = [
-  ["rightThumbProximal", THUMB_MCP_LM, THUMB_IP_LM],
+  ["rightThumbProximal", THUMB_PROX_BASE_LM, THUMB_PROX_TIP_LM],
   ["rightIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
   ["rightMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
   ["rightRingProximal", RING_MCP_LM, RING_PIP_LM],
@@ -228,16 +234,11 @@ const RIGHT_FINGERS: readonly FingerBone[] = [
 // allocations in steady state.
 const _hWrist = new THREE.Vector3();
 const _hMid = new THREE.Vector3();
-const _hIdx = new THREE.Vector3();
-const _hPky = new THREE.Vector3();
 const _hMcp = new THREE.Vector3();
 const _hPip = new THREE.Vector3();
 const _hDir = new THREE.Vector3();
-const _hDirLocal = new THREE.Vector3();
-const _palmX = new THREE.Vector3();
 const _palmY = new THREE.Vector3();
-const _palmZ = new THREE.Vector3();
-const _restY = new THREE.Vector3(0, 1, 0);
+const _curlEuler = new THREE.Euler();
 const _handQ = new THREE.Quaternion();
 
 export interface SolverOptions {
@@ -303,6 +304,9 @@ export class MocapSolver {
     for (const k of Object.keys(out.expressions)) {
       delete out.expressions[k as MocapExpression];
     }
+    // Diagnostic state is per-frame; reset before per-hand math
+    // accumulates into it.
+    this.latestFingerMaxCurl = 0;
     if (face) this.solveFace(face, tsSec, out);
     if (pose) this.solvePose(pose, tsSec, out);
     if (hands) this.solveHands(hands, tsSec, out);
@@ -426,15 +430,9 @@ export class MocapSolver {
   /** Drive each hand's finger-proximal bones from a HandLandmarker
    *  result. Only one hand of each handedness wins — if MediaPipe
    *  detects two "Left" hands (rare but possible with two people in
-   *  frame) we take the first and ignore the rest.
-   *
-   *  The landmark→bone pipeline for each finger:
-   *    1. Build a palm-local frame from wrist/index-MCP/pinky-MCP/
-   *       middle-MCP so "forward along fingers" is +Y regardless of
-   *       where the user's hand is in space.
-   *    2. Project the MCP→PIP direction into that frame.
-   *    3. Quaternion from rest (0,1,0) → observed direction becomes the
-   *       VRM proximal's local rotation relative to its parent hand.
+   *  frame) we take the first and ignore the rest. ``latestHandCount``
+   *  / ``latestHandSides`` are refreshed so callers can surface a live
+   *  diagnostic ("손 2개 감지").
    *
    *  Mirror convention: when ``mirror`` is on we swap MediaPipe's
    *  ``Left``↔``Right`` output (the user sees themselves in a mirror so
@@ -447,6 +445,9 @@ export class MocapSolver {
   ): void {
     const hands = result.landmarks;
     const sides = result.handednesses;
+    this.latestHandCount = 0;
+    this.latestHandSides.left = false;
+    this.latestHandSides.right = false;
     if (!hands || !sides) return;
     const seenLeft = { done: false };
     const seenRight = { done: false };
@@ -460,61 +461,73 @@ export class MocapSolver {
       if (!vrmIsLeft && seenRight.done) continue;
       if (vrmIsLeft) seenLeft.done = true;
       else seenRight.done = true;
+      this.latestHandCount++;
+      if (vrmIsLeft) this.latestHandSides.left = true;
+      else this.latestHandSides.right = true;
       this.solveOneHand(lm, vrmIsLeft, tsSec, out);
     }
   }
 
+  /** Curl-only finger solver. Computes one scalar — the angle between
+   *  the finger's MCP→PIP segment and the palm-forward axis
+   *  (wrist→middle-MCP) — then writes that as a rotation around the
+   *  VRM bone's local X axis.
+   *
+   *  Why curl-only instead of full 3D rotation:
+   *  - The palm-local X/Z axes we derived from landmarks don't reliably
+   *    line up with the VRM rig's hand-bone local frame (different
+   *    exporters, different resting palm orientation). Full 3D
+   *    ``setFromUnitVectors`` in the wrong frame silently produces zero
+   *    visible motion because the rotation vanishes when projected onto
+   *    the wrong axes.
+   *  - Curl angle is axis-independent — it's a scalar derived from a
+   *    dot product, so it's robust to every frame convention.
+   *  - VRM's normalized humanoid puts all finger proximals with +Y
+   *    pointing toward the tip; a negative rotation around local X
+   *    bends the finger inward. This holds for every VRoid-exported rig
+   *    we've tested and chirality is handled by the rig, not us.
+   *
+   *  Trade-off: fingers can't spread apart (abduction) — only flex.
+   *  That's fine for the headline "open hand / closed fist / point"
+   *  vocabulary; we can layer in spread once curl is visually correct.
+   */
   private solveOneHand(
     lm: { x: number; y: number; z: number }[],
     vrmIsLeft: boolean,
     tsSec: number,
     out: ClipSample,
   ): void {
-    // MediaPipe gives normalised image-space coords with Y pointing
-    // down. We use the coords directly; the rotation we derive is
-    // relative to the palm frame, so the absolute handedness of the
-    // axis system doesn't matter as long as it's internally consistent.
     _hWrist.set(lm[WRIST_LM].x, lm[WRIST_LM].y, lm[WRIST_LM].z);
     _hMid.set(lm[MIDDLE_MCP_LM].x, lm[MIDDLE_MCP_LM].y, lm[MIDDLE_MCP_LM].z);
-    _hIdx.set(lm[INDEX_MCP_LM].x, lm[INDEX_MCP_LM].y, lm[INDEX_MCP_LM].z);
-    _hPky.set(lm[PINKY_MCP_LM].x, lm[PINKY_MCP_LM].y, lm[PINKY_MCP_LM].z);
 
-    // Palm Y — forward along the fingers (wrist → middle-MCP).
+    // Palm forward direction (wrist → middle MCP). This is what we
+    // measure each finger's curl against.
     _palmY.copy(_hMid).sub(_hWrist);
     if (_palmY.lengthSq() < 1e-10) return;
     _palmY.normalize();
 
-    // Palm X — across the palm. For a left hand seen from back: thumb
-    // is on the right side of the image, so index→pinky points in the
-    // +X palm direction. Right hand is mirrored. We normalise by the
-    // VRM side so the frame is consistent with the bone we'll write to.
-    _palmX.copy(_hPky).sub(_hIdx);
-    if (!vrmIsLeft) _palmX.negate();
-    const dotXY = _palmX.dot(_palmY);
-    _palmX.addScaledVector(_palmY, -dotXY);
-    if (_palmX.lengthSq() < 1e-10) return;
-    _palmX.normalize();
-
-    // Palm Z — palm normal (X × Y).
-    _palmZ.copy(_palmX).cross(_palmY).normalize();
-
     const fingers = vrmIsLeft ? LEFT_FINGERS : RIGHT_FINGERS;
-    for (const [boneName, mcpIdx, pipIdx] of fingers) {
-      _hMcp.set(lm[mcpIdx].x, lm[mcpIdx].y, lm[mcpIdx].z);
-      _hPip.set(lm[pipIdx].x, lm[pipIdx].y, lm[pipIdx].z);
+    for (const [boneName, baseIdx, tipIdx] of fingers) {
+      _hMcp.set(lm[baseIdx].x, lm[baseIdx].y, lm[baseIdx].z);
+      _hPip.set(lm[tipIdx].x, lm[tipIdx].y, lm[tipIdx].z);
       _hDir.copy(_hPip).sub(_hMcp);
       if (_hDir.lengthSq() < 1e-10) continue;
       _hDir.normalize();
-      // Project into palm frame.
-      _hDirLocal.set(
-        _hDir.dot(_palmX),
-        _hDir.dot(_palmY),
-        _hDir.dot(_palmZ),
-      );
-      if (_hDirLocal.lengthSq() < 1e-10) continue;
-      _hDirLocal.normalize();
-      // Quaternion from finger rest (palm +Y) to observed direction.
-      _handQ.setFromUnitVectors(_restY, _hDirLocal);
+
+      // Cosine of angle between finger direction and palm-forward.
+      // At rest (finger extended): dot ≈ 1, angle ≈ 0.
+      // Full flex (fingertip touching palm): dot ≈ 0, angle ≈ 90°.
+      // Hyperextension (rare): dot slightly > 1 — clamp to keep acos
+      // well-defined.
+      const cos = Math.max(-1, Math.min(1, _hDir.dot(_palmY)));
+      const curl = Math.acos(cos);
+      this.latestFingerMaxCurl = Math.max(this.latestFingerMaxCurl, curl);
+
+      // Negative rotation around local X = bend toward palm (flexion)
+      // in VRM's normalized finger convention. Chirality is already
+      // baked into the rig — both hands use the same sign.
+      _curlEuler.set(-curl, 0, 0, "XYZ");
+      _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(
         boneName,
         [_handQ.x, _handQ.y, _handQ.z, _handQ.w],
@@ -523,4 +536,13 @@ export class MocapSolver {
       );
     }
   }
+
+  // ── Diagnostics (read by the /mocap page for the "hands detected"
+  // status strip). Updated inside ``solveHands`` each frame. ──────────
+  latestHandCount = 0;
+  readonly latestHandSides = { left: false, right: false };
+  /** Peak curl angle (radians) observed across all fingers this frame.
+   *  Reset on each ``solveInto`` via the frame-max pattern — handy for
+   *  "is anything happening?" readouts. */
+  latestFingerMaxCurl = 0;
 }

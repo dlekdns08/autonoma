@@ -21,6 +21,7 @@ import { Suspense, useEffect, useMemo, useRef } from "react";
 import type { RefObject } from "react";
 import {
   collectMocapBones,
+  countResolvedBones,
   applyBoneSampleAll,
   applyExpressionSample,
   type MocapBoneMap,
@@ -43,6 +44,17 @@ function PreviewVRM({ url, sampleRef }: { url: string; sampleRef: RefObject<Clip
     if (!vrm) return;
     VRMUtils.rotateVRM0(vrm);
     bonesRef.current = collectMocapBones(vrm);
+    // One-time diagnostic: log which MOCAP_BONES this rig actually
+    // exposes. Finger capture silently no-ops when the rig omits
+    // finger humanoid bones (some minimalist VRMs do); this log makes
+    // that failure mode discoverable in the browser console.
+    const stats = countResolvedBones(bonesRef.current);
+    if (stats.missing.length > 0) {
+      console.info(
+        `[mocap] VRM resolved ${stats.resolved}/${stats.total} bones. Missing:`,
+        stats.missing,
+      );
+    }
     vrm.scene.traverse((o) => {
       o.frustumCulled = false;
     });

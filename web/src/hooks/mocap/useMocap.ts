@@ -96,6 +96,19 @@ export interface UseMocapOptions {
   onMaxDurationReached?: () => void;
 }
 
+export interface HandDiagnostics {
+  /** 0/1/2 — hands detected on the most recent frame. Updates at
+   *  ``frameSeq`` cadence. */
+  count: number;
+  /** Which VRM side is being driven (after mirror swap). */
+  leftActive: boolean;
+  rightActive: boolean;
+  /** Peak finger curl angle (radians) seen this frame. Useful to prove
+   *  "motion is flowing" — moves from 0 toward ~1.5 when you close your
+   *  fist. Stays at 0 if finger detection works but math collapses. */
+  maxCurl: number;
+}
+
 export interface UseMocapReturn {
   status: MocapStatus;
   error: string | null;
@@ -106,6 +119,8 @@ export interface UseMocapReturn {
   /** Frame seq number that bumps on each solve — listeners can use
    *  this as a dependency to re-render at capture cadence. */
   frameSeq: number;
+  /** Live hand-capture diagnostics. Null when hands aren't enabled. */
+  handDiagnostics: HandDiagnostics | null;
   /** True while a recording is actively collecting frames. */
   recording: boolean;
   recordingMeta: RecordingMeta | null;
@@ -142,6 +157,12 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   const handRef = useRef<HandLandmarker | null>(null);
   const solverRef = useRef<MocapSolver | null>(null);
   const sampleRef = useRef<ClipSample>(createSampleBuffer());
+  // Throttled hand diagnostics — refreshed every ~10 frames so the UI
+  // readout doesn't cause re-renders at full 30fps.
+  const [handDiagnostics, setHandDiagnostics] = useState<HandDiagnostics | null>(
+    null,
+  );
+  const lastDiagSeqRef = useRef(0);
   const rafHandleRef = useRef<number | null>(null);
   const vfcCleanupRef = useRef<(() => void) | null>(null);
   const runningRef = useRef(false);
@@ -296,6 +317,22 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
           appendRawFrame(sampleRef.current, tsSec);
         }
 
+        // Throttle the diagnostics setState so we don't re-render the
+        // whole page at 30fps just for a status readout. ~3× per second
+        // is plenty for a "hand count · max curl" text strip.
+        const solver = solverRef.current;
+        if (opts.hands && solver) {
+          lastDiagSeqRef.current = (lastDiagSeqRef.current + 1) % 10;
+          if (lastDiagSeqRef.current === 0) {
+            setHandDiagnostics({
+              count: solver.latestHandCount,
+              leftActive: solver.latestHandSides.left,
+              rightActive: solver.latestHandSides.right,
+              maxCurl: solver.latestFingerMaxCurl,
+            });
+          }
+        }
+
         setFrameSeq((s) => s + 1);
         rafHandleRef.current = requestAnimationFrame(tick);
       };
@@ -409,6 +446,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     latestSample: sampleRef.current,
     videoRef,
     frameSeq,
+    handDiagnostics: opts.hands ? handDiagnostics : null,
     recording,
     recordingMeta,
     start,

@@ -44,6 +44,26 @@ import { API_BASE_URL } from "@/hooks/useSwarm";
 
 type Stage = "idle" | "recorded" | "uploading" | "error";
 
+/** One-line readout for the "손 캡처" status strip. Kept as a
+ *  module-scoped helper so inline JSX doesn't embed the formatting. */
+function handDiagLabel(d: {
+  count: number;
+  leftActive: boolean;
+  rightActive: boolean;
+  maxCurl: number;
+}): string {
+  const sides =
+    d.leftActive && d.rightActive
+      ? "L+R"
+      : d.leftActive
+        ? "L"
+        : d.rightActive
+          ? "R"
+          : "–";
+  const curlDeg = Math.round((d.maxCurl * 180) / Math.PI);
+  return `손 ${d.count}개 (${sides}) · curl ${curlDeg}°`;
+}
+
 export default function MocapPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -384,6 +404,14 @@ export default function MocapPage() {
                   />
                   손 캡처
                 </label>
+                {mocap.handDiagnostics && (
+                  <span
+                    className="rounded border border-cyan-500/30 bg-cyan-500/5 px-2 py-1 text-cyan-200/80"
+                    title="손 감지 수 · 손가락 curl(라디안). curl이 0이면 본은 움직이지 않는 상태."
+                  >
+                    {handDiagLabel(mocap.handDiagnostics)}
+                  </span>
+                )}
                 {mocap.status === "running" && !mocap.recording && stage !== "recorded" && (
                   <button
                     onClick={onRecord}
