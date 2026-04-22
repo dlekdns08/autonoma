@@ -9,15 +9,18 @@
  *
  * Refresh strategy:
  *   - On mount: one-shot GET so the UI has data immediately.
- *   - On ``refreshToken`` bump: re-fetch. Parent passes a counter that
- *     increments whenever a ``mocap.bindings.updated`` event arrives
- *     via the WS bridge (see ``useSwarm``).
- *   - On upsert/remove: optimistic local write plus a background GET to
- *     reconcile against any concurrent edits from another viewer.
+ *   - On ``refreshToken`` bump: full GET. Parent uses this for hard
+ *     resyncs (WS reconnect, recovering from dropped events).
+ *   - On ``remoteEvent`` tick: apply a row-level patch locally, skipping
+ *     the round-trip entirely. Routine edits from peers flow through
+ *     this path.
+ *   - On upsert/remove: optimistic local write. The server's echo
+ *     event will tick ``remoteEvent`` a moment later, but the payload
+ *     matches what we already have so the patch is idempotent.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE_URL } from "@/hooks/useSwarm";
+import { API_BASE_URL, type MocapBindingEvent } from "@/hooks/useSwarm";
 import type { BindingRow } from "@/lib/mocap/clipFormat";
 import type { TriggerKind } from "@/lib/mocap/triggers";
 
@@ -62,11 +65,19 @@ function keyIndex(k: BindingKey): string {
   return `${k.vrmFile}|${k.kind}|${k.value}`;
 }
 
-export function useMocapBindings(refreshToken: number = 0): UseMocapBindings {
+export function useMocapBindings(
+  refreshToken: number = 0,
+  remoteEvent: MocapBindingEvent | null = null,
+): UseMocapBindings {
   const [bindings, setBindings] = useState<BindingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const reqSeqRef = useRef(0);
+  // Tracks the last remote event seq we applied so re-renders that
+  // carry the same event object don't re-apply the patch. React may
+  // re-run this effect on parent re-renders even if the object identity
+  // is stable; the seq guard makes the patch idempotent.
+  const lastAppliedEventSeqRef = useRef(0);
 
   const refresh = useCallback(async () => {
     const seq = ++reqSeqRef.current;
@@ -92,6 +103,33 @@ export function useMocapBindings(refreshToken: number = 0): UseMocapBindings {
   useEffect(() => {
     void refresh();
   }, [refresh, refreshToken]);
+
+  // Row-level patch path: peers' edits arrive as ``MocapBindingEvent``
+  // payloads and we splice the single affected row. Falls back to a
+  // full refetch only when ``refreshToken`` bumps.
+  useEffect(() => {
+    if (!remoteEvent) return;
+    if (remoteEvent.seq <= lastAppliedEventSeqRef.current) return;
+    lastAppliedEventSeqRef.current = remoteEvent.seq;
+    setBindings((prev) => {
+      const ix = `${remoteEvent.vrm_file}|${remoteEvent.trigger_kind}|${remoteEvent.trigger_value}`;
+      const without = prev.filter((b) => bindingIndex(b) !== ix);
+      if (remoteEvent.removed || !remoteEvent.clip_id) return without;
+      const kind = remoteEvent.trigger_kind as BindingRow["trigger_kind"];
+      const patched: BindingRow = {
+        vrm_file: remoteEvent.vrm_file,
+        trigger_kind: kind,
+        trigger_value: remoteEvent.trigger_value,
+        clip_id: remoteEvent.clip_id,
+        // ``updated_at`` / ``updated_by`` come from the server on the
+        // next full GET; until then we stamp "now" so UIs that sort by
+        // recency still show the edit at the top.
+        updated_at: new Date().toISOString(),
+        updated_by: null,
+      };
+      return [patched, ...without];
+    });
+  }, [remoteEvent]);
 
   // Indexed by "vrm|kind|value" so the dashboard's per-frame lookup is
   // O(1). useMemo rebuilds the map only when the list changes.
