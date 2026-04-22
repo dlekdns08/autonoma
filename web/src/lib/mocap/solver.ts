@@ -242,6 +242,21 @@ const _palmY = new THREE.Vector3();
 const _curlEuler = new THREE.Euler();
 const _handQ = new THREE.Quaternion();
 
+// Curl range calibration. Empirically ``Math.acos(dot(MCP→PIP,
+// wrist→middleMCP))`` doesn't map 0°→straight / 90°→fist because:
+//   - At an open "rest" hand the MAX finger splays ~50° from palm-
+//     forward (pinky naturally abducts; fingers aren't perfectly
+//     parallel to the palm midline).
+//   - At a full fist the max tops out around 90° (MediaPipe's 2D
+//     dominance compresses the 3D curl into image-plane angles).
+// Without remapping, the output bone rotation at rest is already a
+// visible 50° and the full-fist delta is only 40° — looks subtle.
+// We normalise [REST..FIST] → [0..OUT_RANGE] so open hand reads as
+// identity and fist reads as a clean 90° bone rotation.
+const CURL_REST_RAD = (50 * Math.PI) / 180;
+const CURL_FIST_RAD = (90 * Math.PI) / 180;
+const CURL_OUT_RANGE_RAD = (90 * Math.PI) / 180;
+
 export interface SolverOptions {
   /** Mirror the webcam on horizontal axis so the user's left hand drives
    *  the VRM's left hand (webcam is a mirror by convention). Default
@@ -526,19 +541,24 @@ export class MocapSolver {
       _hDir.normalize();
 
       // Cosine of angle between finger direction and palm-forward.
-      // At rest (finger extended): dot ≈ 1, angle ≈ 0.
-      // Full flex (fingertip touching palm): dot ≈ 0, angle ≈ 90°.
-      // Hyperextension (rare): dot slightly > 1 — clamp to keep acos
-      // well-defined.
+      // Raw curl ranges empirically ~50° (open rest) → ~90° (full
+      // fist); we normalise that span to a visible 0° → 90° bone
+      // rotation. See ``CURL_REST_RAD`` comment.
       const cos = Math.max(-1, Math.min(1, _hDir.dot(_palmY)));
       const curl = Math.acos(cos);
       this.latestFingerMaxCurl = Math.max(this.latestFingerMaxCurl, curl);
+
+      const norm = Math.max(
+        0,
+        Math.min(1, (curl - CURL_REST_RAD) / (CURL_FIST_RAD - CURL_REST_RAD)),
+      );
+      const boneRot = norm * CURL_OUT_RANGE_RAD;
 
       // Positive rotation around local Z = bend toward palm (flexion)
       // in VRoid's normalized finger convention. Both hands use the
       // same sign — chirality is already baked into the rig's local
       // axes by three-vrm.
-      _curlEuler.set(0, 0, curl, "XYZ");
+      _curlEuler.set(0, 0, boneRot, "XYZ");
       _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(
         boneName,
