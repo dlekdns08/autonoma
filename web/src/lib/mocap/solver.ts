@@ -194,13 +194,6 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
 const WRIST_LM = 0;
-// Thumb: CMC(1) → MCP(2) → IP(3) → TIP(4). VRM's ``thumbProximal`` bone
-// starts at the MCP joint and extends toward the IP joint, so we sample
-// its direction from landmarks 2 → 3 (NOT 1 → 2, which is the thumb
-// *metacarpal* bone — a different VRM joint that most rigs don't expose
-// as a normalized humanoid bone).
-const THUMB_PROX_BASE_LM = 2;
-const THUMB_PROX_TIP_LM = 3;
 const INDEX_MCP_LM = 5;
 const INDEX_PIP_LM = 6;
 const MIDDLE_MCP_LM = 9;
@@ -209,20 +202,28 @@ const RING_MCP_LM = 13;
 const RING_PIP_LM = 14;
 const PINKY_MCP_LM = 17;
 const PINKY_PIP_LM = 18;
+// Thumb landmarks CMC(1) → MCP(2) → IP(3) → TIP(4) are intentionally
+// NOT used — see the note in ``LEFT_FINGERS`` below.
 
 /** (boneName, start-landmark, end-landmark). Each pair spans the bone
  *  whose rotation we're computing — start is the bone's base joint and
- *  end is where the bone points toward at rest. */
+ *  end is where the bone points toward at rest.
+ *
+ *  Thumbs are omitted: our curl metric (angle between MCP→PIP and
+ *  wrist→middle-MCP) assumes the finger's rest direction is palm-
+ *  forward. That's true for index/middle/ring/little but not the
+ *  thumb, which pokes out orthogonal to the palm at rest. Without a
+ *  thumb-specific rest reference the thumb would read as ~60°-curled
+ *  even in a relaxed hand. We'll add thumbs back with their own
+ *  reference once the main four fingers are validated visually. */
 type FingerBone = readonly [MocapBone, number, number];
 const LEFT_FINGERS: readonly FingerBone[] = [
-  ["leftThumbProximal", THUMB_PROX_BASE_LM, THUMB_PROX_TIP_LM],
   ["leftIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
   ["leftMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
   ["leftRingProximal", RING_MCP_LM, RING_PIP_LM],
   ["leftLittleProximal", PINKY_MCP_LM, PINKY_PIP_LM],
 ];
 const RIGHT_FINGERS: readonly FingerBone[] = [
-  ["rightThumbProximal", THUMB_PROX_BASE_LM, THUMB_PROX_TIP_LM],
   ["rightIndexProximal", INDEX_MCP_LM, INDEX_PIP_LM],
   ["rightMiddleProximal", MIDDLE_MCP_LM, MIDDLE_PIP_LM],
   ["rightRingProximal", RING_MCP_LM, RING_PIP_LM],
@@ -470,8 +471,8 @@ export class MocapSolver {
 
   /** Curl-only finger solver. Computes one scalar — the angle between
    *  the finger's MCP→PIP segment and the palm-forward axis
-   *  (wrist→middle-MCP) — then writes that as a rotation around the
-   *  VRM bone's local X axis.
+   *  (wrist→middle-MCP) — then writes that as a positive rotation
+   *  around the VRM bone's local Z axis.
    *
    *  Why curl-only instead of full 3D rotation:
    *  - The palm-local X/Z axes we derived from landmarks don't reliably
@@ -482,10 +483,20 @@ export class MocapSolver {
    *    the wrong axes.
    *  - Curl angle is axis-independent — it's a scalar derived from a
    *    dot product, so it's robust to every frame convention.
-   *  - VRM's normalized humanoid puts all finger proximals with +Y
-   *    pointing toward the tip; a negative rotation around local X
-   *    bends the finger inward. This holds for every VRoid-exported rig
-   *    we've tested and chirality is handled by the rig, not us.
+   *
+   *  Why +Z specifically (validated with the finger-axis test harness
+   *  in ``MocapPreview`` on a VRoid-exported rig):
+   *  - Local +X points along the finger (rest direction toward tip), so
+   *    rotation around X is an invisible twist on cylindrical geometry.
+   *  - Local Y is the abduction/adduction axis — rotation around Y
+   *    swings the finger sideways (pinky-ward for the left hand),
+   *    which is NOT flexion.
+   *  - Local Z is the flexion/extension axis; +Z brings the finger tip
+   *    from forward (+X) toward the palm-ward direction (+Y-ish),
+   *    which is anatomical curl.
+   *
+   *  Chirality: VRM's normalized humanoid bakes handedness into the
+   *  local axes, so both hands use the same sign convention.
    *
    *  Trade-off: fingers can't spread apart (abduction) — only flex.
    *  That's fine for the headline "open hand / closed fist / point"
@@ -523,10 +534,11 @@ export class MocapSolver {
       const curl = Math.acos(cos);
       this.latestFingerMaxCurl = Math.max(this.latestFingerMaxCurl, curl);
 
-      // Negative rotation around local X = bend toward palm (flexion)
-      // in VRM's normalized finger convention. Chirality is already
-      // baked into the rig — both hands use the same sign.
-      _curlEuler.set(-curl, 0, 0, "XYZ");
+      // Positive rotation around local Z = bend toward palm (flexion)
+      // in VRoid's normalized finger convention. Both hands use the
+      // same sign — chirality is already baked into the rig's local
+      // axes by three-vrm.
+      _curlEuler.set(0, 0, curl, "XYZ");
       _handQ.setFromEuler(_curlEuler);
       this.writeBoneSmoothed(
         boneName,
