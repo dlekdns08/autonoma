@@ -121,6 +121,9 @@ export interface UseMocapReturn {
   frameSeq: number;
   /** Live hand-capture diagnostics. Null when hands aren't enabled. */
   handDiagnostics: HandDiagnostics | null;
+  /** Non-null when the HandLandmarker failed to initialise; face+pose
+   *  capture still runs, but finger tracks will be empty. */
+  handsError: string | null;
   /** True while a recording is actively collecting frames. */
   recording: boolean;
   recordingMeta: RecordingMeta | null;
@@ -166,6 +169,12 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   const rafHandleRef = useRef<number | null>(null);
   const vfcCleanupRef = useRef<(() => void) | null>(null);
   const runningRef = useRef(false);
+  // Aborts an in-flight ``start()``: ``stop()`` fires this so the await
+  // chain can bail out after each hop and release anything it already
+  // opened (camera tracks, landmarkers) instead of leaking them into a
+  // no-longer-mounted hook.
+  const startAbortRef = useRef<AbortController | null>(null);
+  const [handsError, setHandsError] = useState<string | null>(null);
 
   // Recording state lives in refs so the capture loop can append without
   // triggering re-renders every frame. React state (`recording`,
@@ -186,6 +195,10 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   }, [opts.onMaxDurationReached]);
 
   const stop = useCallback(() => {
+    // Abort any in-flight ``start()`` first so its awaits return before
+    // we clear the refs it's about to populate.
+    startAbortRef.current?.abort();
+    startAbortRef.current = null;
     runningRef.current = false;
     if (rafHandleRef.current !== null) {
       cancelAnimationFrame(rafHandleRef.current);
@@ -212,6 +225,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     recordingRef.current = false;
     setRecording(false);
     setRecordingMeta(null);
+    setHandsError(null);
     setStatus("idle");
   }, []);
 
@@ -219,6 +233,33 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     if (runningRef.current) return;
     setStatus("loading");
     setError(null);
+    setHandsError(null);
+    // Fresh abort controller per ``start()`` — ``stop()`` flips
+    // ``signal.aborted`` so we can bail after each await and dispose
+    // anything we've already opened.
+    const controller = new AbortController();
+    startAbortRef.current = controller;
+
+    // Tracks resources allocated so far so a mid-await abort can unwind
+    // them in reverse order. We drop refs back to null before releasing
+    // so ``stop()`` can't double-close.
+    let localStream: MediaStream | null = null;
+    let localFace: FaceLandmarker | null = null;
+    let localPose: PoseLandmarker | null = null;
+    let localHand: HandLandmarker | null = null;
+
+    const abortCleanup = () => {
+      localHand?.close();
+      localPose?.close();
+      localFace?.close();
+      if (localStream) {
+        for (const t of localStream.getTracks()) t.stop();
+      }
+      if (videoRef.current && videoRef.current.srcObject === localStream) {
+        videoRef.current.srcObject = null;
+      }
+    };
+
     try {
       // 1) Webcam.
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -230,6 +271,11 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         },
         audio: false,
       });
+      localStream = stream;
+      if (controller.signal.aborted) {
+        abortCleanup();
+        return;
+      }
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) throw new Error("video element missing");
@@ -237,9 +283,19 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       video.muted = true;
       video.playsInline = true;
       await video.play();
+      if (controller.signal.aborted) {
+        streamRef.current = null;
+        abortCleanup();
+        return;
+      }
 
       // 2) MediaPipe Tasks Vision runtime.
       const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+      if (controller.signal.aborted) {
+        streamRef.current = null;
+        abortCleanup();
+        return;
+      }
       const face = await FaceLandmarker.createFromOptions(vision, {
         baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate: "GPU" },
         runningMode: "VIDEO",
@@ -247,11 +303,23 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         outputFacialTransformationMatrixes: true,
         numFaces: 1,
       });
+      localFace = face;
+      if (controller.signal.aborted) {
+        streamRef.current = null;
+        abortCleanup();
+        return;
+      }
       const pose = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: "GPU" },
         runningMode: "VIDEO",
         numPoses: 1,
       });
+      localPose = pose;
+      if (controller.signal.aborted) {
+        streamRef.current = null;
+        abortCleanup();
+        return;
+      }
       faceRef.current = face;
       poseRef.current = pose;
       // Hand landmarker is optional. If the model is missing from
@@ -265,16 +333,44 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
             runningMode: "VIDEO",
             numHands: 2,
           });
+          localHand = hand;
+          if (controller.signal.aborted) {
+            streamRef.current = null;
+            faceRef.current = null;
+            poseRef.current = null;
+            abortCleanup();
+            return;
+          }
           handRef.current = hand;
+          setHandsError(null);
         } catch (err) {
           // Surface a warning so the user knows why fingers aren't
           // moving, but don't throw — face+pose still work.
           console.warn("HandLandmarker init failed — fingers disabled", err);
           handRef.current = null;
+          const msg = err instanceof Error ? err.message : String(err);
+          setHandsError(msg);
+          if (controller.signal.aborted) {
+            streamRef.current = null;
+            faceRef.current = null;
+            poseRef.current = null;
+            abortCleanup();
+            return;
+          }
         }
       }
       solverRef.current = new MocapSolver({ mirror: opts.mirror ?? true });
 
+      if (controller.signal.aborted) {
+        streamRef.current = null;
+        faceRef.current = null;
+        poseRef.current = null;
+        handRef.current = null;
+        abortCleanup();
+        return;
+      }
+
+      startAbortRef.current = null;
       runningRef.current = true;
       setStatus("running");
 
@@ -447,6 +543,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     videoRef,
     frameSeq,
     handDiagnostics: opts.hands ? handDiagnostics : null,
+    handsError,
     recording,
     recordingMeta,
     start,
