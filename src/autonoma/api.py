@@ -3665,11 +3665,20 @@ async def voice_test_profile(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="profile_not_found"
         )
 
-    from autonoma.tts import TTSConfig, TTSError, create_tts_client
+    from autonoma.tts_base import TTSError
 
-    # Force the OmniVoice client for tests regardless of settings.tts_provider,
-    # so admins can audition voices even with tts_enabled=False.
-    client = create_tts_client(TTSConfig(provider="omnivoice"))
+    # Instantiate the OmniVoice client directly (skip the factory's stub
+    # fallback) so that a missing package surfaces as a clear error rather
+    # than "empty_synthesis" after the stub silently emits zero bytes.
+    try:
+        from autonoma.tts_omnivoice import OmniVoiceTTSClient
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"omnivoice_not_available: {exc}",
+        )
+
+    client = OmniVoiceTTSClient()
     buf = bytearray()
     try:
         async for chunk in client.synthesize(
@@ -3683,7 +3692,16 @@ async def voice_test_profile(
     except TTSError as exc:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"tts_error:{exc}",
+            detail=f"tts_error: {exc}",
+        )
+    except Exception as exc:
+        # Torch/model load errors (CUDA OOM, MPS unsupported op, HF network
+        # failure on first run) don't inherit TTSError. Without this catch
+        # they fall through as a 500 and the admin UI sees nothing useful.
+        logger.exception("voice /test synthesis failed")
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"synth_error: {type(exc).__name__}: {exc}",
         )
     if not buf:
         raise HTTPException(

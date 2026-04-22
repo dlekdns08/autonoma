@@ -77,8 +77,15 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
             from autonoma.tts_omnivoice import OmniVoiceTTSClient
             return OmniVoiceTTSClient()
         except ImportError as exc:
-            logger.warning(
-                "omnivoice init failed, falling back to stub: %s", exc
+            # Loud warning: silent fallback to stub means agents speak
+            # nothing and the /voice test endpoint returns empty audio.
+            # Surface the real reason (usually: numpy / torch / omnivoice
+            # not installed in this container).
+            logger.error(
+                "omnivoice client import failed (%s). Falling back to "
+                "StubTTSClient — all synthesis will return empty audio. "
+                "Install with: pip install omnivoice torch numpy soundfile",
+                exc,
             )
             return StubTTSClient()
     return StubTTSClient()
