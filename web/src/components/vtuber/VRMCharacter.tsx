@@ -213,10 +213,12 @@ const GESTURES: Record<
       // forearm and hand through the air in a clean horizontal arc.
       const osc = Math.sin(t * Math.PI * 4); // ~2 full wave cycles
       if (b.rightUpperArm) {
-        addBoneRotation(b.rightUpperArm, env * 0.8, -env * osc * 0.5, env * 1.55);
+        // Negative x flexes the shoulder forward; negative z on the
+        // forearm closes the elbow. Positive values hyperextend backward.
+        addBoneRotation(b.rightUpperArm, -env * 0.8, -env * osc * 0.5, env * 1.55);
       }
       if (b.rightLowerArm) {
-        addBoneRotation(b.rightLowerArm, 0, 0, env * 0.95);
+        addBoneRotation(b.rightLowerArm, 0, 0, -env * 0.95);
       }
       if (b.rightHand) {
         addBoneRotation(b.rightHand, 0, 0, -env * osc * 0.4);
@@ -234,10 +236,10 @@ const GESTURES: Record<
       // bigger shoulder-twist sweep, plus a head tilt and chest lean.
       const osc = Math.sin(t * Math.PI * 5); // ~2.5 clear wave cycles
       if (b.rightUpperArm) {
-        addBoneRotation(b.rightUpperArm, env * 0.95, -env * osc * 0.65, env * 1.75);
+        addBoneRotation(b.rightUpperArm, -env * 0.95, -env * osc * 0.65, env * 1.75);
       }
       if (b.rightLowerArm) {
-        addBoneRotation(b.rightLowerArm, 0, 0, env * 1.1);
+        addBoneRotation(b.rightLowerArm, 0, 0, -env * 1.1);
       }
       if (b.rightHand) {
         addBoneRotation(b.rightHand, 0, 0, -env * osc * 0.5);
@@ -266,8 +268,6 @@ const GESTURES: Record<
         addBoneRotation(b.rightUpperArm, -env * 0.55, 0, env * 0.85);
       }
       if (b.rightLowerArm) {
-        // Negative-z flex — same sign as wave/greet (elbow closes
-        // naturally). Positive-z hyperextends the elbow backward.
         addBoneRotation(b.rightLowerArm, 0, 0, -env * 1.0);
       }
       if (b.head) {
