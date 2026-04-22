@@ -308,3 +308,13 @@ export const clipCache = {
     }
   },
 };
+
+/** React to a ``mocap.clips.updated`` WS event by invalidating this
+ *  clip's cached copy. Any action invalidates — ``created`` is a no-op
+ *  for caching (nothing is cached yet), ``renamed`` needs a refresh so
+ *  the next fetch gets the new name baked into the payload, and
+ *  ``deleted`` means the next fetch will 404 (the cache entry must go
+ *  or we'd keep serving the stale clip until the 5-minute TTL). */
+export function handleClipEvent(event: { clip_id: string; action: string }): void {
+  clipCache.invalidate(event.clip_id);
+}

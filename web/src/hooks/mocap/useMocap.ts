@@ -41,28 +41,12 @@ import {
 import type { ClipSample } from "@/lib/mocap/clipPlayer";
 import { createSampleBuffer } from "@/lib/mocap/clipPlayer";
 import { MocapSolver } from "@/lib/mocap/solver";
-
-/** Target recording framerate. 30fps is the Tasks Vision default and
- *  fits inside webcam capture on every laptop we tested. */
-const RECORD_FPS = 30;
-/** Fallback ceiling when the caller didn't pass ``maxDurationS`` (server
- *  cap isn't known yet). The live value comes from
- *  ``/api/mocap/triggers`` via ``UseMocapOptions.maxDurationS``; this
- *  constant just keeps the recorder working if the caller skips wiring
- *  up the catalog fetch. */
-const DEFAULT_MAX_CLIP_SECONDS = 60;
-
-/** MediaPipe WASM base — populated by ``npm run mocap:fetch`` into
- *  ``public/mediapipe``. Served at runtime from the same origin so CSP
- *  stays tight and reproducible builds don't depend on a CDN. */
-const WASM_BASE = "/mediapipe";
-/** Model files also shipped in ``public/mediapipe``. */
-const FACE_MODEL_URL = `${WASM_BASE}/face_landmarker.task`;
-const POSE_MODEL_URL = `${WASM_BASE}/pose_landmarker_full.task`;
-/** Optional — only fetched when the caller enables ``hands``. Missing
- *  file does not block face+pose capture (the recorder logs a warning
- *  and silently drops finger tracks). */
-const HAND_MODEL_URL = `${WASM_BASE}/hand_landmarker.task`;
+import {
+  RECORD_FPS,
+  DEFAULT_MAX_CLIP_SECONDS,
+  MEDIAPIPE_WASM_BASE,
+  MEDIAPIPE_MODEL_URLS,
+} from "@/lib/mocap/config";
 
 export type MocapStatus =
   | "idle"
@@ -290,14 +274,14 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       }
 
       // 2) MediaPipe Tasks Vision runtime.
-      const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+      const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_BASE);
       if (controller.signal.aborted) {
         streamRef.current = null;
         abortCleanup();
         return;
       }
       const face = await FaceLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate: "GPU" },
+        baseOptions: { modelAssetPath: MEDIAPIPE_MODEL_URLS.face, delegate: "GPU" },
         runningMode: "VIDEO",
         outputFaceBlendshapes: true,
         outputFacialTransformationMatrixes: true,
@@ -310,7 +294,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         return;
       }
       const pose = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate: "GPU" },
+        baseOptions: { modelAssetPath: MEDIAPIPE_MODEL_URLS.pose, delegate: "GPU" },
         runningMode: "VIDEO",
         numPoses: 1,
       });
@@ -329,7 +313,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       if (opts.hands) {
         try {
           const hand = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: "GPU" },
+            baseOptions: { modelAssetPath: MEDIAPIPE_MODEL_URLS.hand, delegate: "GPU" },
             runningMode: "VIDEO",
             numHands: 2,
           });

@@ -12,8 +12,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { API_BASE_URL } from "@/hooks/useSwarm";
+import { API_BASE_URL, type MocapClipEvent } from "@/hooks/useSwarm";
 import type { ClipSummary } from "@/lib/mocap/clipFormat";
+import { handleClipEvent } from "@/lib/mocap/clipPlayer";
 
 export interface UploadClipInput {
   name: string;
@@ -43,7 +44,10 @@ const JSON_HEADERS: HeadersInit = {
   Accept: "application/json",
 };
 
-export function useMocapClips(refreshToken: number = 0): UseMocapClips {
+export function useMocapClips(
+  refreshToken: number = 0,
+  clipEvent: MocapClipEvent | null = null,
+): UseMocapClips {
   const [clips, setClips] = useState<ClipSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +55,10 @@ export function useMocapClips(refreshToken: number = 0): UseMocapClips {
   // Latest-wins guard — if the user fires two refreshes in quick
   // succession the stale response shouldn't overwrite the fresh one.
   const reqSeqRef = useRef(0);
+  // Tracks the last remote clip event we acted on so re-renders that
+  // carry the same event object don't re-invalidate + re-refresh. The
+  // seq guard mirrors ``useMocapBindings``.
+  const lastAppliedClipEventSeqRef = useRef(0);
 
   const refresh = useCallback(async () => {
     const seq = ++reqSeqRef.current;
@@ -76,6 +84,18 @@ export function useMocapClips(refreshToken: number = 0): UseMocapClips {
   useEffect(() => {
     void refresh();
   }, [refresh, refreshToken]);
+
+  // Peer invalidation path: another client created/renamed/deleted a
+  // clip. Drop the cached decoded payload so playback doesn't serve a
+  // stale copy, then refetch the summary list so the UI reflects the
+  // rename/deletion.
+  useEffect(() => {
+    if (!clipEvent) return;
+    if (clipEvent.seq <= lastAppliedClipEventSeqRef.current) return;
+    lastAppliedClipEventSeqRef.current = clipEvent.seq;
+    handleClipEvent(clipEvent);
+    void refresh();
+  }, [clipEvent, refresh]);
 
   const upload = useCallback(
     async (input: UploadClipInput): Promise<UploadResult> => {

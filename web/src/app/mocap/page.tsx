@@ -40,7 +40,7 @@ import {
   DEFAULT_TRIGGER_CATALOG,
   fetchTriggerCatalog,
 } from "@/lib/mocap/triggers";
-import { API_BASE_URL } from "@/hooks/useSwarm";
+import { API_BASE_URL, useSwarm } from "@/hooks/useSwarm";
 
 type Stage = "idle" | "recorded" | "uploading" | "error";
 
@@ -147,9 +147,13 @@ export default function MocapPage() {
   // Clip list + bindings. Bindings need a refresh token bumped by the
   // ``mocap.bindings.updated`` WS event; we mirror it as a local counter
   // here so two mocap pages opened side-by-side stay in sync through
-  // manual refresh at minimum.
+  // manual refresh at minimum. ``mocapClipEvent`` routes peer
+  // create/rename/delete mutations through the client clip cache so
+  // other clients don't keep playing stale copies until the 5-minute
+  // TTL.
+  const { mocapClipEvent } = useSwarm();
   const [refreshToken, setRefreshToken] = useState(0);
-  const clipsApi = useMocapClips(refreshToken);
+  const clipsApi = useMocapClips(refreshToken, mocapClipEvent);
   const bindingsApi = useMocapBindings(refreshToken);
 
   // Captured-but-not-yet-uploaded clip + its trim state.

@@ -172,7 +172,7 @@ async def test_get_clip_payload_missing_returns_none(fresh_db) -> None:
 
 
 async def test_rename_clip(fresh_db) -> None:
-    from autonoma.mocap.store import create_clip, rename_clip
+    from autonoma.mocap.store import create_clip, get_clip_payload, rename_clip
 
     owner = await _make_user()
     summary = await create_clip(
@@ -181,6 +181,21 @@ async def test_rename_clip(fresh_db) -> None:
     renamed = await rename_clip(summary.id, "new-name")
     assert renamed is not None
     assert renamed.name == "new-name"
+
+    # The embedded ``name`` field in the payload must also be rewritten
+    # so clients that decode the payload (rather than reading the summary)
+    # see the new name. Regression test for a bug where only the
+    # ``mocap_clips.name`` column was updated.
+    fetched = await get_clip_payload(summary.id)
+    assert fetched is not None
+    fetched_summary, b64 = fetched
+    assert fetched_summary.name == "new-name"
+    decoded = json.loads(gzip.decompress(base64.b64decode(b64)))
+    assert decoded["name"] == "new-name"
+    # size_bytes should match the new uncompressed payload size.
+    assert fetched_summary.size_bytes == len(
+        json.dumps(decoded).encode("utf-8")
+    )
 
 
 async def test_rename_clip_missing_returns_none(fresh_db) -> None:

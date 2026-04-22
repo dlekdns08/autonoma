@@ -151,6 +151,15 @@ export interface MocapBindingEvent {
   seq: number;
 }
 
+/** Clip library mutation event carried by the WS bridge. ``seq`` is a
+ *  monotonic counter — consumers gate on it to make the effect
+ *  idempotent when React re-runs with the same event object. */
+export interface MocapClipEvent {
+  seq: number;
+  clip_id: string;
+  action: "created" | "renamed" | "deleted";
+}
+
 // Voice binding event state lives in ``useVoiceEventState`` so the WS
 // routing here stays thin — the hook below composes it. The exported
 // type is re-exposed from this module so existing consumers don't have
@@ -181,6 +190,13 @@ export function useSwarm() {
   const [mocapBindingEvent, setMocapBindingEvent] =
     useState<MocapBindingEvent | null>(null);
   const mocapBindingEventSeqRef = useRef(0);
+  // Clip library mutation events (create/rename/delete). Subscribers
+  // (``useMocapClips``) use these to invalidate the per-clip cache so a
+  // renamed/deleted clip doesn't keep playing out of a stale client
+  // cache until its 5-minute TTL expires.
+  const [mocapClipEvent, setMocapClipEvent] =
+    useState<MocapClipEvent | null>(null);
+  const mocapClipEventSeqRef = useRef(0);
   // Same pattern as mocap bindings, for voice profile bindings. The
   // state lives in ``useVoiceEventState`` so the concrete refresh/patch
   // plumbing is out of this file.
@@ -316,6 +332,28 @@ export function useSwarm() {
             removed: !!data.removed,
             seq: ++mocapBindingEventSeqRef.current,
           });
+          return;
+        }
+
+        // Clip library changed — another client created/renamed/deleted
+        // a clip. Subscribers invalidate their cached copy so the next
+        // playback round-trip reflects the mutation. Suppress the
+        // event-log entry so quiet background mutations don't pollute
+        // the dashboard log.
+        if (event === "mocap.clips.updated") {
+          const clipId = String(data.clip_id ?? "");
+          const rawAction = String(data.action ?? "");
+          const action: MocapClipEvent["action"] =
+            rawAction === "created" || rawAction === "renamed" || rawAction === "deleted"
+              ? rawAction
+              : "renamed";
+          if (clipId) {
+            setMocapClipEvent({
+              seq: ++mocapClipEventSeqRef.current,
+              clip_id: clipId,
+              action,
+            });
+          }
           return;
         }
 
@@ -1274,6 +1312,7 @@ export function useSwarm() {
     resumeFromCheckpoint,
     mocapBindingsRefreshToken,
     mocapBindingEvent,
+    mocapClipEvent,
     voiceBindingsRefreshToken,
     voiceBindingEvent,
   };

@@ -399,6 +399,10 @@ FORWARDED_EVENTS = [
     "debate.resolved",
     # Mocap — global character binding changes (broadcast site-wide).
     "mocap.bindings.updated",
+    # Mocap — clip library mutations (create/rename/delete). Broadcast
+    # site-wide so other clients can invalidate their client-side
+    # ``clipCache`` before the 5-minute TTL expires.
+    "mocap.clips.updated",
     # Voice — global character voice-binding changes (broadcast site-wide).
     "voice.bindings.updated",
 ]
@@ -3459,6 +3463,7 @@ async def mocap_create_clip(
     clip = await mocap_store.create_clip(
         owner_user_id=user.id, validated=validated
     )
+    await bus.emit("mocap.clips.updated", clip_id=clip.id, action="created")
     return {"clip": clip.to_dict()}
 
 
@@ -3530,6 +3535,7 @@ async def mocap_rename_clip(
         )
     updated = await mocap_store.rename_clip(clip_id, new_name)
     assert updated is not None
+    await bus.emit("mocap.clips.updated", clip_id=clip_id, action="renamed")
     return {"clip": updated.to_dict()}
 
 
@@ -3564,6 +3570,7 @@ async def mocap_delete_clip(
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
         )
+    await bus.emit("mocap.clips.updated", clip_id=clip_id, action="deleted")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 

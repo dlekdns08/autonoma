@@ -8,6 +8,8 @@ from the shared engine.
 from __future__ import annotations
 
 import base64
+import gzip
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -219,6 +221,52 @@ async def rename_clip(clip_id: str, new_name: str) -> ClipSummary | None:
         )
         if result.rowcount == 0:
             return None
+
+        # Rewrite the embedded ``name`` inside the payload so clients that
+        # read the payload's own metadata (not just the summary) see the
+        # new name without waiting for a full re-upload. Playback is the
+        # hot path, so we pay the decompress+recompress cost here at
+        # rename time rather than on every fetch.
+        payload_row = (
+            await conn.execute(
+                select(
+                    mocap_clips.c.payload_gz, mocap_clips.c.size_bytes
+                ).where(mocap_clips.c.id == clip_id)
+            )
+        ).first()
+        if payload_row is not None:
+            try:
+                old_gz = payload_row._mapping["payload_gz"]
+                old_size = int(payload_row._mapping["size_bytes"])
+                decoded = json.loads(gzip.decompress(old_gz).decode("utf-8"))
+                decoded["name"] = new_name
+                raw = json.dumps(decoded).encode("utf-8")
+                new_gz = gzip.compress(raw)
+                new_size = len(raw)
+                # The only mutated field is ``name`` — the uncompressed
+                # size should move by at most the string-length delta.
+                # A huge swing means something else changed (corrupted
+                # payload? schema drift?) — warn but don't fail the
+                # rename; the summary is already correct.
+                if abs(new_size - old_size) > 1024:
+                    logger.warning(
+                        "rename_clip: payload size for %s changed by %d bytes "
+                        "(old=%d new=%d) — unexpected for a name-only edit",
+                        clip_id, new_size - old_size, old_size, new_size,
+                    )
+                await conn.execute(
+                    update(mocap_clips)
+                    .where(mocap_clips.c.id == clip_id)
+                    .values(payload_gz=new_gz, size_bytes=new_size)
+                )
+            except Exception as exc:
+                logger.warning(
+                    "rename_clip: failed to refresh embedded name for %s: %s",
+                    clip_id, exc,
+                )
+                # Name was updated on the summary; payload stays stale
+                # but playback works (just shows old internal name).
+
         row = (
             await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))
         ).first()

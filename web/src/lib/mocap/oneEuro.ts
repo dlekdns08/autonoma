@@ -9,28 +9,9 @@
  * (CHI 2012).
  */
 
-export interface OneEuroConfig {
-  /** Slow cutoff (Hz). Lower = smoother but laggier. Default 1. */
-  minCutoff: number;
-  /** Speed coefficient — how much cutoff rises when signal moves. */
-  beta: number;
-  /** Cutoff on the derivative estimator itself. */
-  dCutoff: number;
-}
+import { ONE_EURO_DEFAULTS, type OneEuroConfig } from "./config";
 
-// Default tuned for webcam mocap: face blendshapes, Kalidokit body,
-// and (crucially) the 28 finger bones added in the full-articulation
-// pass. The finger solver amplifies 15-30° of raw landmark angle to
-// ~90° of bone rotation, so even sub-degree landmark noise becomes
-// visible jitter without aggressive smoothing. These values squash
-// static tremor (low ``minCutoff``) while keeping fast motion snappy
-// (``beta`` high enough that the cutoff opens up once the signal
-// starts moving).
-const DEFAULT_CONFIG: OneEuroConfig = {
-  minCutoff: 0.5,
-  beta: 0.4,
-  dCutoff: 1.0,
-};
+export type { OneEuroConfig } from "./config";
 
 function alpha(cutoff: number, dtSec: number): number {
   // α = 1 − exp(−2π · cutoff · dt) linearised for small dt.
@@ -43,7 +24,7 @@ export class OneEuroScalar {
   private prevValue: number | null = null;
   private prevDeriv = 0;
   private prevTs = 0;
-  constructor(private cfg: OneEuroConfig = DEFAULT_CONFIG) {}
+  constructor(private cfg: OneEuroConfig = ONE_EURO_DEFAULTS) {}
 
   reset(): void {
     this.prevValue = null;
@@ -78,7 +59,7 @@ export class OneEuroQuat {
   private prev: [number, number, number, number] | null = null;
   private prevDeriv = 0;
   private prevTs = 0;
-  constructor(private cfg: OneEuroConfig = DEFAULT_CONFIG) {}
+  constructor(private cfg: OneEuroConfig = ONE_EURO_DEFAULTS) {}
 
   reset(): void {
     this.prev = null;
