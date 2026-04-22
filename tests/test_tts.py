@@ -1,9 +1,9 @@
-"""TTS worker, provider, and budget tests.
+"""TTS worker + budget tests.
 
 We exercise the worker end-to-end with the StubTTSClient so the tests
 never hit a real provider. The stub yields zero audio bytes but still
 fires start/end events, which is exactly the contract the browser sees
-when a user has ``tts_provider="none"``.
+when a user has ``tts_provider="none"`` (or when OmniVoice isn't installed).
 """
 
 from __future__ import annotations
@@ -14,66 +14,30 @@ import pytest
 
 from autonoma.event_bus import bus
 from autonoma.tts import (
-    AZURE_VOICE_POOL,
-    OPENAI_VOICE_POOL,
     StubTTSClient,
     TTSConfig,
-    _build_azure_ssml,
     create_tts_client,
-    pick_voice_for,
 )
 from autonoma.tts_worker import TTSBudget, TTSWorker
 
 
-# ── Provider abstraction ──────────────────────────────────────────────
+# ── Provider factory ──────────────────────────────────────────────────
 
 
-def test_pick_voice_is_deterministic() -> None:
-    """Same seed must always map to the same voice — the audience
-    invariant is 'Zara always sounds like Zara'."""
-    a1 = pick_voice_for("seed-zara", provider="azure", language="ko")
-    a2 = pick_voice_for("seed-zara", provider="azure", language="ko")
-    assert a1 == a2
-    assert a1 in AZURE_VOICE_POOL["ko"]
-
-    o1 = pick_voice_for("seed-noah", provider="openai", language="en")
-    assert o1 == pick_voice_for("seed-noah", provider="openai", language="en")
-    assert o1 in OPENAI_VOICE_POOL
-
-
-def test_pick_voice_varies_across_seeds() -> None:
-    """Different seeds should at least sometimes pick different voices."""
-    voices = {
-        pick_voice_for(f"seed-{i}", provider="azure", language="ko")
-        for i in range(20)
-    }
-    assert len(voices) > 1, "deterministic mapping should still spread across pool"
-
-
-def test_create_tts_client_falls_back_to_stub_on_bad_config() -> None:
-    """An empty key must not raise — we silently fall back to the stub
-    so the swarm keeps running even when TTS is misconfigured."""
-    client = create_tts_client(TTSConfig(provider="azure", azure_key="", azure_region=""))
+def test_create_tts_client_defaults_to_stub_when_provider_none() -> None:
+    """Provider "none" must give back the stub so the downstream event
+    contract still holds with no audio bytes."""
+    client = create_tts_client(TTSConfig(provider="none"))
     assert isinstance(client, StubTTSClient)
 
 
-def test_azure_ssml_escapes_xml_and_applies_mood() -> None:
-    """SSML must escape user text and inject <mstts:express-as> for moods
-    we have a style for. Otherwise we emit plain voice content."""
-    happy = _build_azure_ssml(
-        text="hi <there> & friends", voice="ko-KR-SunHiNeural", mood="happy", language="ko"
-    )
-    assert "&lt;there&gt;" in happy
-    assert "&amp;" in happy
-    assert 'style="cheerful"' in happy
-    assert 'xml:lang="ko-KR"' in happy
-
-    # Unknown mood → no express-as wrapper.
-    plain = _build_azure_ssml(
-        text="hello", voice="en-US-JennyNeural", mood="unknown_mood", language="en"
-    )
-    assert "express-as" not in plain
-    assert 'xml:lang="en-US"' in plain
+def test_create_tts_client_falls_back_to_stub_when_omnivoice_missing() -> None:
+    """If the OmniVoice package isn't installed we silently fall back to
+    the stub so the swarm keeps running."""
+    client = create_tts_client(TTSConfig(provider="omnivoice"))
+    # Either OmniVoice is installed (unlikely in CI) or we get the stub;
+    # both outcomes are valid — the test only guards the "no crash" path.
+    assert client is not None
 
 
 # ── Budget ────────────────────────────────────────────────────────────
@@ -139,7 +103,8 @@ async def test_worker_emits_start_and_end_events(monkeypatch: pytest.MonkeyPatch
         bus.on(ev, await capture(ev))
 
     worker = TTSWorker(client=StubTTSClient())
-    assert worker.enqueue(agent="Zara", text="hello", voice="stub-1", mood="happy")
+    # Empty voice = no profile lookup at pop-time, so the stub runs clean.
+    assert worker.enqueue(agent="Zara", text="hello", voice="", mood="happy")
     # Let the worker drain. Stub sleeps ~0.03s/char so "hello" needs ~150ms.
     await asyncio.sleep(0.3)
     await worker.stop()
@@ -170,9 +135,9 @@ async def test_worker_assigns_monotonic_seq_per_agent(monkeypatch: pytest.Monkey
     bus.on("agent.speech_audio_start", on_start)
 
     worker = TTSWorker(client=StubTTSClient())
-    worker.enqueue(agent="Zara", text="a", voice="stub")
-    worker.enqueue(agent="Zara", text="b", voice="stub")
-    worker.enqueue(agent="Noah", text="c", voice="stub")
+    worker.enqueue(agent="Zara", text="a", voice="")
+    worker.enqueue(agent="Zara", text="b", voice="")
+    worker.enqueue(agent="Noah", text="c", voice="")
     await asyncio.sleep(0.4)
     await worker.stop()
 
@@ -189,7 +154,7 @@ async def test_worker_drops_when_disabled(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(tts_worker.settings, "tts_enabled", False)
 
     worker = TTSWorker(client=StubTTSClient())
-    assert worker.enqueue(agent="Zara", text="hi", voice="stub") is False
+    assert worker.enqueue(agent="Zara", text="hi", voice="") is False
     await worker.stop()
 
 
@@ -214,8 +179,8 @@ async def test_worker_drops_over_budget(monkeypatch: pytest.MonkeyPatch) -> None
     bus.on("agent.speech_audio_dropped", on_drop)
 
     worker = TTSWorker(client=StubTTSClient())
-    worker.enqueue(agent="Zara", text="hello!", voice="stub")  # 6 chars — fits
-    worker.enqueue(agent="Zara", text="extra", voice="stub")   # over → dropped
+    worker.enqueue(agent="Zara", text="hello!", voice="")  # 6 chars — fits
+    worker.enqueue(agent="Zara", text="extra", voice="")   # over → dropped
     await asyncio.sleep(0.4)
     await worker.stop()
 
@@ -248,9 +213,9 @@ async def test_worker_drops_when_queue_full(monkeypatch: pytest.MonkeyPatch) -> 
     worker = TTSWorker(client=StubTTSClient())
     # Replace the internal queue with one bound by our patched constant.
     worker._queue = asyncio.Queue(maxsize=2)
-    assert worker.enqueue(agent="A", text="x", voice="v") is True
-    assert worker.enqueue(agent="A", text="x", voice="v") is True
-    assert worker.enqueue(agent="A", text="x", voice="v") is False
+    assert worker.enqueue(agent="A", text="x", voice="") is True
+    assert worker.enqueue(agent="A", text="x", voice="") is True
+    assert worker.enqueue(agent="A", text="x", voice="") is False
     # Let the dropped emit settle (it's scheduled via create_task).
     await asyncio.sleep(0.05)
     await worker.stop()
