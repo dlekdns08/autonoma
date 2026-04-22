@@ -232,6 +232,49 @@ async def _migration_009_personas(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_010_mocap_last_accessed(conn) -> None:
+    """Add ``last_accessed_at`` to ``mocap_clips`` for orphan tracking.
+
+    Orphan sweeps need a "last observed playback" timestamp to
+    distinguish abandoned clips from cold-but-still-useful uploads.
+    ``create_all(checkfirst=True)`` skips live tables so the column
+    won't be added for existing deployments — do an explicit
+    PRAGMA-probed ALTER here.
+
+    SQLite restriction: ``ALTER TABLE ADD COLUMN`` can't use a
+    non-constant default like CURRENT_TIMESTAMP, so we:
+      1. Add the column nullable with no default.
+      2. Backfill existing rows to ``created_at`` (good-enough proxy
+         for "last observed playback" — the clip hasn't been played
+         since upload).
+      3. Leave the column nullable at the table level; the ORM-side
+         ``NOT NULL + server_default`` still applies to every new
+         insert via SQLAlchemy, and ``_verify_schema`` compares by
+         name so a nullable live column is fine.
+
+    New rows go through ``insert(mocap_clips)`` with the server_default
+    on the column, so they always land with a timestamp.
+    """
+    result = await conn.execute(text("PRAGMA table_info(mocap_clips)"))
+    cols = {row[1] for row in result.fetchall()}
+    if "last_accessed_at" not in cols:
+        # Step 1: add the column nullable (SQLite limitation around
+        # non-constant defaults on ALTER). Explicit NULL default.
+        await conn.execute(
+            text("ALTER TABLE mocap_clips ADD COLUMN last_accessed_at DATETIME")
+        )
+        # Step 2: backfill. ``COALESCE(created_at, CURRENT_TIMESTAMP)``
+        # handles the (impossible but defensive) case where created_at
+        # is NULL for some legacy row.
+        await conn.execute(
+            text(
+                "UPDATE mocap_clips SET last_accessed_at = "
+                "COALESCE(created_at, CURRENT_TIMESTAMP) "
+                "WHERE last_accessed_at IS NULL"
+            )
+        )
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -242,6 +285,7 @@ MIGRATIONS: list[Migration] = [
     (7, _migration_007_voice_fs_storage),
     (8, _migration_008_agent_journal),
     (9, _migration_009_personas),
+    (10, _migration_010_mocap_last_accessed),
 ]
 
 
