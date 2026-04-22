@@ -14,19 +14,7 @@ from pathlib import Path
 
 import pytest
 
-
-@pytest.fixture
-def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from autonoma import config as config_module
-    from autonoma.db import engine as engine_module
-
-    monkeypatch.setattr(config_module.settings, "data_dir", tmp_path)
-    monkeypatch.setattr(config_module.settings, "db_filename", "idemp.db")
-    engine_module._engine = None
-    engine_module._initialized = False
-    yield tmp_path
-    engine_module._engine = None
-    engine_module._initialized = False
+# ``fresh_db`` is defined in tests/conftest.py — shared by every DB test.
 
 
 async def _schema_version(conn) -> int:
