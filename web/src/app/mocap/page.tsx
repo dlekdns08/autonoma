@@ -13,8 +13,8 @@
  *      WebSocket event.
  *
  * Auth gating: pending / denied / disabled users see a 403 panel. Any
- * signed-in active user can record + bind (bindings are global, but
- * that's an accepted design choice for this PoC).
+ * signed-in active user can record clips; only admins can mutate the
+ * site-wide trigger → clip bindings.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -36,6 +36,11 @@ import {
   type ClipSample,
 } from "@/lib/mocap/clipPlayer";
 import type { MocapClip } from "@/lib/mocap/clipFormat";
+import {
+  DEFAULT_TRIGGER_CATALOG,
+  fetchTriggerCatalog,
+} from "@/lib/mocap/triggers";
+import { API_BASE_URL } from "@/hooks/useSwarm";
 
 type Stage = "idle" | "recorded" | "uploading" | "error";
 
@@ -45,8 +50,32 @@ export default function MocapPage() {
 
   const isActive = user?.status === "active";
 
-  // Recording + preview wiring.
-  const mocap = useMocap({ mirror: true });
+  // Fetch the server's max clip duration once so the recorder auto-stops
+  // at exactly the ceiling ``validate_payload`` will enforce. Falls back
+  // to the baked default on network error.
+  const [maxDurationS, setMaxDurationS] = useState<number>(
+    DEFAULT_TRIGGER_CATALOG.maxClipDurationS,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTriggerCatalog(API_BASE_URL).then((cat) => {
+      if (!cancelled) setMaxDurationS(cat.maxClipDurationS);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Recording + preview wiring. ``onMaxDurationReached`` is a ref so
+  // ``useMocap`` invokes the *current* ``onStopRecord`` (which reads the
+  // latest ``targetVrm``) without re-initialising the whole hook each
+  // time these deps change.
+  const autoStopRef = useRef<() => void>(() => {});
+  const mocap = useMocap({
+    mirror: true,
+    maxDurationS,
+    onMaxDurationReached: () => autoStopRef.current(),
+  });
   const [targetVrm, setTargetVrm] = useState<string | null>(null);
 
   // Clip list + bindings. Bindings need a refresh token bumped by the
@@ -173,6 +202,11 @@ export default function MocapPage() {
       setStageMessage("녹화가 너무 짧습니다 (2프레임 미만).");
     }
   };
+  // Keep the auto-stop handler pointed at the latest ``onStopRecord``
+  // closure so ``useMocap`` sees the current ``targetVrm``.
+  useEffect(() => {
+    autoStopRef.current = onStopRecord;
+  });
 
   const onDiscard = () => {
     setDraftClip(null);

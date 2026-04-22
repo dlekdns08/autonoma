@@ -70,6 +70,13 @@ ALLOWED_EXPRESSIONS: frozenset[str] = frozenset(
 # headroom without letting abusers plant multi-megabyte blobs.
 MAX_PAYLOAD_SIZE_BYTES = 512 * 1024
 
+# Maximum clip length, in seconds. Shared with the recorder frontend via
+# ``/api/mocap/triggers`` so the client stops capture before it produces
+# a clip that would 400 on upload. Keep this in sync with whatever the
+# recorder actually uses — the frontend reads this value from the API
+# at runtime, so bumping it here is enough.
+MAX_CLIP_DURATION_S = 60.0
+
 
 class MocapValidationError(ValueError):
     """Raised when a payload fails validation. ``code`` is a short
@@ -108,7 +115,8 @@ def _check_quat_track(name: str, track: Any, frame_count: int) -> None:
             "bone_length_mismatch",
             f"bone '{name}' has {len(data)} floats; expected {frame_count * 4}",
         )
-    # Sample-check values: check every value but stop early on first fault.
+    # Full scan — quaternion tracks aren't large enough to warrant
+    # sampling, and one bad float can crash the renderer at playback.
     for i, v in enumerate(data):
         if not _is_finite_number(v):
             raise MocapValidationError(
@@ -202,8 +210,10 @@ def validate_payload(
     duration_s = decoded.get("durationS")
     if not _is_finite_number(duration_s) or duration_s <= 0:
         raise MocapValidationError("bad_duration")
-    if duration_s > 60:
-        raise MocapValidationError("clip_too_long", "max duration 60s")
+    if duration_s > MAX_CLIP_DURATION_S:
+        raise MocapValidationError(
+            "clip_too_long", f"max duration {MAX_CLIP_DURATION_S}s"
+        )
 
     frame_count = decoded.get("frameCount")
     if not isinstance(frame_count, int) or frame_count < 2:

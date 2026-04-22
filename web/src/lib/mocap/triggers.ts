@@ -137,10 +137,44 @@ export interface TriggerCatalog {
   mood: readonly string[];
   emote: readonly string[];
   state: readonly string[];
+  /** Server-enforced max clip duration (seconds). Recorder UIs should
+   *  cap capture at this value so uploads don't 400 on ``clip_too_long``.
+   *  Defaults to the historical 60s limit for offline / pre-hydrate. */
+  maxClipDurationS: number;
 }
 
 export const DEFAULT_TRIGGER_CATALOG: TriggerCatalog = {
   mood: MOOD_TRIGGERS,
   emote: EMOTE_TRIGGERS,
   state: STATE_TRIGGERS,
+  maxClipDurationS: 60,
 };
+
+/** Fetch the authoritative trigger catalog from the server. Falls back
+ *  to ``DEFAULT_TRIGGER_CATALOG`` on any error so the recorder still
+ *  works with a slightly stale whitelist if the network is down. */
+export async function fetchTriggerCatalog(
+  apiBase: string,
+): Promise<TriggerCatalog> {
+  try {
+    const res = await fetch(`${apiBase}/api/mocap/triggers`, {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return DEFAULT_TRIGGER_CATALOG;
+    const body = (await res.json()) as Partial<TriggerCatalog> & {
+      max_clip_duration_s?: number;
+    };
+    return {
+      mood: body.mood ?? MOOD_TRIGGERS,
+      emote: body.emote ?? EMOTE_TRIGGERS,
+      state: body.state ?? STATE_TRIGGERS,
+      maxClipDurationS:
+        typeof body.max_clip_duration_s === "number"
+          ? body.max_clip_duration_s
+          : DEFAULT_TRIGGER_CATALOG.maxClipDurationS,
+    };
+  } catch {
+    return DEFAULT_TRIGGER_CATALOG;
+  }
+}

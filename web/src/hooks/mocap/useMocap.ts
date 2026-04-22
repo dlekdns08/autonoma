@@ -43,9 +43,12 @@ import { MocapSolver } from "@/lib/mocap/solver";
 /** Target recording framerate. 30fps is the Tasks Vision default and
  *  fits inside webcam capture on every laptop we tested. */
 const RECORD_FPS = 30;
-/** Hard ceiling on clip length. Matches ``validate_payload`` on the
- *  server — bigger uploads are rejected. */
-const MAX_CLIP_SECONDS = 60;
+/** Fallback ceiling when the caller didn't pass ``maxDurationS`` (server
+ *  cap isn't known yet). The live value comes from
+ *  ``/api/mocap/triggers`` via ``UseMocapOptions.maxDurationS``; this
+ *  constant just keeps the recorder working if the caller skips wiring
+ *  up the catalog fetch. */
+const DEFAULT_MAX_CLIP_SECONDS = 60;
 
 /** MediaPipe WASM base — populated by ``npm run mocap:fetch`` into
  *  ``public/mediapipe``. Served at runtime from the same origin so CSP
@@ -70,6 +73,16 @@ export interface RecordingMeta {
 export interface UseMocapOptions {
   /** Mirror webcam horizontally. Default true. */
   mirror?: boolean;
+  /** Server-enforced max clip duration in seconds. Fetch this from
+   *  ``/api/mocap/triggers`` (``fetchTriggerCatalog``) so the client and
+   *  server agree on the ceiling. Defaults to 60s. */
+  maxDurationS?: number;
+  /** Called once when the recorder hits the max duration and auto-stops.
+   *  The caller should treat this as the user pressing "stop" —
+   *  typically by calling ``stopRecording()`` and routing the returned
+   *  clip into the upload flow. Without this, the accumulated frames
+   *  would be silently dropped on the next ``startRecording``. */
+  onMaxDurationReached?: () => void;
 }
 
 export interface UseMocapReturn {
@@ -127,6 +140,17 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   const recordingRef = useRef(false);
   const recordStartRef = useRef(0);
   const rawFramesRef = useRef<RawFrame[]>([]);
+  // Debounces the auto-stop handler so a burst of frames past the
+  // threshold can't queue multiple ``onMaxDurationReached`` calls before
+  // the first microtask runs.
+  const maxFiredRef = useRef(false);
+  // ``onMaxDurationReached`` may close over state; keep it in a ref so
+  // ``appendRawFrame`` always calls the freshest closure without the
+  // caller having to stabilise it with ``useCallback``.
+  const onMaxRef = useRef<(() => void) | undefined>(opts.onMaxDurationReached);
+  useEffect(() => {
+    onMaxRef.current = opts.onMaxDurationReached;
+  }, [opts.onMaxDurationReached]);
 
   const stop = useCallback(() => {
     runningRef.current = false;
@@ -265,16 +289,26 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     }
     rawFramesRef.current.push({ tsSec, bones, expressions });
     const elapsed = tsSec - recordStartRef.current;
-    if (elapsed >= MAX_CLIP_SECONDS) {
+    const maxSec = opts.maxDurationS ?? DEFAULT_MAX_CLIP_SECONDS;
+    if (elapsed >= maxSec && !maxFiredRef.current) {
       // Auto-stop at the server's limit so the operator can't record a
-      // clip that will just 400 on upload.
-      recordingRef.current = false;
-      setRecording(false);
+      // clip that will just 400 on upload. We flip ``maxFiredRef`` so
+      // subsequent frames before the handler's microtask fires don't
+      // re-enter this branch and queue duplicate callbacks.
+      maxFiredRef.current = true;
       setRecordingMeta({
         startedAt: recordStartRef.current,
-        durationS: MAX_CLIP_SECONDS,
+        durationS: maxSec,
         frameCount: rawFramesRef.current.length,
       });
+      // Stop capture immediately regardless of handler wiring so the
+      // buffer doesn't keep growing while the caller decides what to do.
+      // ``rawFramesRef`` is *not* cleared — ``stopRecording`` still owns
+      // that — so the caller's handler can materialise the clip.
+      recordingRef.current = false;
+      setRecording(false);
+      const cb = onMaxRef.current;
+      if (cb) queueMicrotask(cb);
     }
   };
 
@@ -283,12 +317,14 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     rawFramesRef.current = [];
     recordStartRef.current = performance.now() / 1000;
     recordingRef.current = true;
+    maxFiredRef.current = false;
     setRecording(true);
     setRecordingMeta({ startedAt: recordStartRef.current, durationS: 0, frameCount: 0 });
   }, []);
 
   const cancelRecording = useCallback(() => {
     recordingRef.current = false;
+    maxFiredRef.current = false;
     rawFramesRef.current = [];
     setRecording(false);
     setRecordingMeta(null);
@@ -307,12 +343,13 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     const startAt = raw[0].tsSec;
     const endAt = raw[raw.length - 1].tsSec;
     const rawDuration = Math.max(0, endAt - startAt);
-    const durationS = Math.min(MAX_CLIP_SECONDS, Number(rawDuration.toFixed(3)));
+    const maxSec = opts.maxDurationS ?? DEFAULT_MAX_CLIP_SECONDS;
+    const durationS = Math.min(maxSec, Number(rawDuration.toFixed(3)));
     const frameCount = expectedFrameCount(durationS, RECORD_FPS);
     const clip = resampleClip(raw, startAt, durationS, RECORD_FPS, frameCount);
     setRecordingMeta({ startedAt: startAt, durationS, frameCount });
     return clip;
-  }, []);
+  }, [opts.maxDurationS]);
 
   // Cleanup on unmount.
   useEffect(() => {
