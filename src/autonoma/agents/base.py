@@ -763,22 +763,44 @@ Rules:
     async def _action_review(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         await self._set_state(AgentState.THINKING)
 
-        # Extract verdict (required for Reviewer/Tester harnesses — output_format
-        # mandates a "VERDICT: PASS|FAIL|PARTIAL" line; log a warning when missing
-        # so drift from the harness output_format is visible in telemetry).
-        verdict = decision.get("verdict", "")
-        if not verdict:
-            logger.warning(
-                f"[{self.name}] review_work action missing 'verdict' field. "
-                f"Harness '{self.harness.name}' output_format requires "
-                f"VERDICT: PASS|FAIL|PARTIAL. LLM may have ignored output format."
-            )
+        # Reviewer/Tester harnesses mandate a "VERDICT: PASS|FAIL|PARTIAL"
+        # line. Parse strictly and fail closed — PASS is how REVIEW tasks
+        # graduate, so a missing/malformed verdict cannot be silently
+        # treated as success.
+        raw = str(decision.get("verdict", "")).strip().upper()
+        verdict = ""
+        for canonical in ("PASS", "FAIL", "PARTIAL"):
+            # startswith accommodates LLMs that append a short rationale
+            # ("PASS — tests green"). The canonical token must come first.
+            if raw.startswith(canonical):
+                verdict = canonical
+                break
 
-        if verdict:
+        malformed = not verdict
+        if malformed:
+            logger.warning(
+                f"[{self.name}] review_work produced no parseable VERDICT "
+                f"(raw={raw!r}). Harness '{self.harness.name}' output_format "
+                f"requires PASS|FAIL|PARTIAL — treating as FAIL so REVIEW "
+                f"tasks don't auto-graduate on malformed output."
+            )
+            verdict = "FAIL"
+            await self._say("Review verdict malformed → FAIL.", style="bold red")
+            await bus.emit(
+                "review.verdict_malformed",
+                agent=self.name,
+                raw=raw,
+            )
+        else:
             await self._say(f"Review: {verdict}", style="bold magenta")
 
         await bus.emit("review.started", agent=self.name, verdict=verdict)
-        return {"agent": self.name, "action": "review_work", "verdict": verdict}
+        return {
+            "agent": self.name,
+            "action": "review_work",
+            "verdict": verdict,
+            "verdict_malformed": malformed,
+        }
 
     async def _action_spawn(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         await self._set_state(AgentState.SPAWNING)
