@@ -103,6 +103,19 @@ interface Props {
 
 const MAX_VISIBLE = 50;
 
+// Rows are pure functions of their entry — and entries are append-only
+// with stable ids. Memoising the row keeps formatEvent() off the hot
+// path when new events arrive: only the tail row re-renders.
+const EventRow = memo(function EventRow({ entry }: { entry: EventLogEntry }) {
+  const { icon, color, text } = formatEvent(entry);
+  return (
+    <div className={`flex items-start gap-1.5 text-[11px] font-mono ${color}`}>
+      <span className="shrink-0">{icon}</span>
+      <span className="break-words">{text}</span>
+    </div>
+  );
+});
+
 function EventLogImpl({ events }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -140,15 +153,7 @@ function EventLogImpl({ events }: Props) {
         {visible.length === 0 ? (
           <p className="text-xs text-white/30 font-mono">(^_^) Waiting for activity...</p>
         ) : (
-          visible.map((entry) => {
-            const { icon, color, text } = formatEvent(entry);
-            return (
-              <div key={entry.id} className={`flex items-start gap-1.5 text-[11px] font-mono ${color}`}>
-                <span className="shrink-0">{icon}</span>
-                <span className="break-words">{text}</span>
-              </div>
-            );
-          })
+          visible.map((entry) => <EventRow key={entry.id} entry={entry} />)
         )}
       </div>
     </div>
