@@ -138,6 +138,34 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
 
 type GestureName = "wave" | "greet" | "hype" | "think" | "bow" | "beat" | "nod";
 
+// Fraction of each gesture's duration that should feel like the attack
+// (rise from 0 → 1). The rest is a slower settle back to 0. Tuned by eye
+// on the wave/hype clips — 0.3 gives a crisp punch without shortening
+// the hold so much that the pose stops reading.
+const GESTURE_PEAK = 0.3;
+// Derived remap exponent. Math.pow(t, K) at t=GESTURE_PEAK equals 0.5,
+// so sin(·π) hits its maximum at real-time GESTURE_PEAK. Computed once.
+const GESTURE_PEAK_SHAPE_K = Math.log(0.5) / Math.log(GESTURE_PEAK);
+
+// Priority band for requestGesture(). Four separate schedulers (ambient
+// idle, mood, state, emote) can fire on the same frame — raw last-write-
+// wins loses gestures silently. A higher priority preempts a lower one;
+// equal priority drops the incoming request so the current clip plays
+// out. Anything preempted goes into a one-deep pending slot.
+const GESTURE_PRIORITY = {
+  ambient: 1, // idle scheduler's nod/beat/wave fillers
+  mood: 2,    // mood-driven wave/hype/etc while mood is held
+  talking: 3, // utterance-driven talking beats and initial wave
+  emote: 4,   // backend-emitted emote icon reaction
+  state: 5,   // celebrating/hype, initial greet — headline moments
+} as const;
+type GesturePriority = (typeof GESTURE_PRIORITY)[keyof typeof GESTURE_PRIORITY];
+
+// How long a pending gesture is held onto before it's discarded. A clip
+// that was queued two full seconds ago is no longer in sync with what
+// triggered it; better to drop than to play late.
+const PENDING_GESTURE_TTL_MS = 2000;
+
 interface Bones {
   head: THREE.Object3D | null;
   hips: THREE.Object3D | null;
@@ -567,18 +595,15 @@ function VRMModel({
     // Initial hello wave — fires once ~0.6-1.2s after mount, unconditionally.
     const hello = window.setTimeout(() => {
       if (cancelled) return;
-      stateRef.current.gesture = "greet";
-      stateRef.current.gestureStart = performance.now() / 1000;
+      // Initial greet is a headline moment — same tier as state events.
+      requestGestureRef.current("greet", GESTURE_PRIORITY.state);
     }, 600 + Math.random() * 600);
     const scheduleNext = () => {
       const delay = 6000 + Math.random() * 6000; // 6–12s
       timer = window.setTimeout(() => {
         if (cancelled) return;
-        if (!stateRef.current.gesture) {
-          const pick = pool[Math.floor(Math.random() * pool.length)];
-          stateRef.current.gesture = pick;
-          stateRef.current.gestureStart = performance.now() / 1000;
-        }
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        requestGestureRef.current(pick, GESTURE_PRIORITY.ambient);
         scheduleNext();
       }, delay);
     };
@@ -604,8 +629,7 @@ function VRMModel({
     const playOne = () => {
       if (cancelled) return;
       const next = options[Math.floor(Math.random() * options.length)];
-      stateRef.current.gesture = next;
-      stateRef.current.gestureStart = performance.now() / 1000;
+      requestGestureRef.current(next, GESTURE_PRIORITY.mood);
     };
     const scheduleNext = (initial: boolean) => {
       const delay = initial
@@ -631,8 +655,7 @@ function VRMModel({
     const gesture = gestureForEmote(emote.icon, agentName, emote.seq ?? 0);
     const delay = 80 + Math.random() * 120; // slight human lag
     const timer = window.setTimeout(() => {
-      stateRef.current.gesture = gesture;
-      stateRef.current.gestureStart = performance.now() / 1000;
+      requestGestureRef.current(gesture, GESTURE_PRIORITY.emote);
     }, delay);
     return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -644,8 +667,7 @@ function VRMModel({
   // per cycle — most cycles produce nothing, keeping it non-spammy).
   useEffect(() => {
     if (state === "celebrating") {
-      stateRef.current.gesture = "hype";
-      stateRef.current.gestureStart = performance.now() / 1000;
+      requestGestureRef.current("hype", GESTURE_PRIORITY.state);
       return;
     }
     if (state === "talking") {
@@ -654,8 +676,7 @@ function VRMModel({
       const initial = window.setTimeout(() => {
         if (cancelled) return;
         if (Math.random() > 0.5) {
-          stateRef.current.gesture = "wave";
-          stateRef.current.gestureStart = performance.now() / 1000;
+          requestGestureRef.current("wave", GESTURE_PRIORITY.talking);
         }
       }, 400 + Math.random() * 800);
       // First beat fires early (1.2–2.2s) so medium-length utterances get
@@ -674,11 +695,10 @@ function VRMModel({
             // Lightweight subset — gentle nod or short hand-flick.
             const opts: GestureName[] = ["nod", "beat"];
             const pick = opts[Math.floor(Math.random() * opts.length)];
-            // Skip if a bigger gesture is already running.
-            if (!stateRef.current.gesture) {
-              stateRef.current.gesture = pick;
-              stateRef.current.gestureStart = performance.now() / 1000;
-            }
+            // Priority-arbitrated — if a bigger gesture is running the
+            // helper drops the request (talking beats don't squat a
+            // state-tier clip).
+            requestGestureRef.current(pick, GESTURE_PRIORITY.talking);
           }
           scheduleBeat();
         }, delay);
@@ -713,6 +733,18 @@ function VRMModel({
     // Currently-playing gesture.
     gesture: null as GestureName | null,
     gestureStart: 0,
+    // Priority of the in-flight gesture (higher wins). Arbitrates the
+    // "same-frame clover" case where ambient + mood + state timers
+    // all fire between two render frames and stomp each other.
+    gesturePriority: 0,
+    // One-deep queue for requests that arrived while a gesture was
+    // already playing. Only held briefly — if `pendingExpires` has
+    // passed by the time the current gesture ends we drop it, because
+    // a gesture the user waited 2 seconds to see is less relevant
+    // than keeping the idle pose stable.
+    pendingGesture: null as GestureName | null,
+    pendingPriority: 0,
+    pendingExpires: 0,
     // State cross-fade — when `state` changes we record the previous
     // value and ease stateBlend 0→1 over ~350ms, blending the old
     // overlay out and the new one in instead of snapping poses.
@@ -728,6 +760,43 @@ function VRMModel({
     chestPumpCooldownUntil: 0,
     prevAmpForPump: 0,
   });
+
+  // Single arbitration path for every gesture trigger. Replaces the four
+  // schedulers' direct writes to stateRef.current.gesture — last-write-
+  // wins was dropping clips whenever two timers landed in the same frame
+  // (e.g. ambient nod vs. mood hype vs. talking beat). Priority wins;
+  // same-priority yields to whatever's already running; higher-priority
+  // requests that arrive mid-clip sit in a one-deep pending slot and
+  // play when the current gesture finishes.
+  const requestGestureRef = useRef<(name: GestureName, priority: GesturePriority) => void>(
+    () => {},
+  );
+  requestGestureRef.current = (name: GestureName, priority: GesturePriority) => {
+    const s = stateRef.current;
+    const nowSec = performance.now() / 1000;
+    if (s.gesture === null) {
+      s.gesture = name;
+      s.gestureStart = nowSec;
+      s.gesturePriority = priority;
+      return;
+    }
+    if (priority > s.gesturePriority) {
+      // Preempt outright — a headline moment (celebrate, initial greet)
+      // beating an ambient filler.
+      s.gesture = name;
+      s.gestureStart = nowSec;
+      s.gesturePriority = priority;
+      return;
+    }
+    // Incoming can't preempt. Hold it as pending only if its priority is
+    // strictly higher than whatever's already pending — lower-priority
+    // requests shouldn't squat the slot.
+    if (priority > s.pendingPriority) {
+      s.pendingGesture = name;
+      s.pendingPriority = priority;
+      s.pendingExpires = performance.now() + PENDING_GESTURE_TTL_MS;
+    }
+  };
 
   // State cross-fade trigger. Whenever `state` changes, remember the
   // previous value and reset stateBlend so the overlay smoothly eases
@@ -1121,11 +1190,33 @@ function VRMModel({
       const nt = now - st.gestureStart;
       if (nt >= g.duration) {
         st.gesture = null;
+        st.gesturePriority = 0;
+        // Fresh pending? Play it. Stale? Drop — a clip the user waited
+        // two seconds to see is no longer in sync with the signal that
+        // requested it.
+        if (st.pendingGesture && performance.now() <= st.pendingExpires) {
+          st.gesture = st.pendingGesture;
+          st.gestureStart = now;
+          st.gesturePriority = st.pendingPriority;
+        }
+        st.pendingGesture = null;
+        st.pendingPriority = 0;
+        st.pendingExpires = 0;
       } else {
         const t = nt / g.duration;
-        // Soft 0 → 1 → 0 envelope so the clip ramps in and out rather
-        // than snapping a bone straight to its target.
-        const env = Math.sin(t * Math.PI);
+        // Asymmetric 0 → 1 → 0 envelope: fast anticipation into the peak,
+        // slower settle out. Human gesture recordings rarely spend equal
+        // time on the attack and decay — a symmetric sin(πt) felt robotic
+        // on the wave/hype clips in particular, because the hand hung at
+        // peak for the same duration it rose, then dropped in equal time.
+        //
+        // We reshape the time axis with t^k so the envelope's symmetric
+        // peak lands at real-time t = GESTURE_PEAK instead of 0.5. Picking
+        // k = log(0.5) / log(peak) guarantees the remap hits exactly 0.5
+        // at t = peak, so the sine curve keeps its start/end zeros and
+        // its maximum of 1. With peak = 0.3, roughly 30% of the clip is
+        // the attack and 70% is the trailing settle.
+        const env = Math.sin(Math.pow(t, GESTURE_PEAK_SHAPE_K) * Math.PI);
         g.apply(t, bones, env);
       }
     }
@@ -1178,8 +1269,26 @@ function VRMModel({
     head.getWorldPosition(headPos);
     hips.getWorldPosition(hipsPos);
 
+    // Prefer an actual chest bone for the framing center. VRM models
+    // vary wildly in torso proportion — taller VRoid base models have
+    // long necks, stylised chibi rigs have a head that covers 40% of
+    // the silhouette. A hardcoded 0.55 * (head - hips) over-framed the
+    // chibi faces and under-framed the tall rigs. Reading the actual
+    // upperChest (or chest) world-Y gives a proportionally correct
+    // center regardless of rig; we fall back to 0.55 only when the
+    // model genuinely lacks both bones (legacy/minimal rigs).
+    const chest =
+      humanoid.getNormalizedBoneNode("upperChest") ??
+      humanoid.getNormalizedBoneNode("chest");
     const centerX = (headPos.x + hipsPos.x) / 2;
-    const centerY = hipsPos.y + (headPos.y - hipsPos.y) * 0.55;
+    let centerY: number;
+    if (chest) {
+      const chestPos = new THREE.Vector3();
+      chest.getWorldPosition(chestPos);
+      centerY = chestPos.y;
+    } else {
+      centerY = hipsPos.y + (headPos.y - hipsPos.y) * 0.55;
+    }
     const centerZ = (headPos.z + hipsPos.z) / 2;
 
     // Distance: tighter in spotlight (you're "looking at" the character),
