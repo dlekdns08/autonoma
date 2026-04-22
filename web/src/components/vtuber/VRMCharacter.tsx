@@ -858,6 +858,49 @@ function VRMModel({
     rightHand: null,
   });
 
+  // Mocap playback — superset of the procedural bone cache (``Bones``).
+  // We collect every bone the clip format can address so a full-body
+  // recording can override the procedural pose. The runtime is recreated
+  // whenever ``mocapClipId`` flips; the clipCache keeps the underlying
+  // payload hot across remounts.
+  const mocapBonesRef = useRef<MocapBoneMap>({});
+  const mocapRuntimeRef = useRef<ClipRuntime | null>(null);
+  const mocapSampleRef = useRef<ClipSample>(createSampleBuffer());
+
+  useEffect(() => {
+    if (!vrm) return;
+    mocapBonesRef.current = collectMocapBones(vrm);
+  }, [vrm]);
+
+  useEffect(() => {
+    if (!mocapClipId) {
+      mocapRuntimeRef.current = null;
+      return;
+    }
+    const id = mocapClipId;
+    let cancelled = false;
+    clipCache.retain(id);
+    clipCache
+      .ensure(id)
+      .then((clip) => {
+        if (cancelled) return;
+        mocapRuntimeRef.current = new ClipRuntime(
+          clip,
+          performance.now() / 1000,
+          { loop: true },
+        );
+      })
+      .catch(() => {
+        // Swallow — the character keeps its procedural pose if the
+        // fetch fails. The /mocap page surfaces upload/fetch errors.
+      });
+    return () => {
+      cancelled = true;
+      clipCache.release(id);
+      mocapRuntimeRef.current = null;
+    };
+  }, [mocapClipId]);
+
   useFrame((_, rawDelta) => {
     if (!vrm) return;
 
