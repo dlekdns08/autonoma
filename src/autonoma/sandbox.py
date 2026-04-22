@@ -144,6 +144,20 @@ def _sanitized_env(workdir: Path) -> dict[str, str]:
 # ── rlimit preexec (POSIX) ──────────────────────────────────────────────────
 
 def _make_preexec(limits: SandboxLimits):
+    """Build the ``preexec_fn`` that applies rlimits to the sandboxed child.
+
+    macOS note: seatbelt profiles express filesystem + network rules but
+    CANNOT express CPU/memory/process caps. Those must come from rlimit,
+    which is why this preexec runs under both ``seatbelt`` and ``rlimit``
+    backends. The kernel enforces ``RLIMIT_CPU``, ``RLIMIT_FSIZE``,
+    ``RLIMIT_NPROC``, ``RLIMIT_NOFILE`` and ``RLIMIT_CORE`` reliably on
+    Darwin; ``RLIMIT_AS``/``RLIMIT_DATA`` are best-effort (the Darwin
+    kernel historically ignores them for user processes). We also set
+    ``RLIMIT_RSS`` where available — also best-effort on mac, real on
+    Linux. The wall-clock ``asyncio.wait_for`` timeout in ``_run_locked``
+    is the belt-and-suspenders catch for any case where a memory limit
+    doesn't actually kill the process.
+    """
     if os.name != "posix":
         return None
     import resource
@@ -161,6 +175,7 @@ def _make_preexec(limits: SandboxLimits):
     _add("RLIMIT_CPU", (limits.cpu_time_sec, limits.cpu_time_sec))
     _add("RLIMIT_AS", (mem_bytes, mem_bytes))
     _add("RLIMIT_DATA", (mem_bytes, mem_bytes))
+    _add("RLIMIT_RSS", (mem_bytes, mem_bytes))
     _add("RLIMIT_STACK", (64 * 1024 * 1024, 64 * 1024 * 1024))
     _add("RLIMIT_FSIZE", (fsize_bytes, fsize_bytes))
     _add("RLIMIT_NOFILE", (256, 256))
@@ -220,13 +235,22 @@ def _detect_backend() -> str:
 
 
 def backend_info() -> dict[str, object]:
-    """Diagnostic: what backend would be used and what's installed."""
+    """Diagnostic: what backend would be used and what's installed.
+
+    ``rlimit_memory_enforced`` reflects kernel-level confidence that
+    ``RLIMIT_AS``/``RLIMIT_DATA`` will actually bound memory. True on
+    Linux; on Darwin the kernel historically ignores them, so operators
+    should rely on the wall-clock timeout and the seatbelt sandbox's
+    process-exec rules rather than memory rlimits.
+    """
+    system = platform.system()
     return {
-        "system": platform.system(),
+        "system": system,
         "backend": _detect_backend(),
         "sandbox_exec": shutil.which("sandbox-exec"),
         "bwrap": shutil.which("bwrap"),
         "max_concurrent": _SEM_CAPACITY,
+        "rlimit_memory_enforced": system == "Linux",
     }
 
 
