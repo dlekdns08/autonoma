@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TaskData } from "@/lib/types";
 
 interface Props {
@@ -8,25 +8,35 @@ interface Props {
   currentRound?: number;
 }
 
-// We track when tasks entered review by using a module-level map keyed by
-// task id. This persists across renders but resets on page reload, which
-// is acceptable — we just want an approximate "rounds waiting" count.
-const reviewEntryRound: Record<string, number> = {};
-
 export default function ReviewQueue({ tasks, currentRound = 0 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
+  // Entry-round tracker is per-component-instance — previously a module
+  // singleton, which leaked state across mount/unmount cycles and across
+  // simultaneously-rendered instances (e.g. in tests or multi-project
+  // views). useRef keeps it render-stable without triggering re-renders.
+  const reviewEntryRound = useRef<Record<string, number>>({});
 
   // Filter tasks in "review" status or assigned to a reviewer role.
   const reviewTasks = tasks.filter(
     (t) => t.status === "review" || (t.status === "assigned" && t.assigned_to?.toLowerCase().includes("review")),
   );
 
-  // Track entry rounds
-  for (const t of reviewTasks) {
-    if (reviewEntryRound[t.id ?? t.title] === undefined) {
-      reviewEntryRound[t.id ?? t.title] = currentRound;
+  // Record first-seen round for each task, and drop stale keys when the
+  // task is no longer in review. The cleanup matters because a long
+  // session can accumulate thousands of keys otherwise.
+  useEffect(() => {
+    const seen = new Set<string>();
+    for (const t of reviewTasks) {
+      const key = t.id ?? t.title;
+      seen.add(key);
+      if (reviewEntryRound.current[key] === undefined) {
+        reviewEntryRound.current[key] = currentRound;
+      }
     }
-  }
+    for (const key of Object.keys(reviewEntryRound.current)) {
+      if (!seen.has(key)) delete reviewEntryRound.current[key];
+    }
+  }, [reviewTasks, currentRound]);
 
   const count = reviewTasks.length;
 
@@ -68,7 +78,7 @@ export default function ReviewQueue({ tasks, currentRound = 0 }: Props) {
           ) : (
             reviewTasks.map((task) => {
               const key = task.id ?? task.title;
-              const entryRound = reviewEntryRound[key] ?? currentRound;
+              const entryRound = reviewEntryRound.current[key] ?? currentRound;
               const waitingRounds = currentRound - entryRound;
               const isOverdue = waitingRounds > 3;
 
