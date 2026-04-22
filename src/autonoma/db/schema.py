@@ -32,6 +32,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -353,3 +354,89 @@ world_event_log = Table(
 
 Index("ix_world_event_log_round", world_event_log.c.round)
 Index("ix_world_event_log_type", world_event_log.c.event_type)
+
+
+# ── mocap_clips ───────────────────────────────────────────────────────────
+# User-recorded motion capture clips. Payload is gzipped JSON of a
+# ``MocapClip`` (frontend format: version=1, humanoid bone quaternion
+# tracks + VRM expression tracks, rig-agnostic). Kept in-column because
+# clips are small (< 100 KB compressed) and rarely updated.
+mocap_clips = Table(
+    "mocap_clips",
+    metadata,
+    Column("id", String(36), primary_key=True),  # uuid4
+    Column(
+        "owner_user_id",
+        String(36),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    ),
+    Column("name", String(128), nullable=False),
+    # The .vrm filename used when recording. Participates in rig-
+    # independence checks only; playback is not limited to this VRM.
+    Column("source_vrm", String(64), nullable=False),
+    Column("duration_s", Float, nullable=False),
+    Column("fps", Integer, nullable=False),
+    Column("frame_count", Integer, nullable=False),
+    Column("payload_gz", LargeBinary, nullable=False),
+    Column("size_bytes", Integer, nullable=False),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+
+# ── mocap_bindings ────────────────────────────────────────────────────────
+# Global (site-wide) trigger → clip bindings, keyed by VRM character file.
+# Any agent rendered with ``vrm_file`` plays ``clip_id`` when the matching
+# trigger (mood / emote / state / manual) fires. Single row per
+# (vrm_file, kind, value) so setting a new clip just upserts.
+mocap_bindings = Table(
+    "mocap_bindings",
+    metadata,
+    Column("vrm_file", String(64), nullable=False),
+    Column("trigger_kind", String(16), nullable=False),  # mood|emote|state|manual
+    Column("trigger_value", String(64), nullable=False),
+    Column(
+        "clip_id",
+        String(36),
+        ForeignKey("mocap_clips.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "updated_by",
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "vrm_file",
+        "trigger_kind",
+        "trigger_value",
+        name="pk_mocap_bindings",
+    ),
+)
+
+Index(
+    "ix_mocap_bindings_vrm",
+    mocap_bindings.c.vrm_file,
+    mocap_bindings.c.trigger_kind,
+    mocap_bindings.c.trigger_value,
+)
