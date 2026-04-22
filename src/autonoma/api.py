@@ -1725,8 +1725,23 @@ async def get_session_harness_metadata(
 
 
 def _cleanup_session(session_id: int) -> None:
-    """Remove a session entry. Safe to call multiple times."""
+    """Remove a session entry and dispose of session-scoped workers.
+
+    Safe to call multiple times — ``shutdown_worker`` is a no-op when
+    the key is already absent. The swarm task's own finally-block also
+    shuts the worker down on normal completion; this belt-and-suspenders
+    call catches the disconnect path where the swarm was never started
+    (no task → no finally) and the edge case where a BaseException
+    escaped the task body before its finally ran.
+    """
     _sessions.pop(session_id, None)
+    try:
+        from autonoma.tts_worker import shutdown_worker
+        shutdown_worker(session_id)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            f"[_cleanup_session:{session_id}] shutdown_worker failed: {exc!r}"
+        )
 
 
 async def _cancel_session_task(session: SessionState) -> None:
@@ -2386,6 +2401,8 @@ async def _require_session_owner(
 async def list_files(
     request: Request,
     session: int | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     # Gate on ownership so a viewer can't enumerate logged-in users'
     # sessions by probing sequential ids. See ``_require_session_owner``
@@ -2393,9 +2410,22 @@ async def list_files(
     sess = await _require_session_owner(session, request)
     project = sess.project
     if project is None:
-        return {"project": None, "files": []}
+        return {
+            "project": None,
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "files": [],
+        }
+    # Slice BEFORE serializing — a long-running swarm with 10k+
+    # artifacts would otherwise burn O(N) memory and serialization
+    # time on every poll.
+    page = project.files[offset : offset + limit]
     return {
         "project": project.name,
+        "total": len(project.files),
+        "limit": limit,
+        "offset": offset,
         "files": [
             {
                 "path": f.path,
@@ -2403,7 +2433,7 @@ async def list_files(
                 "description": f.description,
                 "created_by": f.created_by,
             }
-            for f in project.files
+            for f in page
         ],
     }
 
