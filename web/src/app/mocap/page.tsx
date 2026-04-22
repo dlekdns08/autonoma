@@ -97,10 +97,17 @@ export default function MocapPage() {
   }, [draftClip]);
 
   useEffect(() => {
-    if (!mocap.recording) return;
-    const id = window.setInterval(() => setRecordTick((n) => n + 1), 100);
+    const meta = mocap.recordingMeta;
+    if (!mocap.recording || !meta) {
+      setRecordElapsed(0);
+      return;
+    }
+    const update = () =>
+      setRecordElapsed(performance.now() / 1000 - meta.startedAt);
+    update();
+    const id = window.setInterval(update, 100);
     return () => window.clearInterval(id);
-  }, [mocap.recording]);
+  }, [mocap.recording, mocap.recordingMeta]);
 
   useEffect(() => {
     if (!playing || !draftClip || !trimRuntimeRef.current) return;
@@ -329,10 +336,7 @@ export default function MocapPage() {
                     onClick={onStopRecord}
                     className="rounded border border-rose-500/70 bg-rose-500/20 px-3 py-1.5 text-rose-100 hover:bg-rose-500/30"
                   >
-                    ■ 정지 ({mocap.recordingMeta
-                      ? (performance.now() / 1000 - mocap.recordingMeta.startedAt).toFixed(1)
-                      : "0.0"}
-                    초)
+                    ■ 정지 ({recordElapsed.toFixed(1)}초)
                   </button>
                 )}
                 {stage === "recorded" && (
