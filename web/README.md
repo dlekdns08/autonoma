@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Autonoma — web frontend
 
-## Getting Started
+Next.js 16 + React 19 app for Autonoma's pixel stage, VTuber stage,
+admin panels, and OBS feed. Talks to the Python backend over REST
+(`/api/*`) + a single WebSocket for live swarm events.
 
-First, run the development server:
+Top-level project docs live in [`../README.md`](../README.md); this
+readme covers only what you need to work on the web app itself.
+
+## Dev
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app expects the Python API at `http://localhost:8000`. Start that
+in another terminal (see the root README).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Admin pages live under `/admin/*` and require a cookie session with
+`role=admin` — create an admin via the backend CLI before trying them.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Scripts
 
-## Learn More
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Next.js dev server with HMR |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint across the app |
+| `npm run vrm:sync-licenses` | Regenerate `public/vrm/LICENSES.md` and drift-check `vrmCatalog.json` against `public/vrm/` |
 
-To learn more about Next.js, take a look at the following resources:
+## Layout
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+src/
+├── app/
+│   ├── page.tsx          # Main dashboard (pixel + VTuber + chat)
+│   ├── obs/              # Chromakey-friendly VTuber-only feed
+│   ├── chibi-gallery/    # Procedural pixel character gallery
+│   └── admin/            # Admin panels (runs, users, memory)
+├── components/
+│   ├── Stage.tsx         # 2D pixel cyber-HUD room
+│   ├── EventLog.tsx      # Live event feed
+│   ├── ExecutionTimeline.tsx
+│   ├── AuthModal.tsx     # Login / signup / legacy admin
+│   ├── vtuber/           # VRM render + gesture/expression engine
+│   └── stage/            # Backdrops, particles, minimap, pixel sprites
+├── hooks/
+│   ├── useSwarm.ts       # WebSocket state machine
+│   ├── useAuth.ts        # Cookie-session auth
+│   └── useAgentVoice.ts  # Per-agent TTS + lip-sync amplitude
+└── lib/
+    ├── strings.ts        # Centralized UI strings (i18n seed layer)
+    ├── types.ts          # Shared TS types incl. EventPayloadMap
+    └── events.ts         # Typed event payload narrowing
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Conventions
 
-## Deploy on Vercel
+- **No raw Korean strings in new code.** Shared strings go in
+  [`src/lib/strings.ts`](./src/lib/strings.ts); single-use component
+  copy may stay inline.
+- **Event payloads** narrow through `payloadOf(entry, "event.name")` —
+  see [`src/lib/events.ts`](./src/lib/events.ts). Unknown shapes
+  warn-once to the console instead of throwing.
+- **VRM catalog drift** is checked at `npm run vrm:sync-licenses`; CI
+  fails when `vrmCatalog.json` and `public/vrm/*.vrm` disagree.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Agent notes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This is NOT the Next.js you know from training data. See
+[`AGENTS.md`](./AGENTS.md) before writing code — some APIs and
+conventions differ from older major versions.
