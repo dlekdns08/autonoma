@@ -44,6 +44,19 @@ ALLOWED_BONES: frozenset[str] = frozenset(
         "rightLowerArm",
         "leftHand",
         "rightHand",
+        # Finger proximal joints (one per finger, each hand). Recorded
+        # from MediaPipe HandLandmarker — webcam doesn't have the spatial
+        # resolution for Intermediate/Distal to read better than identity.
+        "leftThumbProximal",
+        "leftIndexProximal",
+        "leftMiddleProximal",
+        "leftRingProximal",
+        "leftLittleProximal",
+        "rightThumbProximal",
+        "rightIndexProximal",
+        "rightMiddleProximal",
+        "rightRingProximal",
+        "rightLittleProximal",
     ]
 )
 
@@ -65,10 +78,11 @@ ALLOWED_EXPRESSIONS: frozenset[str] = frozenset(
     ]
 )
 
-# Decompressed (pre-JSON) size cap. A 10-second clip at 30fps with all
-# bones + expressions is ~180 KB un-gzipped. 512 KB gives comfortable
-# headroom without letting abusers plant multi-megabyte blobs.
-MAX_PAYLOAD_SIZE_BYTES = 512 * 1024
+# Decompressed (pre-JSON) size cap. With the v2 bone set (24 tracked
+# bones: 14 body + 10 finger-proximal) a full 60-second clip at 30fps is
+# ~1.7 MB un-gzipped. 2 MB gives a little headroom without letting
+# abusers plant multi-megabyte blobs.
+MAX_PAYLOAD_SIZE_BYTES = 2 * 1024 * 1024
 
 # Maximum clip length, in seconds. Shared with the recorder frontend via
 # ``/api/mocap/triggers`` so the client stops capture before it produces
