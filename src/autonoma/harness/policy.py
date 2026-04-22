@@ -241,6 +241,71 @@ class HarnessPolicyContent(BaseModel):
     budget: BudgetPolicy = Field(default_factory=BudgetPolicy)
     checkpoint: CheckpointPolicy = Field(default_factory=CheckpointPolicy)
 
+    @model_validator(mode="after")
+    def _cross_field_invariants(self) -> "HarnessPolicyContent":
+        """Reject preset combinations that pass per-field bounds but
+        produce a structurally useless run.
+
+        Per-field ``ge``/``le`` bounds catch wildly-broken numbers, but
+        some failure modes are only visible at the policy level — e.g.
+        an LLM timeout larger than the surrounding agent step, a per-
+        round TTS budget that exceeds the per-session cap, or a peer-
+        vote approval mode with only two agents in the roster (the
+        candidate plus one voter — no quorum is reachable). Each of
+        these used to crash mid-run or silently no-op; validating at
+        parse time turns them into a 422 on preset save.
+        """
+        errors: list[str] = []
+
+        # The LLM call is one step within the agent's turn, so its
+        # timeout must fit inside the agent-step timeout. Otherwise
+        # the agent step reaper fires before the LLM response lands
+        # and we lose the work anyway.
+        if self.loop.llm_timeout_s > self.loop.agent_timeout_s:
+            errors.append(
+                f"loop.llm_timeout_s ({self.loop.llm_timeout_s}) must be "
+                f"<= loop.agent_timeout_s ({self.loop.agent_timeout_s}); "
+                "otherwise the agent-step reaper fires before the LLM "
+                "call can finish"
+            )
+
+        # Per-round TTS budget can't exceed the per-session cap — the
+        # session cap is a hard total, and if one round is allowed to
+        # consume more than the total there's no session budget left
+        # for subsequent rounds. Treat session=0 as "TTS disabled" and
+        # let any per-round value pass.
+        if (
+            self.memory.tts_chars_per_session > 0
+            and self.memory.tts_chars_per_round > self.memory.tts_chars_per_session
+        ):
+            errors.append(
+                f"memory.tts_chars_per_round ({self.memory.tts_chars_per_round}) "
+                f"must be <= memory.tts_chars_per_session "
+                f"({self.memory.tts_chars_per_session})"
+            )
+
+        # Peer-vote spawn approval needs at least 3 agents total: the
+        # candidate being voted on plus a quorum of 2 existing voters.
+        # With max_agents<=2 the vote is structurally unreachable and
+        # new spawns never get approved.
+        if (
+            self.spawn.approval_mode == "peer_vote"
+            and self.spawn.max_agents < 3
+        ):
+            errors.append(
+                "spawn.approval_mode=peer_vote requires spawn.max_agents "
+                f">= 3 (got {self.spawn.max_agents}); a 2-agent roster "
+                "cannot reach a voting quorum"
+            )
+
+        if errors:
+            # Pydantic surfaces a single ValueError as a validation
+            # error with the model path — joining the messages keeps
+            # all failures visible in one 422 response instead of
+            # making the user retry after each fix.
+            raise ValueError("; ".join(errors))
+        return self
+
 
 class HarnessPolicy(BaseModel):
     """A persisted preset: metadata + content.
