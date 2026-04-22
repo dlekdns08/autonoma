@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 import MemoryInspector from "@/components/MemoryInspector";
+import { STRINGS } from "@/lib/strings";
 
 export default function AdminMemoryPage() {
   const { user, loading: authLoading } = useAuth();
@@ -45,7 +46,7 @@ export default function AdminMemoryPage() {
         <div className="max-w-md rounded-2xl border border-red-500/30 bg-slate-950/95 p-8 text-center shadow-2xl shadow-red-500/10">
           <div className="mb-3 text-4xl">⛔</div>
           <h1 className="text-2xl font-bold font-mono text-red-300">403</h1>
-          <p className="mt-2 text-sm font-mono text-white/60">관리자만 접근할 수 있습니다.</p>
+          <p className="mt-2 text-sm font-mono text-white/60">{STRINGS.admin.onlyAdmin}</p>
         </div>
       </div>
     );
