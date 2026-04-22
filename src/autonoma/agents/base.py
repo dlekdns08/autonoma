@@ -292,10 +292,7 @@ class AutonomousAgent:
             "action.harness_enforcement", self.policy.action.harness_enforcement
         )
         if not enforcer(self.name, action_type, self.harness):
-            logger.warning(
-                f"[{self.name}] Harness blocked action '{action_type}' "
-                f"(not in allowed capabilities for {self.harness.name})"
-            )
+            # Enforcer strategy already logged the reason; don't duplicate.
             await self._say(f"Can't do that - not my role!", style="italic yellow")
             return {"agent": self.name, "action": "blocked", "blocked_action": action_type}
 
