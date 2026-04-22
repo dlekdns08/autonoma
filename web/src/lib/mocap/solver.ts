@@ -450,9 +450,13 @@ export class MocapSolver {
    *  / ``latestHandSides`` are refreshed so callers can surface a live
    *  diagnostic ("손 2개 감지").
    *
-   *  Mirror convention: when ``mirror`` is on we swap MediaPipe's
-   *  ``Left``↔``Right`` output (the user sees themselves in a mirror so
-   *  their visual-left hand = VRM's left hand).
+   *  Handedness in MediaPipe HandLandmarker: the model assumes a
+   *  selfie-mirrored input, so when we feed it raw (unmirrored)
+   *  camera frames its ``"Left"`` label corresponds to the user's
+   *  anatomical RIGHT hand and vice-versa. We flip back to anatomical
+   *  here, then apply the standard mirror-swap so the VRM mirrors the
+   *  user visually (same side of screen moves together — matching the
+   *  convention ``solvePose`` uses for the arms).
    */
   private solveHands(
     result: HandLandmarkerResult,
@@ -471,8 +475,12 @@ export class MocapSolver {
       const lm = hands[i];
       const mpLabel = sides[i]?.[0]?.categoryName;
       if (!lm || lm.length < 21 || !mpLabel) continue;
-      const mpIsLeft = mpLabel === "Left";
-      const vrmIsLeft = this.mirror ? !mpIsLeft : mpIsLeft;
+      // MediaPipe selfie-mirror assumption → invert to get the user's
+      // anatomical side.
+      const userIsLeft = mpLabel === "Right";
+      // Standard mirror swap — same convention as ``solvePose`` so the
+      // arm and the hand attached to it end up on the same VRM side.
+      const vrmIsLeft = this.mirror ? !userIsLeft : userIsLeft;
       if (vrmIsLeft && seenLeft.done) continue;
       if (!vrmIsLeft && seenRight.done) continue;
       if (vrmIsLeft) seenLeft.done = true;
