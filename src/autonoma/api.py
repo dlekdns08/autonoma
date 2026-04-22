@@ -3432,7 +3432,15 @@ async def mocap_delete_clip(
         raise HTTPException(
             status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use"
         )
-    ok = await mocap_store.delete_clip(clip_id)
+    try:
+        ok = await mocap_store.delete_clip(clip_id)
+    except mocap_store.IntegrityError:
+        # Race: a binding was inserted between the ``clip_is_bound`` check
+        # above and this delete. FK is ON DELETE RESTRICT so the DB
+        # rejects the delete — surface the same 409 the pre-check would.
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use"
+        )
     if not ok:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
@@ -3451,7 +3459,7 @@ async def mocap_list_bindings(
 @app.put("/api/mocap-bindings")
 async def mocap_upsert_binding(
     payload: dict[str, Any],
-    user: User = Depends(require_active_user),
+    user: User = Depends(require_admin),
 ) -> dict[str, Any]:
     vrm_file = str(payload.get("vrm_file") or "").strip()
     kind = str(payload.get("trigger_kind") or "").strip()
@@ -3503,7 +3511,7 @@ async def mocap_delete_binding(
     vrm_file: str = Query(...),
     trigger_kind: str = Query(...),
     trigger_value: str = Query(...),
-    _user: User = Depends(require_active_user),
+    _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
     if not is_known_vrm(vrm_file):
         raise HTTPException(
