@@ -100,6 +100,7 @@ export default function VTuberStage({
   subtitles,
   forcePinnedAgent,
   emotes,
+  mocapClipIdFor,
 }: Props) {
   // Subtitles default: on in OBS (clip-friendly), off on the main
   // dashboard (the in-scene speech bubble is part of the aesthetic
