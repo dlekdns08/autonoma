@@ -440,3 +440,75 @@ Index(
     mocap_bindings.c.trigger_kind,
     mocap_bindings.c.trigger_value,
 )
+
+
+# ── voice_profiles ────────────────────────────────────────────────────────
+# Per-character reference-audio profiles for zero-shot voice cloning
+# (OmniVoice / k2-fsa). ``ref_audio_gz`` stores the raw WAV bytes — small
+# (<2 MB typical for 5-30s samples) so an in-column blob stays convenient
+# and backups capture the ref audio alongside the schema. The actual
+# synthesis path materializes the bytes to a temp file once per process
+# and keeps an LRU cache, so we're not paying I/O per utterance.
+voice_profiles = Table(
+    "voice_profiles",
+    metadata,
+    Column("id", String(36), primary_key=True),  # uuid4
+    Column(
+        "owner_user_id",
+        String(36),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    ),
+    Column("name", String(128), nullable=False),
+    Column("ref_text", Text, nullable=False, default=""),
+    # Raw WAV bytes. Not gzipped — WAV PCM already compresses poorly and
+    # the synthesis path needs a plain audio file anyway.
+    Column("ref_audio", LargeBinary, nullable=False),
+    Column("ref_audio_mime", String(32), nullable=False, default="audio/wav"),
+    Column("duration_s", Float, nullable=False, default=0.0),
+    Column("size_bytes", Integer, nullable=False, default=0),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+
+# ── voice_bindings ────────────────────────────────────────────────────────
+# Global (site-wide) vrm_file → voice_profile mapping. Mirrors the mocap
+# pattern: one row per VRM character, admin-editable from the /voice page,
+# broadcast via the ``voice.bindings.updated`` WS event so every live
+# viewer picks up the new voice without reconnecting.
+voice_bindings = Table(
+    "voice_bindings",
+    metadata,
+    Column("vrm_file", String(64), primary_key=True),
+    Column(
+        "profile_id",
+        String(36),
+        ForeignKey("voice_profiles.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "updated_by",
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
