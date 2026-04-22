@@ -164,3 +164,87 @@ def test_backend_info_shape():
     assert isinstance(info, dict)
     for key in ("system", "backend", "sandbox_exec", "bwrap", "max_concurrent"):
         assert key in info
+
+
+# ── Regression tests ─────────────────────────────────────────────────
+# The sandbox has three independent ways to kill a runaway process
+# (wall clock, CPU time, memory). Each is wired in a different code path
+# (asyncio timeout vs. RLIMIT_CPU vs. RLIMIT_AS), so losing any one
+# without the others failing produces silent degradation — the process
+# just runs longer or burns more RAM than configured. These tests pin
+# each path independently.
+
+
+async def test_cpu_time_limit_kills_busy_loop():
+    """Tight CPU loop should be killed by RLIMIT_CPU before wall clock.
+
+    We set a CPU cap of 1s with a much larger wall cap (8s) so a pure
+    wall-clock kill would be ambiguous. A busy loop saturates CPU ≈ 1s
+    of userland per wall second, so the signal should arrive within a
+    couple of seconds of real time. Not applicable to backends that
+    don't pre-exec the rlimit (none of ours skip it today, but the
+    check is here in case a future backend does).
+    """
+    if backend_info()["system"] == "Windows":
+        pytest.skip("rlimits unavailable on Windows")
+    limits = SandboxLimits(wall_time_sec=8.0, cpu_time_sec=1)
+    sandbox = CodeSandbox(limits=limits)
+    started = time.monotonic()
+    # Bash loop is a reliable CPU burner across interpreters.
+    result = await sandbox.run("while :; do :; done", Language.BASH)
+    elapsed = time.monotonic() - started
+    assert not result.ok
+    # We should kill via CPU, not wall — wall would only trip after 8s.
+    # The process may be reported as timed_out or not depending on which
+    # signal lands first; the key invariant is the wall clock didn't
+    # have to wait for the 8s cap.
+    assert elapsed < 5.0, (
+        f"CPU-bound code ran {elapsed:.2f}s — RLIMIT_CPU didn't kill it"
+    )
+
+
+async def test_memory_limit_kills_allocator():
+    """Allocating far beyond memory_mb should fail the process.
+
+    We try to allocate 2 GB when the cap is 64 MB. Behavior differs by
+    platform:
+      - Linux: RLIMIT_AS enforces — the allocator raises
+        MemoryError and the script exits non-zero.
+      - macOS: RLIMIT_AS is advisory (see sandbox.backend_info()
+        rlimit_memory_enforced flag). The allocation may succeed. We
+        skip on macOS rather than pretending the test is meaningful.
+    """
+    info = backend_info()
+    if not info.get("rlimit_memory_enforced", False):
+        pytest.skip(
+            "memory rlimit is not kernel-enforced on this platform "
+            f"(backend={info['backend']}, system={info['system']})"
+        )
+    limits = SandboxLimits(memory_mb=64, wall_time_sec=6.0, cpu_time_sec=3)
+    sandbox = CodeSandbox(limits=limits)
+    code = (
+        "buf = bytearray(2 * 1024 * 1024 * 1024)\n"
+        "print('LEAKED', len(buf))\n"
+    )
+    result = await sandbox.run(code, Language.PYTHON)
+    assert not result.ok, "oversized allocation succeeded — rlimit not enforced"
+    assert "LEAKED" not in result.stdout
+
+
+async def test_backend_info_reports_memory_enforcement_honestly():
+    """The diagnostic flag should match the running system.
+
+    This exists specifically to catch the case where someone copies the
+    Linux branch to another Unix without auditing whether RLIMIT_AS
+    actually caps RSS there. Flag value is load-bearing — callers
+    (including the memory regression test above) use it to decide
+    whether to skip.
+    """
+    info = backend_info()
+    assert isinstance(info.get("rlimit_memory_enforced"), bool)
+    # Linux: kernel enforces. macOS: known not-enforced (documented
+    # in sandbox._make_preexec).
+    if info["system"] == "Linux":
+        assert info["rlimit_memory_enforced"] is True
+    elif info["system"] == "Darwin":
+        assert info["rlimit_memory_enforced"] is False
