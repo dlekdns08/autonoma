@@ -444,11 +444,19 @@ Index(
 
 # ── voice_profiles ────────────────────────────────────────────────────────
 # Per-character reference-audio profiles for zero-shot voice cloning
-# (OmniVoice / k2-fsa). ``ref_audio_gz`` stores the raw WAV bytes — small
-# (<2 MB typical for 5-30s samples) so an in-column blob stays convenient
-# and backups capture the ref audio alongside the schema. The actual
-# synthesis path materializes the bytes to a temp file once per process
-# and keeps an LRU cache, so we're not paying I/O per utterance.
+# (OmniVoice / k2-fsa).
+#
+# Storage layout, historical → current:
+#   v1 (migration 006): ``ref_audio`` LargeBinary (NOT NULL). WAV bytes
+#       stored in-column. Simple but bloats DB backups and blocks nginx
+#       sendfile for the audio preview endpoint.
+#   v2 (migration 007): ``ref_audio_path`` String (nullable) added; both
+#       columns made nullable. New uploads go to
+#       ``{data_dir}/voice_refs/{id}.{ext}`` and the column stores the
+#       basename only. Reads prefer the path; missing path falls back to
+#       the legacy BLOB so old rows keep working with zero downtime.
+#       A future migration can drop the BLOB column once all rows are
+#       migrated — out of scope for this change.
 voice_profiles = Table(
     "voice_profiles",
     metadata,
@@ -462,9 +470,14 @@ voice_profiles = Table(
     ),
     Column("name", String(128), nullable=False),
     Column("ref_text", Text, nullable=False, default=""),
-    # Raw WAV bytes. Not gzipped — WAV PCM already compresses poorly and
-    # the synthesis path needs a plain audio file anyway.
-    Column("ref_audio", LargeBinary, nullable=False),
+    # Legacy BLOB — kept nullable for rows written in v1 (before the
+    # filesystem migration). New writes leave this NULL and populate
+    # ``ref_audio_path`` instead.
+    Column("ref_audio", LargeBinary, nullable=True),
+    # Basename of the ref audio file inside ``{data_dir}/voice_refs/``.
+    # Storing the basename (not an absolute path) so the deployment
+    # root can move without a DB migration.
+    Column("ref_audio_path", String(128), nullable=True),
     Column("ref_audio_mime", String(32), nullable=False, default="audio/wav"),
     Column("duration_s", Float, nullable=False, default=0.0),
     Column("size_bytes", Integer, nullable=False, default=0),
