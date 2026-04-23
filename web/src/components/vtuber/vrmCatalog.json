@@ -42,7 +42,7 @@
       "thumbMetacarpalRestDeg": 5,
       "thumbMetacarpalFistDeg": 55,
       "thumbMetacarpalOutDeg": 60,
-      "bodyShoulderLiftGain": 1.0,
+      "bodyShoulderLiftGain": 0,
       "bodySpineWeightSpine": 0.45,
       "bodySpineWeightChest": 0.35,
       "bodySpineWeightUpperChest": 0.20,

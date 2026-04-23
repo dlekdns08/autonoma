@@ -1040,13 +1040,45 @@ export class MocapSolver {
     const rHip = world[LM_RIGHT_HIP];
     const lSh = world[LM_LEFT_SHOULDER];
     const rSh = world[LM_RIGHT_SHOULDER];
-    const torsoVis =
+    const hipVis =
       (lHip?.visibility ?? 0) > VIS_GATE &&
-      (rHip?.visibility ?? 0) > VIS_GATE &&
+      (rHip?.visibility ?? 0) > VIS_GATE;
+    const shoulderVis =
       (lSh?.visibility ?? 0) > VIS_GATE &&
       (rSh?.visibility ?? 0) > VIS_GATE;
-    if (!torsoVis) {
+
+    // If nothing's visible (subject entirely out of frame), we can't
+    // drive any body bones — clear everything we own and bail.
+    if (!hipVis && !shoulderVis) {
       this.clearBones(out, TORSO_BONES);
+      // Arms / legs are cleared inside their own chains when their
+      // own landmarks fail visibility, so no need to clear them here.
+      return;
+    }
+
+    // Webcam-from-chest-up shot: shoulders visible, hips aren't. Skip
+    // torso/spine writes (we'd need both hip and shoulder landmarks
+    // to derive them reliably) but fall through to the ARM chain with
+    // an identity torso frame. This is the common "recording from a
+    // desk webcam with legs under the table" case.
+    if (!hipVis) {
+      this.clearBones(out, TORSO_BONES);
+      _torsoQuat.identity();
+      _yawQuat.identity();
+      _upperChestWorld.identity();
+      this.solveArmChainsOnly(world, tsSec, out);
+      return;
+    }
+
+    // Hips visible, shoulders not (rare — user's head cut off). Clear
+    // torso + neck-adjacent bones; legs can still compute from hip+knee
+    // so fall through.
+    if (!shoulderVis) {
+      this.clearBones(out, TORSO_BONES);
+      _torsoQuat.identity();
+      _yawQuat.identity();
+      _upperChestWorld.identity();
+      this.solveLegChainsOnly(world, tsSec, out);
       return;
     }
 
@@ -1248,6 +1280,59 @@ export class MocapSolver {
     // playback pipeline to accept a per-frame position vector is a
     // follow-up. Measured in metres relative to the first-valid-frame
     // baseline when enabled.
+  }
+
+  /** Fallback used when hips aren't visible (e.g. chest-up webcam
+   *  shot). Drives both arms with the current (possibly identity)
+   *  ``_upperChestWorld`` so the arms keep tracking even though the
+   *  torso frame couldn't be built. Legs are skipped — without hip
+   *  landmarks we can't compute them. */
+  private solveArmChainsOnly(
+    world: { x: number; y: number; z: number; visibility?: number }[],
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const armVrmLeft_User = this.mirror
+      ? ([LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const)
+      : ([LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const);
+    const armVrmRight_User = this.mirror
+      ? ([LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const)
+      : ([LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const);
+    this.solveArmChain(
+      "leftUpperArm", "leftLowerArm", "leftHand", "leftShoulder",
+      armVrmLeft_User[0], armVrmLeft_User[1], armVrmLeft_User[2],
+      +1, world, tsSec, out,
+    );
+    this.solveArmChain(
+      "rightUpperArm", "rightLowerArm", "rightHand", "rightShoulder",
+      armVrmRight_User[0], armVrmRight_User[1], armVrmRight_User[2],
+      -1, world, tsSec, out,
+    );
+  }
+
+  /** Fallback used when shoulders aren't visible (rare — user's head
+   *  cut off). Drives only the legs. */
+  private solveLegChainsOnly(
+    world: { x: number; y: number; z: number; visibility?: number }[],
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const legVrmLeft_User = this.mirror
+      ? ([LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const)
+      : ([LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const);
+    const legVrmRight_User = this.mirror
+      ? ([LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const)
+      : ([LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const);
+    this.solveLegChain(
+      "leftUpperLeg", "leftLowerLeg", "leftFoot",
+      legVrmLeft_User[0], legVrmLeft_User[1], legVrmLeft_User[2], legVrmLeft_User[3],
+      world, tsSec, out,
+    );
+    this.solveLegChain(
+      "rightUpperLeg", "rightLowerLeg", "rightFoot",
+      legVrmRight_User[0], legVrmRight_User[1], legVrmRight_User[2], legVrmRight_User[3],
+      world, tsSec, out,
+    );
   }
 
   /** Solve one arm: upperArm (parent = upperChest), lowerArm (parent =
