@@ -184,6 +184,14 @@ function fixCoord(v: THREE.Vector3): void {
   v.y = -v.y;
   v.z = -v.z;
 }
+
+/** Branchless median-of-3: returns the middle value of ``a``, ``b``,
+ *  ``c`` using two ``min``s and two ``max``s. Used by the pre-IK pose
+ *  landmark smoothing filter to reject single-frame outliers without
+ *  the motion-onset lag a mean would incur. */
+function median3(a: number, b: number, c: number): number {
+  return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+}
 const _bX = new THREE.Vector3();
 const _bY = new THREE.Vector3();
 const _bZ = new THREE.Vector3();
@@ -598,10 +606,48 @@ export class MocapSolver {
    *  frame. Null when no hands were passed in. */
   private _latestHandResult: HandLandmarkerResult | null = null;
 
+  /** Zero-allocation 3-frame ring buffer of pose worldLandmarks for
+   *  median pre-smoothing. Each slot is a pre-allocated array of 33
+   *  mutable ``{x,y,z,visibility}`` dicts. We median each component
+   *  across the valid slots to suppress single-frame depth jitter and
+   *  low-visibility noise before the body IK consumes them. */
+  private readonly _poseHistorySlots: Array<
+    Array<{ x: number; y: number; z: number; visibility: number }>
+  > = [];
+  private _poseHistoryHead = 0;
+  private _poseHistorySize = 0;
+  /** Pre-allocated output array returned by ``smoothPoseLandmarks``.
+   *  Mutated in-place each frame — callers must treat it as read-only
+   *  snapshot valid only for the current solve. */
+  private readonly _poseMedian: Array<{
+    x: number;
+    y: number;
+    z: number;
+    visibility: number;
+  }> = [];
+
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
     this.cfg = opts.oneEuro;
     this.effectiveCalibration = { ...CALIBRATION };
+    // Pre-allocate the median output and the 3 ring-buffer slots so the
+    // steady-state solve never allocates (33 objects per slot × 3 slots
+    // + 33 in ``_poseMedian`` = 132 tiny records, created once here).
+    for (let i = 0; i < 33; i++) {
+      this._poseMedian.push({ x: 0, y: 0, z: 0, visibility: 0 });
+    }
+    for (let r = 0; r < 3; r++) {
+      const slot: Array<{
+        x: number;
+        y: number;
+        z: number;
+        visibility: number;
+      }> = [];
+      for (let i = 0; i < 33; i++) {
+        slot.push({ x: 0, y: 0, z: 0, visibility: 0 });
+      }
+      this._poseHistorySlots.push(slot);
+    }
   }
 
   /** Apply per-VRM calibration overrides on top of the default
@@ -711,6 +757,101 @@ export class MocapSolver {
   reset(): void {
     for (const f of Object.values(this.quatFilters)) f?.reset();
     for (const f of Object.values(this.scalarFilters)) f?.reset();
+    // Clear the pose smoothing ring so a camera restart doesn't carry
+    // stale landmarks into the next session. The pre-allocated slot
+    // objects are reused; only the size+head counters need resetting —
+    // ``smoothPoseLandmarks`` overwrites the slot contents before the
+    // median is read again.
+    this._poseHistoryHead = 0;
+    this._poseHistorySize = 0;
+  }
+
+  /** Push the latest pose worldLandmarks into the 3-frame ring buffer
+   *  and materialise the per-component median into ``_poseMedian``.
+   *
+   *  Returns ``null`` if the input is too short (<33 landmarks).
+   *  Otherwise returns the ``_poseMedian`` array, which is reused on
+   *  every call (the caller must consume it before the next frame).
+   *
+   *  Graceful warm-up:
+   *    - 1 sample  → passthrough (no smoothing until we have ≥2)
+   *    - 2 samples → arithmetic mean of the two (median-of-2 is
+   *                   undefined; the mean is a reasonable stopgap)
+   *    - 3 samples → true per-component median
+   *
+   *  Zero allocation: the raw landmarks are copied field-by-field into
+   *  the ring's next slot (mutating pre-allocated objects) and the
+   *  median output array is similarly mutated in place. */
+  private smoothPoseLandmarks(
+    raw: Array<{ x: number; y: number; z: number; visibility?: number }>,
+  ): Array<{ x: number; y: number; z: number; visibility: number }> | null {
+    if (raw.length < 33) return null;
+
+    // Copy raw[0..33) into the head slot in place — no new allocations.
+    const headSlot = this._poseHistorySlots[this._poseHistoryHead];
+    for (let i = 0; i < 33; i++) {
+      const r = raw[i];
+      const s = headSlot[i];
+      s.x = r.x;
+      s.y = r.y;
+      s.z = r.z;
+      s.visibility = r.visibility ?? 0;
+    }
+    this._poseHistoryHead = (this._poseHistoryHead + 1) % 3;
+    if (this._poseHistorySize < 3) this._poseHistorySize++;
+
+    const n = this._poseHistorySize;
+    if (n === 1) {
+      // Warm-up: just expose the raw frame. ``headSlot`` is the only
+      // populated slot, but we copy into ``_poseMedian`` so callers
+      // always read from the same array reference.
+      for (let i = 0; i < 33; i++) {
+        const s = headSlot[i];
+        const m = this._poseMedian[i];
+        m.x = s.x;
+        m.y = s.y;
+        m.z = s.z;
+        m.visibility = s.visibility;
+      }
+      return this._poseMedian;
+    }
+
+    // Locate the valid slots. With ``_poseHistoryHead`` now pointing at
+    // the NEXT write position, the most recent write is at head-1 mod 3
+    // and earlier writes trail backward. We don't care about absolute
+    // order for a median — only that all ``n`` samples are considered.
+    const slot0 = this._poseHistorySlots[0];
+    const slot1 = this._poseHistorySlots[1];
+    const slot2 = this._poseHistorySlots[2];
+
+    if (n === 2) {
+      // With only two samples the 3rd slot hasn't been written yet.
+      // Which two are valid depends on head position after the
+      // increment: after 2 writes head = 2, so slots 0 and 1 hold data.
+      for (let i = 0; i < 33; i++) {
+        const a = slot0[i];
+        const b = slot1[i];
+        const m = this._poseMedian[i];
+        m.x = (a.x + b.x) * 0.5;
+        m.y = (a.y + b.y) * 0.5;
+        m.z = (a.z + b.z) * 0.5;
+        m.visibility = (a.visibility + b.visibility) * 0.5;
+      }
+      return this._poseMedian;
+    }
+
+    // n === 3: full median across all three slots.
+    for (let i = 0; i < 33; i++) {
+      const a = slot0[i];
+      const b = slot1[i];
+      const c = slot2[i];
+      const m = this._poseMedian[i];
+      m.x = median3(a.x, b.x, c.x);
+      m.y = median3(a.y, b.y, c.y);
+      m.z = median3(a.z, b.z, c.z);
+      m.visibility = median3(a.visibility, b.visibility, c.visibility);
+    }
+    return this._poseMedian;
   }
 
   private quatFilter(name: MocapBone): OneEuroQuat {
@@ -881,8 +1022,18 @@ export class MocapSolver {
     tsSec: number,
     out: ClipSample,
   ): void {
-    const world = pose.worldLandmarks?.[0];
-    if (!world || world.length < 33) return;
+    const raw = pose.worldLandmarks?.[0];
+    if (!raw || raw.length < 33) return;
+    // Pre-smooth the raw landmarks with a 3-frame median filter to
+    // reject single-frame depth-axis outliers BEFORE they cascade into
+    // the geometric reasoning (torso basis, arm/leg chains). OneEuro on
+    // the post-IK bone quaternions can't fully cancel these because a
+    // single landmark blip produces a large quaternion swing that
+    // OneEuro lets through once its cutoff opens during fast motion.
+    // ``_poseMedian`` is reused across frames — consume it within this
+    // solve only.
+    const world = this.smoothPoseLandmarks(raw);
+    if (!world) return;
 
     // --- Step 1: Torso frame ----------------------------------------
     const lHip = world[LM_LEFT_HIP];
