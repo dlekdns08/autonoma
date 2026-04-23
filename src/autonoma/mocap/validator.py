@@ -44,6 +44,17 @@ ALLOWED_BONES: frozenset[str] = frozenset(
         "rightLowerArm",
         "leftHand",
         "rightHand",
+        # Leg bones — added in v4 along with the landmark-driven IK body
+        # solver (``solveBodyIK`` in ``solver.ts``). Kalidokit-era clips
+        # never carried legs; the server accepts them on new uploads and
+        # ignores them on older clips (missing tracks simply mean "don't
+        # touch this bone during playback").
+        "leftUpperLeg",
+        "leftLowerLeg",
+        "leftFoot",
+        "rightUpperLeg",
+        "rightLowerLeg",
+        "rightFoot",
         # Finger bones — full articulation (proximal + intermediate +
         # distal). Driven from MediaPipe HandLandmarker via the
         # "relative angle at each joint" metric in ``solver.ts``. The
@@ -102,12 +113,12 @@ ALLOWED_EXPRESSIONS: frozenset[str] = frozenset(
     ]
 )
 
-# Decompressed (pre-JSON) size cap. With the v3 bone set (42 tracked
-# bones: 14 body + 28 finger — every proximal/intermediate/distal joint
-# of both hands) a full 60-second clip at 30fps is ~3.4 MB un-gzipped.
-# 4 MB gives headroom for the occasional verbose expression track.
-# Post-gzip transfer is typically 5-10% of this; the cap is purely an
-# anti-abuse guard.
+# Decompressed (pre-JSON) size cap. With the v4 bone set (48 tracked
+# bones: 14 upper body + 6 legs + 28 finger — every proximal/
+# intermediate/distal joint of both hands) a full 60-second clip at
+# 30fps is ~3.9 MB un-gzipped. 4 MB gives headroom for the occasional
+# verbose expression track. Post-gzip transfer is typically 5-10% of
+# this; the cap is purely an anti-abuse guard.
 MAX_PAYLOAD_SIZE_BYTES = 4 * 1024 * 1024
 
 # Maximum clip length, in seconds. Shared with the recorder frontend via

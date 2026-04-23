@@ -203,7 +203,7 @@ export function applyExpressionSample(vrm: VRM, sample: ClipSample): void {
 }
 
 /** Read a bone's current quaternion into a 4-tuple. Used by the recorder
- *  after Kalidokit/MediaPipe solve has written the live frame into the
+ *  after the MediaPipe landmark-IK solver has written the live frame into the
  *  VRM — we snapshot the resulting quaternion instead of re-deriving it
  *  from the landmark math, which keeps any per-rig compensation the
  *  solver applied. */

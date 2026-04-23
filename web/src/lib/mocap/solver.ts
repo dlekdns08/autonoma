@@ -12,16 +12,18 @@
  *   face-transformation matrix. That matrix is a rigid head pose in a
  *   known coordinate system, so we can derive neck/head rotation
  *   directly. For eyes + mouth the blendshapes are more accurate than
- *   Kalidokit's heuristic-based face solve.
+ *   any heuristic-based face solver.
  *
- * Why use Kalidokit for body:
- *   Kalidokit.Pose.solve does the limb-frame math (shoulder-rooted
- *   rotations computed from neighbouring keypoints, elbow flex axis,
- *   etc.). Doing it by hand is possible but Kalidokit has already tuned
- *   the edge cases — crossing arms, shoulder roll — against real
- *   webcam footage. We feed it the Tasks Vision output in the shape
- *   the older Holistic API produced and swap L↔R on the way out so the
- *   VRM mirrors the user (webcam is a mirror by convention).
+ * Why a hand-written landmark IK for body (v4):
+ *   Kalidokit's Pose.solve produced Euler angles per bone but dropped
+ *   half the available signal — spine curve, shoulder shrug, arm roll,
+ *   hip yaw, entire lower body. With MediaPipe Pose's ``worldLandmarks``
+ *   already in metres and the skeleton overlay confirming landmark
+ *   quality is good, it's cheaper to IK directly: torso frame from hip
+ *   + shoulder landmarks, spine chain as a cube-root slerp of the
+ *   torso-minus-yaw rotation, arms/legs as ``setFromUnitVectors`` in
+ *   the parent bone's local frame. L↔R is swapped when ``mirror`` is
+ *   on so the VRM tracks the user's visual side (webcam convention).
  *
  * Smoothing:
  *   One-Euro filter per bone/expression. Jitter at 30fps is the single
@@ -29,7 +31,6 @@
  *   cutoff handles the tradeoff between responsiveness and calm.
  */
 
-import * as Kalidokit from "kalidokit";
 import type {
   FaceLandmarkerResult,
   HandLandmarkerResult,
@@ -115,82 +116,61 @@ const _scratchVec = new THREE.Vector3();
 const _scratchVec2 = new THREE.Vector3();
 const _scratchQuat = new THREE.Quaternion();
 
-interface LM2D {
-  x: number;
-  y: number;
-  z: number;
-  visibility?: number;
-}
+// ── Body IK constants ──────────────────────────────────────────────
+//
+// MediaPipe Pose world-landmark indices we use. Everything between the
+// shoulders and feet we need for the landmark-driven IK body solver.
+const LM_LEFT_SHOULDER = 11;
+const LM_RIGHT_SHOULDER = 12;
+const LM_LEFT_ELBOW = 13;
+const LM_RIGHT_ELBOW = 14;
+const LM_LEFT_WRIST = 15;
+const LM_RIGHT_WRIST = 16;
+const LM_LEFT_HIP = 23;
+const LM_RIGHT_HIP = 24;
+const LM_LEFT_KNEE = 25;
+const LM_RIGHT_KNEE = 26;
+const LM_LEFT_ANKLE = 27;
+const LM_RIGHT_ANKLE = 28;
+const LM_LEFT_FOOT_INDEX = 31;
+const LM_RIGHT_FOOT_INDEX = 32;
 
-/** Adapt Tasks Vision pose output to Kalidokit's expected shape. The
- *  older Holistic API returned arrays of ``{x, y, z, visibility}``;
- *  Tasks Vision is the same shape but with additional ``presence`` and
- *  per-landmark ``visibility`` fields we ignore. */
-function toKalidokitPose(
-  landmarks: LM2D[],
-  worldLandmarks: LM2D[],
-): {
-  pose2d: { x: number; y: number; z: number; visibility?: number }[];
-  pose3d: { x: number; y: number; z: number; visibility?: number }[];
-} {
-  const pose2d = landmarks.map((l) => ({
-    x: l.x,
-    y: l.y,
-    z: l.z ?? 0,
-    visibility: l.visibility,
-  }));
-  const pose3d = worldLandmarks.map((l) => ({
-    x: l.x,
-    y: l.y,
-    z: l.z ?? 0,
-    visibility: l.visibility,
-  }));
-  return { pose2d, pose3d };
-}
+/** Minimum per-landmark visibility needed to trust a body-bone write.
+ *  Low-visibility landmarks produce jittery garbage — we gate every
+ *  bone-family computation on the visibilities of its source
+ *  landmarks. If a family's landmarks drop out we simply don't write
+ *  its bones this frame and the OneEuro filter holds the last value. */
+const VIS_GATE = 0.5;
 
-/** Kalidokit outputs Euler angles per bone; convert to quaternion. */
-function eulerToQuat(
-  e: { x: number; y: number; z: number } | undefined,
-  order: THREE.EulerOrder,
-  out: [number, number, number, number],
-): void {
-  if (!e) {
-    out[0] = 0;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 1;
-    return;
-  }
-  _scratchEuler.set(e.x, e.y, e.z, order);
-  _scratchQuat.setFromEuler(_scratchEuler);
-  out[0] = _scratchQuat.x;
-  out[1] = _scratchQuat.y;
-  out[2] = _scratchQuat.z;
-  out[3] = _scratchQuat.w;
-}
-
-const _scratchEuler = new THREE.Euler();
-
-/** Per-bone Euler order — matches the one VRMCharacter's gesture code
- *  uses so the recorded rotations play back cleanly. Finger proximals
- *  don't appear here because ``solveHands`` writes their quaternions
- *  directly (no Euler intermediate). */
-const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
-  hips: "XYZ",
-  spine: "XYZ",
-  chest: "YXZ",
-  upperChest: "YXZ",
-  neck: "YXZ",
-  head: "YXZ",
-  leftShoulder: "YXZ",
-  rightShoulder: "YXZ",
-  leftUpperArm: "YXZ",
-  rightUpperArm: "YXZ",
-  leftLowerArm: "YXZ",
-  rightLowerArm: "YXZ",
-  leftHand: "YXZ",
-  rightHand: "YXZ",
-};
+// Scratch objects for the body IK solver. Module-scoped so the per-
+// frame solve does zero allocations in steady state.
+const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+const _bX = new THREE.Vector3();
+const _bY = new THREE.Vector3();
+const _bZ = new THREE.Vector3();
+const _midHip = new THREE.Vector3();
+const _midSh = new THREE.Vector3();
+const _torsoMat = new THREE.Matrix4();
+const _torsoQuat = new THREE.Quaternion();
+const _yawQuat = new THREE.Quaternion();
+const _remaining = new THREE.Quaternion();
+const _tmpQuat = new THREE.Quaternion();
+const _identity = new THREE.Quaternion();
+const _third = new THREE.Quaternion();
+const _upperChestWorld = new THREE.Quaternion();
+const _upperArmWorld = new THREE.Quaternion();
+const _lowerArmWorld = new THREE.Quaternion();
+const _parentInv = new THREE.Quaternion();
+const _armA = new THREE.Vector3();
+const _armB = new THREE.Vector3();
+const _legA = new THREE.Vector3();
+const _legB = new THREE.Vector3();
+const _legC = new THREE.Vector3();
+const _restDir = new THREE.Vector3();
+const _obsLocal = new THREE.Vector3();
+const _bqA = new THREE.Quaternion();
+const _bqB = new THREE.Quaternion();
+const _bqC = new THREE.Quaternion();
 
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
@@ -624,56 +604,457 @@ export class MocapSolver {
     tsSec: number,
     out: ClipSample,
   ): void {
-    const landmarks = pose.landmarks?.[0];
-    const world = pose.worldLandmarks?.[0];
-    if (!landmarks || !world) return;
-    const { pose2d, pose3d } = toKalidokitPose(landmarks, world);
-    let rig;
-    try {
-      rig = Kalidokit.Pose.solve(pose3d, pose2d, {
-        runtime: "mediapipe",
-        enableLegs: false,
-      });
-    } catch {
-      return;
-    }
-    if (!rig) return;
-    // Kalidokit "left" / "right" are from the webcam's perspective. If
-    // mirrored (default), swap so the VRM's left matches the user's
-    // visual left in the preview.
-    const left = this.mirror ? rig.RightUpperArm : rig.LeftUpperArm;
-    const right = this.mirror ? rig.LeftUpperArm : rig.RightUpperArm;
-    const leftLower = this.mirror ? rig.RightLowerArm : rig.LeftLowerArm;
-    const rightLower = this.mirror ? rig.LeftLowerArm : rig.RightLowerArm;
-    const leftHand = this.mirror ? rig.RightHand : rig.LeftHand;
-    const rightHand = this.mirror ? rig.LeftHand : rig.RightHand;
-
-    this.writeBoneFromEuler("leftUpperArm", left, tsSec, out);
-    this.writeBoneFromEuler("rightUpperArm", right, tsSec, out);
-    this.writeBoneFromEuler("leftLowerArm", leftLower, tsSec, out);
-    this.writeBoneFromEuler("rightLowerArm", rightLower, tsSec, out);
-    this.writeBoneFromEuler("leftHand", leftHand, tsSec, out);
-    this.writeBoneFromEuler("rightHand", rightHand, tsSec, out);
-    this.writeBoneFromEuler("hips", rig.Hips?.rotation, tsSec, out);
-    this.writeBoneFromEuler("spine", rig.Spine, tsSec, out);
+    this.solveBodyIK(pose, tsSec, out);
   }
 
-  private writeBoneFromEuler(
-    name: MocapBone,
-    euler: { x: number; y: number; z: number } | undefined,
+  /** Landmark-driven body IK. Replaces Kalidokit.Pose.solve (v4) with
+   *  direct math against MediaPipe's ``worldLandmarks``. See the module
+   *  docstring for the coordinate-system assumptions; in short: the
+   *  world frame's +X points along the subject's anatomical LEFT, +Y
+   *  is UP, +Z points BEHIND the subject (away from the camera). The
+   *  VRM's T-pose uses the same convention after normalization — left
+   *  arm along +X, head along +Y, facing +Z.
+   *
+   *  Bone families handled here, in solve order:
+   *    1. torso frame (basis from hip + shoulder landmarks)
+   *    2. hips: yaw component only (rotation around world Y)
+   *    3. spine / chest / upperChest: cube-root slerp of the torso's
+   *       remaining pitch+roll, so composing all three gives the full
+   *       remaining rotation
+   *    4. shoulders: identity (not solved this pass — scapula motion is
+   *       hard to recover from landmarks alone)
+   *    5. arms: upper → lower → hand via ``setFromUnitVectors`` in the
+   *       parent bone's local frame
+   *    6. legs: upper → lower → foot same way, rooted at ``hips``
+   *
+   *  NOT handled this pass:
+   *    - arm/forearm roll (needs hand-landmark palm normals)
+   *    - shoulder bones (``leftShoulder`` / ``rightShoulder``)
+   *    - root translation (hips.position) — the playback pipeline only
+   *      reads quaternions via ``sample.bones[name]``; position needs a
+   *      separate track + playback wiring. TODO in next pass.
+   *
+   *  Mirror convention: ``this.mirror`` true (default) means the user's
+   *  anatomical left maps to the VRM's right, so the preview reads as
+   *  a mirror (user raises left hand → VRM raises right hand on the
+   *  same side of the screen). Implemented two ways: (a) the torso
+   *  basis flips its X and Z axes so the resulting yaw quaternion is
+   *  already in the mirrored frame, and (b) arm/leg landmark-triplets
+   *  swap L↔R source landmarks before passing to the chain solver.
+   *
+   *  Visibility gating: MediaPipe ships ``visibility`` per landmark. We
+   *  skip whole bone families when their source landmarks fall below
+   *  ``VIS_GATE``. Skipping means "no write this frame" — the OneEuro
+   *  filter holds its last value, which is less disruptive than
+   *  freezing on a garbage landmark.
+   */
+  private solveBodyIK(
+    pose: PoseLandmarkerResult,
     tsSec: number,
     out: ClipSample,
   ): void {
-    if (!euler) return;
-    // Kalidokit produces Euler angles in radians under its own sign
-    // convention. When mirroring, flip X+Y so mirrored limbs rotate
-    // correctly around the VRM's local axes.
-    const src = this.mirror
-      ? { x: euler.x, y: -euler.y, z: -euler.z }
-      : euler;
-    const order = BONE_EULER_ORDER[name] ?? "XYZ";
-    eulerToQuat(src, order, this.scratch);
-    this.writeBoneSmoothed(name, this.scratch, tsSec, out);
+    const world = pose.worldLandmarks?.[0];
+    if (!world || world.length < 33) return;
+
+    // --- Step 1: Torso frame ----------------------------------------
+    const lHip = world[LM_LEFT_HIP];
+    const rHip = world[LM_RIGHT_HIP];
+    const lSh = world[LM_LEFT_SHOULDER];
+    const rSh = world[LM_RIGHT_SHOULDER];
+    const torsoVis =
+      (lHip?.visibility ?? 0) > VIS_GATE &&
+      (rHip?.visibility ?? 0) > VIS_GATE &&
+      (lSh?.visibility ?? 0) > VIS_GATE &&
+      (rSh?.visibility ?? 0) > VIS_GATE;
+    if (!torsoVis) return;
+
+    // MediaPipe world X increases toward the subject's LEFT, so
+    // ``leftHip - rightHip`` has positive x → points from the right
+    // hip to the left hip. That's body's +X (subject-left) and lines
+    // up with the VRM T-pose convention (left arm along +X).
+    _bX.set(lHip.x - rHip.x, lHip.y - rHip.y, lHip.z - rHip.z);
+    if (_bX.lengthSq() < 1e-6) return;
+    _bX.normalize();
+    // Torso-up = midShoulder - midHip, orthogonalised against +X so the
+    // three axes form a clean orthonormal basis.
+    _midHip.set(
+      (lHip.x + rHip.x) * 0.5,
+      (lHip.y + rHip.y) * 0.5,
+      (lHip.z + rHip.z) * 0.5,
+    );
+    _midSh.set(
+      (lSh.x + rSh.x) * 0.5,
+      (lSh.y + rSh.y) * 0.5,
+      (lSh.z + rSh.z) * 0.5,
+    );
+    _bY.copy(_midSh).sub(_midHip);
+    _bY.addScaledVector(_bX, -_bY.dot(_bX));
+    if (_bY.lengthSq() < 1e-6) return;
+    _bY.normalize();
+    // Right-handed frame: +Z = +X × +Y. At rest (subject facing +Z),
+    // this gives a +Z that points behind the subject, matching world.
+    _bZ.copy(_bX).cross(_bY).normalize();
+
+    // Mirror: the VRM expects its own +X along the VRM-left (which is
+    // the user's anatomical right when mirrored). Flip the torso's X
+    // axis to convert anatomical-left frame → mirrored frame. Also
+    // flip Z so we stay right-handed.
+    if (this.mirror) {
+      _bX.multiplyScalar(-1);
+      _bZ.multiplyScalar(-1);
+    }
+
+    _torsoMat.makeBasis(_bX, _bY, _bZ);
+    _torsoQuat.setFromRotationMatrix(_torsoMat);
+
+    // --- Step 2: Hips carry the yaw (rotation around world Y) -------
+    //
+    // Isolate the Y-component of the quaternion. We use the standard
+    // "twist" decomposition: the yaw quaternion is the rotation around
+    // world Y that, when composed with a residual pitch/roll, equals
+    // ``_torsoQuat``.
+    const yaw = Math.atan2(
+      2 * (_torsoQuat.w * _torsoQuat.y + _torsoQuat.x * _torsoQuat.z),
+      1 - 2 * (_torsoQuat.y * _torsoQuat.y + _torsoQuat.x * _torsoQuat.x),
+    );
+    _yawQuat.setFromAxisAngle(_Y_AXIS, yaw);
+    this.writeBoneSmoothed(
+      "hips",
+      [_yawQuat.x, _yawQuat.y, _yawQuat.z, _yawQuat.w],
+      tsSec,
+      out,
+    );
+
+    // --- Step 3: Spine chain = cube root of the pitch/roll residual -
+    //
+    // remaining = torso * yaw^-1 (remove yaw; what's left is bend+lean).
+    // Distribute it evenly across spine, chest, upperChest by slerping
+    // from identity by 1/3. Composing three copies of ``_third`` gives
+    // back ``remaining`` because quaternion slerp by t=1/3 is a cube
+    // root in SO(3) when applied against identity.
+    _remaining.copy(_torsoQuat).multiply(_tmpQuat.copy(_yawQuat).invert());
+    _identity.identity();
+    _third.copy(_identity).slerp(_remaining, 1 / 3);
+    const thirdArr: [number, number, number, number] = [
+      _third.x,
+      _third.y,
+      _third.z,
+      _third.w,
+    ];
+    this.writeBoneSmoothed("spine", thirdArr, tsSec, out);
+    this.writeBoneSmoothed("chest", thirdArr, tsSec, out);
+    this.writeBoneSmoothed("upperChest", thirdArr, tsSec, out);
+
+    // The parent world rotation AT THE UPPERCHEST bone (end of the
+    // spine chain) is ``yaw * third * third * third = torsoQuat``.
+    // Arms hang off upperChest; legs hang off hips (yaw only).
+    _upperChestWorld.copy(_torsoQuat);
+
+    // --- Step 4: Arms (shoulder → upper → lower → hand) -------------
+    //
+    // ``mirror`` true (default) means the VRM's left bone is driven by
+    // the user's anatomical RIGHT side and vice versa. That's exactly
+    // the convention ``solveHands`` already uses for fingers, so the
+    // hand attached to an arm lines up with its finger bones.
+    const armVrmLeft_User = this.mirror
+      ? [LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const
+      : [LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const;
+    const armVrmRight_User = this.mirror
+      ? [LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const
+      : [LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const;
+
+    // Rest directions for arm bones in their PARENT's local frame at
+    // T-pose. Shoulder rest direction in upperChest-local frame is +X
+    // for left arm, -X for right (arms extend sideways). UpperArm's
+    // child (elbow) in upperArm-local is along +Y because three-vrm's
+    // normalized humanoid rotates each arm bone so its local +Y points
+    // toward the next joint. Likewise for lowerArm (+Y toward wrist)
+    // and hand (+Y toward middle finger).
+    this.solveArmChain(
+      "leftUpperArm",
+      "leftLowerArm",
+      "leftHand",
+      armVrmLeft_User[0],
+      armVrmLeft_User[1],
+      armVrmLeft_User[2],
+      +1,
+      world,
+      tsSec,
+      out,
+    );
+    this.solveArmChain(
+      "rightUpperArm",
+      "rightLowerArm",
+      "rightHand",
+      armVrmRight_User[0],
+      armVrmRight_User[1],
+      armVrmRight_User[2],
+      -1,
+      world,
+      tsSec,
+      out,
+    );
+
+    // --- Step 5: Legs (hip → upper → lower → foot) ------------------
+    //
+    // Parent of the upper leg is ``hips`` (yaw only). Rest direction
+    // for upperLeg in hips-local is essentially (0, -1, 0) — legs hang
+    // straight down in T-pose. Small outward offset at the hip socket
+    // is ignored (worst case a few degrees of baseline bias that the
+    // OneEuro filter smooths over).
+    const legVrmLeft_User = this.mirror
+      ? [LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const
+      : [LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const;
+    const legVrmRight_User = this.mirror
+      ? [LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const
+      : [LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const;
+
+    this.solveLegChain(
+      "leftUpperLeg",
+      "leftLowerLeg",
+      "leftFoot",
+      legVrmLeft_User[0],
+      legVrmLeft_User[1],
+      legVrmLeft_User[2],
+      legVrmLeft_User[3],
+      world,
+      tsSec,
+      out,
+    );
+    this.solveLegChain(
+      "rightUpperLeg",
+      "rightLowerLeg",
+      "rightFoot",
+      legVrmRight_User[0],
+      legVrmRight_User[1],
+      legVrmRight_User[2],
+      legVrmRight_User[3],
+      world,
+      tsSec,
+      out,
+    );
+
+    // NOTE (TODO): root translation. We track ``hipMidY`` across frames
+    // so the VRM's hips.position.y can follow the user's crouch/jump;
+    // the current clip format stores quaternions only, so hooking the
+    // playback pipeline to accept a per-frame position vector is a
+    // follow-up. Measured in metres relative to the first-valid-frame
+    // baseline when enabled.
+  }
+
+  /** Solve one arm: upperArm (parent = upperChest), lowerArm (parent =
+   *  upperArm), hand (parent = lowerArm). Each bone's local rotation is
+   *  derived by transforming the observed child-direction into the
+   *  parent bone's local frame, then ``setFromUnitVectors`` from the
+   *  rest direction to the observed direction.
+   *
+   *  ``sideSign`` is +1 for the VRM's left arm, -1 for the VRM's right.
+   *  It decides whether the shoulder-to-elbow rest direction in
+   *  upperChest-local is +X or -X (T-pose: arms extend in opposite ±X
+   *  directions from the spine).
+   */
+  private solveArmChain(
+    upperBone: MocapBone,
+    lowerBone: MocapBone,
+    handBone: MocapBone,
+    lmShoulder: number,
+    lmElbow: number,
+    lmWrist: number,
+    sideSign: 1 | -1,
+    world: { x: number; y: number; z: number; visibility?: number }[],
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const sh = world[lmShoulder];
+    const el = world[lmElbow];
+    const wr = world[lmWrist];
+    if (
+      (sh?.visibility ?? 0) < VIS_GATE ||
+      (el?.visibility ?? 0) < VIS_GATE ||
+      (wr?.visibility ?? 0) < VIS_GATE
+    ) {
+      return;
+    }
+
+    // Shoulder → elbow in world. Mirror by negating X so the MP world
+    // (where +X is subject-left) matches our mirrored-VRM basis (where
+    // +X is VRM-left = user-right).
+    _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
+    if (_armA.lengthSq() < 1e-8) return;
+    _armA.normalize();
+    if (this.mirror) {
+      _armA.x = -_armA.x;
+      _armA.z = -_armA.z;
+    }
+
+    // UpperArm's parent is upperChest. Observe the shoulder→elbow in
+    // upperChest-local frame by inverse-rotating through
+    // ``_upperChestWorld``. The rest direction in that frame is
+    // (sideSign, 0, 0) — arms extend sideways in T-pose.
+    _parentInv.copy(_upperChestWorld).invert();
+    _obsLocal.copy(_armA).applyQuaternion(_parentInv);
+    _restDir.set(sideSign, 0, 0);
+    _bqA.setFromUnitVectors(_restDir, _obsLocal);
+    this.writeBoneSmoothed(
+      upperBone,
+      [_bqA.x, _bqA.y, _bqA.z, _bqA.w],
+      tsSec,
+      out,
+    );
+
+    // Accumulated world rotation at the upperArm bone. In three-vrm's
+    // normalized humanoid, the upperArm's local axes are the REST
+    // frame — so the world rotation of upperArm is
+    // ``parentWorld * localQuat``. When the arm is at rest, localQuat
+    // is identity plus the "rest direction -> rest direction" rotation
+    // from setFromUnitVectors which is also identity. So we correctly
+    // compose parent * local here.
+    _upperArmWorld.copy(_upperChestWorld).multiply(_bqA);
+
+    // LowerArm: rest direction in upperArm-local frame.
+    // In normalized humanoid, upperArm's child (elbow→wrist) points
+    // along upperArm's local +Y. Guess-and-verify: if this produces a
+    // lowerArm that points the WRONG way empirically, the rest-direction
+    // is more likely along +X (same side as the upper arm's rest).
+    // SIGN-FLIP NOTE: if elbow-to-wrist math looks inverted in the
+    // preview, try flipping _restDirLower's Y sign here.
+    _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
+    if (_armB.lengthSq() < 1e-8) return;
+    _armB.normalize();
+    if (this.mirror) {
+      _armB.x = -_armB.x;
+      _armB.z = -_armB.z;
+    }
+
+    _parentInv.copy(_upperArmWorld).invert();
+    _obsLocal.copy(_armB).applyQuaternion(_parentInv);
+    _restDir.set(0, 1, 0);
+    _bqB.setFromUnitVectors(_restDir, _obsLocal);
+    this.writeBoneSmoothed(
+      lowerBone,
+      [_bqB.x, _bqB.y, _bqB.z, _bqB.w],
+      tsSec,
+      out,
+    );
+
+    // Hand bone: we don't have a distinct landmark for "middle-knuckle
+    // of the body's hand" from the pose stream; HandLandmarker is a
+    // separate solver. Keep the hand's orientation IDENTITY here so
+    // the finger solver (driven from HandLandmarker per-hand landmarks)
+    // owns the hand quaternion alone. If we wrote a rough hand rotation
+    // here too, it would fight with whatever ``solveHands`` writes.
+    //
+    // SIMPLIFICATION: this means the hand bone rotation is whatever
+    // ``solveHands`` writes (hand global orientation from palm frame)
+    // OR nothing, if HandLandmarker isn't running.
+    void handBone;
+  }
+
+  /** Solve one leg: upperLeg (parent = hips, yaw only), lowerLeg
+   *  (parent = upperLeg), foot (parent = lowerLeg).
+   *
+   *  Rest direction for upperLeg in hips-local = (0, -1, 0) — legs
+   *  hang down from the hip socket. LowerLeg's rest is (0, -1, 0) in
+   *  upperLeg-local (three-vrm convention: child along local +Y, but
+   *  the leg bones are flipped so child is toward local -Y. TODO:
+   *  verify empirically — this is a GUESS and may need a sign flip).
+   */
+  private solveLegChain(
+    upperBone: MocapBone,
+    lowerBone: MocapBone,
+    footBone: MocapBone,
+    lmHip: number,
+    lmKnee: number,
+    lmAnkle: number,
+    lmFoot: number,
+    world: { x: number; y: number; z: number; visibility?: number }[],
+    tsSec: number,
+    out: ClipSample,
+  ): void {
+    const hip = world[lmHip];
+    const kn = world[lmKnee];
+    const an = world[lmAnkle];
+    const ft = world[lmFoot];
+    if (
+      (hip?.visibility ?? 0) < VIS_GATE ||
+      (kn?.visibility ?? 0) < VIS_GATE
+    ) {
+      return;
+    }
+
+    // Hip → knee in world, mirrored, then into hips-local frame.
+    _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
+    if (_legA.lengthSq() < 1e-8) return;
+    _legA.normalize();
+    if (this.mirror) {
+      _legA.x = -_legA.x;
+      _legA.z = -_legA.z;
+    }
+
+    // Parent is hips (yaw only).
+    _parentInv.copy(_yawQuat).invert();
+    _obsLocal.copy(_legA).applyQuaternion(_parentInv);
+    // Rest direction = straight down. SIGN-FLIP NOTE: if leg rotations
+    // look inverted, try (0, +1, 0) here — depends on whether the rig's
+    // upperLeg bone considers its child along local -Y or +Y.
+    _restDir.set(0, -1, 0);
+    _bqA.setFromUnitVectors(_restDir, _obsLocal);
+    this.writeBoneSmoothed(
+      upperBone,
+      [_bqA.x, _bqA.y, _bqA.z, _bqA.w],
+      tsSec,
+      out,
+    );
+
+    // Accumulated world rotation at upperLeg.
+    _upperArmWorld.copy(_yawQuat).multiply(_bqA);
+
+    // LowerLeg: knee → ankle.
+    if ((an?.visibility ?? 0) < VIS_GATE) return;
+    _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
+    if (_legB.lengthSq() < 1e-8) return;
+    _legB.normalize();
+    if (this.mirror) {
+      _legB.x = -_legB.x;
+      _legB.z = -_legB.z;
+    }
+    _parentInv.copy(_upperArmWorld).invert();
+    _obsLocal.copy(_legB).applyQuaternion(_parentInv);
+    _restDir.set(0, -1, 0);
+    _bqB.setFromUnitVectors(_restDir, _obsLocal);
+    this.writeBoneSmoothed(
+      lowerBone,
+      [_bqB.x, _bqB.y, _bqB.z, _bqB.w],
+      tsSec,
+      out,
+    );
+
+    // Foot: ankle → foot-index. Rest direction for foot in
+    // lowerLeg-local: the foot points FORWARD from the ankle (subject
+    // facing +Z, so foot +Z in world). In lowerLeg-local at rest, that
+    // translates roughly to (0, 0, 1). SIGN-FLIP NOTE: this is the
+    // most-likely-wrong sign among the leg bones. If feet point
+    // backward in preview, try (0, 0, -1).
+    if ((ft?.visibility ?? 0) < VIS_GATE) return;
+    _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
+    if (_legC.lengthSq() < 1e-8) return;
+    _legC.normalize();
+    if (this.mirror) {
+      _legC.x = -_legC.x;
+      _legC.z = -_legC.z;
+    }
+    // Accumulated world rotation at lowerLeg.
+    _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
+    _parentInv.copy(_lowerArmWorld).invert();
+    _obsLocal.copy(_legC).applyQuaternion(_parentInv);
+    _restDir.set(0, 0, 1);
+    _bqC.setFromUnitVectors(_restDir, _obsLocal);
+    this.writeBoneSmoothed(
+      footBone,
+      [_bqC.x, _bqC.y, _bqC.z, _bqC.w],
+      tsSec,
+      out,
+    );
   }
 
   private writeBoneSmoothed(

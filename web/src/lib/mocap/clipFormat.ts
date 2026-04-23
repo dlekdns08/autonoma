@@ -21,9 +21,10 @@
 export const MOCAP_CLIP_VERSION = 1 as const;
 
 /** Humanoid bone names we record, mirroring ``ALLOWED_BONES`` on the
- *  server and the keys of ``VRM.humanoid.getNormalizedBoneNode``. Legs
- *  are intentionally omitted in v1 — webcam mocap quality is poor on
- *  lower-body joints and the noise reads worse than a clean idle.
+ *  server and the keys of ``VRM.humanoid.getNormalizedBoneNode``. v4
+ *  added legs — the landmark-driven IK solver (``solveBodyIK``) can
+ *  drive them directly from MediaPipe world landmarks, replacing the
+ *  Kalidokit-era decision to omit lower body entirely.
  *
  *  Finger proximal bones are populated only when the recorder's
  *  HandLandmarker is enabled; otherwise their tracks are absent and the
@@ -43,6 +44,15 @@ export const MOCAP_BONES = [
   "rightLowerArm",
   "leftHand",
   "rightHand",
+  // Legs — driven by the new landmark IK body solver. Absent from
+  // clips recorded before v4; the playback path treats missing leg
+  // tracks the same as any other missing track (idle keeps driving).
+  "leftUpperLeg",
+  "leftLowerLeg",
+  "leftFoot",
+  "rightUpperLeg",
+  "rightLowerLeg",
+  "rightFoot",
   // Hand fingers — full articulation (proximal / intermediate / distal
   // per finger). See ``solveHands`` in ``solver.ts`` for the
   // per-joint relative-angle solver and calibration table. Thumb has

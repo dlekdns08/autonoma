@@ -29,7 +29,7 @@ export const MEDIAPIPE_MODEL_URLS = {
 /** One-Euro filter defaults — adaptive low-pass for mocap streams.
  *  ``minCutoff`` suppresses static tremor; ``beta`` controls how
  *  quickly the cutoff opens up when the signal moves. Tuned for
- *  webcam-face + Kalidokit-body + finger-28-bone output. */
+ *  webcam-face + landmark-IK body + finger-28-bone output. */
 export interface OneEuroConfig {
   minCutoff: number;
   beta: number;
