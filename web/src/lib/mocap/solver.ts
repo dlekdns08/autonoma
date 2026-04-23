@@ -139,8 +139,14 @@ const LM_RIGHT_FOOT_INDEX = 32;
  *  Low-visibility landmarks produce jittery garbage — we gate every
  *  bone-family computation on the visibilities of its source
  *  landmarks. If a family's landmarks drop out we simply don't write
- *  its bones this frame and the OneEuro filter holds the last value. */
-const VIS_GATE = 0.5;
+ *  its bones this frame and the OneEuro filter holds the last value.
+ *
+ *  0.25 is lenient — MediaPipe's pose landmarker is conservative with
+ *  visibility on limbs that are partially occluded or near frame
+ *  edges. 0.5 leaves the VRM's body mostly stuck at rest even in
+ *  normal webcam setups. 0.25 lets the body actually move; OneEuro
+ *  handles any jitter from the marginally-reliable frames. */
+const VIS_GATE = 0.25;
 
 // Scratch objects for the body IK solver. Module-scoped so the per-
 // frame solve does zero allocations in steady state.
@@ -695,17 +701,20 @@ export class MocapSolver {
     // this gives a +Z that points behind the subject, matching world.
     _bZ.copy(_bX).cross(_bY).normalize();
 
-    // Mirror: the VRM expects its own +X along the VRM-left (which is
-    // the user's anatomical right when mirrored). Flip the torso's X
-    // axis to convert anatomical-left frame → mirrored frame. Also
-    // flip Z so we stay right-handed.
-    if (this.mirror) {
-      _bX.multiplyScalar(-1);
-      _bZ.multiplyScalar(-1);
-    }
-
     _torsoMat.makeBasis(_bX, _bY, _bZ);
     _torsoQuat.setFromRotationMatrix(_torsoMat);
+
+    // Mirror convention: same pattern we already use for ``solveFace``
+    // — negate the y and z components of the rotation quaternion.
+    // This flips yaw (rotation around Y) and roll (around Z) while
+    // preserving pitch (around X), matching "VRM mirrors the user
+    // across the screen's vertical axis" behaviour. Do NOT flip the
+    // basis vectors themselves — that produced a 180° yaw baseline
+    // which made the whole VRM face away from the camera at rest.
+    if (this.mirror) {
+      _torsoQuat.y = -_torsoQuat.y;
+      _torsoQuat.z = -_torsoQuat.z;
+    }
 
     // --- Step 2: Hips carry the yaw (rotation around world Y) -------
     //
@@ -876,16 +885,13 @@ export class MocapSolver {
       return;
     }
 
-    // Shoulder → elbow in world. Mirror by negating X so the MP world
-    // (where +X is subject-left) matches our mirrored-VRM basis (where
-    // +X is VRM-left = user-right).
+    // Shoulder → elbow in world. No per-vector mirror flip here — the
+    // mirror is applied once on ``_upperChestWorld`` (via y,z
+    // negation of ``_torsoQuat``). Flipping the vector again would
+    // double-mirror.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     if (_armA.lengthSq() < 1e-8) return;
     _armA.normalize();
-    if (this.mirror) {
-      _armA.x = -_armA.x;
-      _armA.z = -_armA.z;
-    }
 
     // UpperArm's parent is upperChest. Observe the shoulder→elbow in
     // upperChest-local frame by inverse-rotating through
@@ -921,10 +927,7 @@ export class MocapSolver {
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     if (_armB.lengthSq() < 1e-8) return;
     _armB.normalize();
-    if (this.mirror) {
-      _armB.x = -_armB.x;
-      _armB.z = -_armB.z;
-    }
+    // No per-vector mirror flip — see note on ``_armA`` above.
 
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_armB).applyQuaternion(_parentInv);
@@ -982,14 +985,12 @@ export class MocapSolver {
       return;
     }
 
-    // Hip → knee in world, mirrored, then into hips-local frame.
+    // Hip → knee in world. Mirror is already applied once on
+    // ``_yawQuat`` (via torsoQuat's y,z negation). Don't flip vectors
+    // again — double-mirror would invert legs.
     _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
     if (_legA.lengthSq() < 1e-8) return;
     _legA.normalize();
-    if (this.mirror) {
-      _legA.x = -_legA.x;
-      _legA.z = -_legA.z;
-    }
 
     // Parent is hips (yaw only).
     _parentInv.copy(_yawQuat).invert();
@@ -1009,15 +1010,11 @@ export class MocapSolver {
     // Accumulated world rotation at upperLeg.
     _upperArmWorld.copy(_yawQuat).multiply(_bqA);
 
-    // LowerLeg: knee → ankle.
+    // LowerLeg: knee → ankle. No per-vector mirror flip (see _legA).
     if ((an?.visibility ?? 0) < VIS_GATE) return;
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
     if (_legB.lengthSq() < 1e-8) return;
     _legB.normalize();
-    if (this.mirror) {
-      _legB.x = -_legB.x;
-      _legB.z = -_legB.z;
-    }
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_legB).applyQuaternion(_parentInv);
     _restDir.set(0, -1, 0);
@@ -1039,10 +1036,7 @@ export class MocapSolver {
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
     if (_legC.lengthSq() < 1e-8) return;
     _legC.normalize();
-    if (this.mirror) {
-      _legC.x = -_legC.x;
-      _legC.z = -_legC.z;
-    }
+    // No per-vector mirror flip (see _legA).
     // Accumulated world rotation at lowerLeg.
     _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
     _parentInv.copy(_lowerArmWorld).invert();
