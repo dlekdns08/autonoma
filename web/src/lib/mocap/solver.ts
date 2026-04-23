@@ -152,6 +152,49 @@ const LM_RIGHT_FOOT_INDEX = 32;
  *  admitting realistic captures; OneEuro handles any residual jitter. */
 const VIS_GATE = 0.15;
 
+/** Stricter gate for arm landmarks (shoulder, elbow, wrist).
+ *
+ *  MediaPipe Pose hallucinates arm positions with non-zero visibility
+ *  when the arm is occluded / out of frame — an upper-body webcam shot
+ *  with hands below the desk will produce "arms raised overhead" pose
+ *  guesses at visibility ~0.2–0.4. Those guesses slip past
+ *  ``VIS_GATE`` and drive the VRM into impossible poses.
+ *
+ *  0.5 matches "the model is meaningfully confident the joint is where
+ *  it claims". Matches ``MIN_VISIBILITY`` in the skeleton overlay (0.3)
+ *  — kept strictly higher so the IK never runs when the overlay isn't
+ *  drawing the joint (user-visible consistency). If this is too strict
+ *  for a real capture case in the future, loosen towards 0.4; keep it
+ *  above 0.3 to preserve the overlay-mirrors-solver invariant. */
+const ARM_VIS_GATE = 0.5;
+
+/** Rest quaternions used by ``softClearBones`` as the target an
+ *  unresolved bone decays toward. Entries omitted here default to
+ *  identity (three-vrm's normalized humanoid rests at T-pose, so
+ *  identity == rest for most bones).
+ *
+ *  Arms-down baseline: normalized upperArm's rest direction in parent-
+ *  local is (±1, 0, 0); "hanging at side" is (0, -1, 0). A 90° rotation
+ *  around -Z for the left and +Z for the right takes (±X, 0, 0) to
+ *  (0, -Y, 0) — so when the arms lose visibility the VRM settles into
+ *  a natural standing pose instead of a T-pose pin-up or (worse) a
+ *  frozen raised-arms hallucination. LowerArm + shoulder at identity
+ *  since the child chain just continues along the upperArm's new axis. */
+const _R2D2 = Math.SQRT1_2; // √2/2 ≈ 0.7071067811865476
+const ARM_REST_QUATS: Partial<
+  Record<MocapBone, readonly [number, number, number, number]>
+> = {
+  leftUpperArm:  [0, 0, -_R2D2, _R2D2],
+  rightUpperArm: [0, 0,  _R2D2, _R2D2],
+};
+
+/** Fetch the identity-or-configured rest target for ``name``. The
+ *  returned tuple is shared — callers must not mutate it. */
+const _IDENTITY_QUAT: readonly [number, number, number, number] = [0, 0, 0, 1];
+function restQuatFor(name: MocapBone): readonly [number, number, number, number] {
+  return ARM_REST_QUATS[name] ?? _IDENTITY_QUAT;
+}
+
 /** Bones cleared when the torso visibility gate fails. */
 const TORSO_BONES: readonly MocapBone[] = [
   "hips",
@@ -1060,7 +1103,7 @@ export class MocapSolver {
     // If nothing's visible (subject entirely out of frame), we can't
     // drive any body bones — clear everything we own and bail.
     if (!hipVis && !shoulderVis) {
-      this.clearBones(out, TORSO_BONES);
+      this.softClearBones(out, TORSO_BONES, tsSec);
       // Arms / legs are cleared inside their own chains when their
       // own landmarks fail visibility, so no need to clear them here.
       return;
@@ -1072,7 +1115,7 @@ export class MocapSolver {
     // an identity torso frame. This is the common "recording from a
     // desk webcam with legs under the table" case.
     if (!hipVis) {
-      this.clearBones(out, TORSO_BONES);
+      this.softClearBones(out, TORSO_BONES, tsSec);
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
@@ -1084,7 +1127,7 @@ export class MocapSolver {
     // torso + neck-adjacent bones; legs can still compute from hip+knee
     // so fall through.
     if (!shoulderVis) {
-      this.clearBones(out, TORSO_BONES);
+      this.softClearBones(out, TORSO_BONES, tsSec);
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
@@ -1374,14 +1417,22 @@ export class MocapSolver {
     const el = world[lmElbow];
     const wr = world[lmWrist];
     if (
-      (sh?.visibility ?? 0) < VIS_GATE ||
-      (el?.visibility ?? 0) < VIS_GATE ||
-      (wr?.visibility ?? 0) < VIS_GATE
+      (sh?.visibility ?? 0) < ARM_VIS_GATE ||
+      (el?.visibility ?? 0) < ARM_VIS_GATE ||
+      (wr?.visibility ?? 0) < ARM_VIS_GATE
     ) {
-      // Preserve the Phase A idempotency contract: when visibility
-      // fails we drop EVERY bone this chain is responsible for,
-      // including the scapular shoulder bone written below.
-      this.clearBones(out, [upperBone, lowerBone, shoulderBone]);
+      // Visibility gate failed for the arm chain — the MediaPipe pose
+      // model is either past the occlusion horizon or hallucinating.
+      // Soft-clear rather than freeze: write arms-down rest through
+      // the per-bone OneEuro so the VRM settles into a natural
+      // standing pose over ~5 frames instead of staying stuck in
+      // whatever (often impossible) pose the last pre-occlusion frame
+      // wrote.
+      this.softClearBones(
+        out,
+        [upperBone, lowerBone, shoulderBone],
+        tsSec,
+      );
       this.resetArmDiag(diagSide);
       return;
     }
@@ -1398,6 +1449,15 @@ export class MocapSolver {
     // right bone in screen-same-side orientation.
     if (this.mirror) _armA.x = -_armA.x;
     if (_armA.lengthSq() < 1e-8) {
+      // Shoulder ≡ elbow is a degenerate landmark collapse (shouldn't
+      // happen on a real person but MediaPipe can produce it mid-
+      // occlusion transition). Fall back to soft-clear so the VRM
+      // arm decays to rest instead of staying frozen.
+      this.softClearBones(
+        out,
+        [upperBone, lowerBone, shoulderBone],
+        tsSec,
+      );
       this.resetArmDiag(diagSide);
       return;
     }
@@ -1462,9 +1522,10 @@ export class MocapSolver {
         );
       }
     } else {
-      // Arm below horizontal — let the bone rest. Delete so stale
-      // shrug from the previous frame doesn't persist.
-      this.clearBones(out, [shoulderBone]);
+      // Arm below horizontal — soft-decay the shoulder back to rest
+      // (identity) so a stale shrug from the previous frame smoothly
+      // unwinds rather than freezing mid-shrug.
+      this.softClearBones(out, [shoulderBone], tsSec);
     }
 
     // Accumulated world rotation at the upperArm bone. In three-vrm's
@@ -1486,7 +1547,14 @@ export class MocapSolver {
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
     if (this.mirror) _armB.x = -_armB.x;
-    if (_armB.lengthSq() < 1e-8) return;
+    if (_armB.lengthSq() < 1e-8) {
+      // Elbow ≡ wrist — forearm collapses. UpperArm has already been
+      // written this frame (above), so only the lower chain needs the
+      // soft-clear. shoulderBone's value (shrug-or-rest) was also
+      // already written, so leave it alone.
+      this.softClearBones(out, [lowerBone], tsSec);
+      return;
+    }
     _armB.normalize();
 
     _parentInv.copy(_upperArmWorld).invert();
@@ -1640,7 +1708,10 @@ export class MocapSolver {
       (hip?.visibility ?? 0) < VIS_GATE ||
       (kn?.visibility ?? 0) < VIS_GATE
     ) {
-      this.clearBones(out, [upperBone, lowerBone]);
+      // Legs-under-desk webcam case is common enough that a hard
+      // clear freezes the VRM mid-stride. Soft-clear to rest — for
+      // legs, rest == identity (straight-down normalized humanoid).
+      this.softClearBones(out, [upperBone, lowerBone, footBone], tsSec);
       return;
     }
 
@@ -1650,7 +1721,10 @@ export class MocapSolver {
     _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
     fixCoord(_legA);
     if (this.mirror) _legA.x = -_legA.x;
-    if (_legA.lengthSq() < 1e-8) return;
+    if (_legA.lengthSq() < 1e-8) {
+      this.softClearBones(out, [upperBone, lowerBone, footBone], tsSec);
+      return;
+    }
     _legA.normalize();
 
     // Parent is hips (yaw only).
@@ -1673,13 +1747,16 @@ export class MocapSolver {
 
     // LowerLeg: knee → ankle. No per-vector mirror flip (see _legA).
     if ((an?.visibility ?? 0) < VIS_GATE) {
-      this.clearBones(out, [lowerBone, footBone]);
+      this.softClearBones(out, [lowerBone, footBone], tsSec);
       return;
     }
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
     fixCoord(_legB);
     if (this.mirror) _legB.x = -_legB.x;
-    if (_legB.lengthSq() < 1e-8) return;
+    if (_legB.lengthSq() < 1e-8) {
+      this.softClearBones(out, [lowerBone, footBone], tsSec);
+      return;
+    }
     _legB.normalize();
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_legB).applyQuaternion(_parentInv);
@@ -1699,13 +1776,16 @@ export class MocapSolver {
     // most-likely-wrong sign among the leg bones. If feet point
     // backward in preview, try (0, 0, -1).
     if ((ft?.visibility ?? 0) < VIS_GATE) {
-      this.clearBones(out, [footBone]);
+      this.softClearBones(out, [footBone], tsSec);
       return;
     }
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
     fixCoord(_legC);
     if (this.mirror) _legC.x = -_legC.x;
-    if (_legC.lengthSq() < 1e-8) return;
+    if (_legC.lengthSq() < 1e-8) {
+      this.softClearBones(out, [footBone], tsSec);
+      return;
+    }
     _legC.normalize();
     // Accumulated world rotation at lowerLeg.
     _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
@@ -1739,6 +1819,41 @@ export class MocapSolver {
    */
   private clearBones(out: ClipSample, names: readonly MocapBone[]): void {
     for (const n of names) delete out.bones[n];
+  }
+
+  /** Soft-clear variant: instead of dropping the bone from ``out`` (which
+   *  lets the VRM bone sit frozen at the last written quaternion), write
+   *  the bone's ``restQuatFor`` target *through* the bone's OneEuro
+   *  filter. The filter's existing state smooths the transition from the
+   *  last mocap-driven pose to rest over ~5–10 frames.
+   *
+   *  Why this exists: MediaPipe hallucinates arm positions with
+   *  non-trivial visibility when limbs are occluded. Even after the
+   *  ``ARM_VIS_GATE`` rejects hallucinations, ``clearBones`` would
+   *  freeze the VRM in whatever pose the LAST good frame recorded —
+   *  users saw "arms stuck overhead" long after hands left the frame.
+   *  Soft-clear gives a smooth decay to rest (T-pose identity for most
+   *  bones, ``ARM_REST_QUATS`` for upperArm so arms hang at the side).
+   *
+   *  Call this INSTEAD OF ``clearBones`` at any site where the bone's
+   *  natural "nothing to drive it this frame" behavior should be
+   *  "return to rest", not "freeze". Sites where freezing is actually
+   *  correct (bones owned by a different subsystem, e.g. hands written
+   *  by a separate solver) should keep using the plain delete. */
+  private softClearBones(
+    out: ClipSample,
+    names: readonly MocapBone[],
+    tsSec: number,
+  ): void {
+    for (const n of names) {
+      const rest = restQuatFor(n);
+      this.writeBoneSmoothed(
+        n,
+        [rest[0], rest[1], rest[2], rest[3]],
+        tsSec,
+        out,
+      );
+    }
   }
 
   /** Drive each hand's finger-proximal bones from a HandLandmarker
