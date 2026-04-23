@@ -10,6 +10,9 @@ build/
 .DS_Store
 output/
 .autonoma/
+data/
+logs/
+.hf-cache/
 
 # Next.js
 web/node_modules/
