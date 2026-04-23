@@ -66,7 +66,11 @@ import {
   collectMocapBones,
   type MocapBoneMap,
 } from "@/lib/mocap/vrmShared";
-import type { MocapBone, MocapExpression } from "@/lib/mocap/clipFormat";
+import {
+  FINGER_BONE_SET,
+  type MocapBone,
+  type MocapExpression,
+} from "@/lib/mocap/clipFormat";
 
 interface Props {
   agent: AgentData;
@@ -91,6 +95,25 @@ interface Props {
    *  keeps using its procedural pose. */
   mocapClipId?: string | null;
 }
+
+// ── Mocap playback crossfade ─────────────────────────────────────────
+//
+// When ``mocapClipId`` changes we keep the previous runtime alive for a
+// short window and slerp each covered bone from the previous sample
+// toward the current one (lerp for expressions). This turns what would
+// otherwise be a one-frame pose snap into a brief, readable blend.
+
+interface MocapPlaybackState {
+  current: ClipRuntime | null;
+  currentId: string | null;
+  previous: ClipRuntime | null;
+  previousId: string | null;
+  /** Unix seconds when the crossfade started. */
+  fadeStartedAt: number;
+}
+
+/** Length of the bone-space crossfade between clips, in seconds. */
+const FADE_DURATION_S = 0.4;
 
 // ── Mood → VRM standard emote ────────────────────────────────────────
 //
@@ -518,6 +541,10 @@ function blinkOffsetForName(name: string): number {
 
 interface ModelProps {
   url: string;
+  /** VRM filename (e.g. ``"midori.vrm"``) — used to compare against a
+   *  playing clip's ``sourceVrm`` so finger tracks recorded on a
+   *  different rig can be suppressed during playback. */
+  vrmFile: string;
   agentName: string;
   mood: string;
   state: string;
@@ -530,6 +557,7 @@ interface ModelProps {
 
 function VRMModel({
   url,
+  vrmFile,
   agentName,
   mood,
   state,
@@ -860,15 +888,36 @@ function VRMModel({
 
   // Mocap playback — superset of the procedural bone cache (``Bones``).
   // We collect every bone the clip format can address so a full-body
-  // recording can override the procedural pose. The runtime is recreated
-  // whenever ``mocapClipId`` flips; the clipCache keeps the underlying
-  // payload hot across remounts.
+  // recording can override the procedural pose. When ``mocapClipId``
+  // flips we keep the OLD runtime alive for ``FADE_DURATION_S`` seconds
+  // and crossfade (slerp per-bone, lerp per-expression) between the two
+  // samples so the VRM pose doesn't snap visibly. The clipCache keeps
+  // underlying payloads hot across remounts.
   const mocapBonesRef = useRef<MocapBoneMap>({});
-  const mocapRuntimeRef = useRef<ClipRuntime | null>(null);
-  const mocapSampleRef = useRef<ClipSample>(createSampleBuffer());
-  // Reused when composing a sample rotation on top of a raw scene
-  // bone's non-identity rest quaternion (finger fallback path).
-  const _mocapScratchQ = useRef(new THREE.Quaternion()).current;
+  const mocapPlaybackRef = useRef<MocapPlaybackState>({
+    current: null,
+    currentId: null,
+    previous: null,
+    previousId: null,
+    fadeStartedAt: 0,
+  });
+  // Two sample buffers so we can sample old + new without clobbering.
+  const mocapSampleARef = useRef<ClipSample>(createSampleBuffer());
+  const mocapSampleBRef = useRef<ClipSample>(createSampleBuffer());
+  // Scratch quaternions for the blend math: current (A), previous (B),
+  // and the slerped output that we compose with the bone's rest pose.
+  const _mocapCurQ = useRef(new THREE.Quaternion()).current;
+  const _mocapPrevQ = useRef(new THREE.Quaternion()).current;
+  const _mocapBlendQ = useRef(new THREE.Quaternion()).current;
+  // Snapshot of ``vrmFile`` readable from the clip-load effect and the
+  // frame loop without adding it to the mocap effect's dep array (which
+  // would restart playback when the filename changes — but if the
+  // filename changes the whole model reloads anyway, so the restart is
+  // a no-op). The ref stays in sync via a small effect below.
+  const vrmFileRef = useRef(vrmFile);
+  useEffect(() => {
+    vrmFileRef.current = vrmFile;
+  }, [vrmFile]);
 
   useEffect(() => {
     if (!vrm) return;
@@ -876,10 +925,28 @@ function VRMModel({
   }, [vrm]);
 
   useEffect(() => {
+    const state = mocapPlaybackRef.current;
     if (!mocapClipId) {
-      mocapRuntimeRef.current = null;
+      // Fade OUT to nothing: the current runtime (if any) becomes the
+      // "previous" that we slerp toward identity over the fade window,
+      // then gets disposed once elapsed ≥ FADE_DURATION_S.
+      //
+      // If a prior previous is still mid-fade, release its retain now
+      // — we're about to overwrite the slot and the frame loop's
+      // "fade complete" disposer can only release whatever's currently
+      // recorded as ``previousId``.
+      if (state.previous && state.previousId) {
+        clipCache.release(state.previousId);
+      }
+      state.previous = state.current;
+      state.previousId = state.currentId;
+      state.current = null;
+      state.currentId = null;
+      state.fadeStartedAt = performance.now() / 1000;
       return;
     }
+    if (mocapClipId === state.currentId) return;  // No change.
+
     const id = mocapClipId;
     let cancelled = false;
     clipCache.retain(id);
@@ -887,22 +954,93 @@ function VRMModel({
       .ensure(id)
       .then((clip) => {
         if (cancelled) return;
-        mocapRuntimeRef.current = new ClipRuntime(
-          clip,
-          performance.now() / 1000,
-          { loop: true },
-        );
+        // Shift current → previous and start a new fade. If a prior
+        // previous was still mid-fade, release its retain first so it
+        // doesn't leak (the frame loop's disposer only ever releases
+        // whatever ``previousId`` currently points at).
+        if (state.previous && state.previousId) {
+          clipCache.release(state.previousId);
+        }
+        state.previous = state.current;
+        state.previousId = state.currentId;
+        state.current = new ClipRuntime(clip, performance.now() / 1000, {
+          loop: true,
+        });
+        state.currentId = id;
+        state.fadeStartedAt = performance.now() / 1000;
+        // Cross-rig playback: the clip was recorded against a different
+        // VRM. Finger-bone local-axis conventions vary between rigs, so
+        // the frame loop suppresses finger tracks in this case and lets
+        // the idle pose drive them. Body/face tracks still play — they
+        // are rig-generic enough to look fine. This is a ONE-SHOT
+        // notice per clip-change, not per-frame.
+        const activeVrmFile = vrmFileRef.current;
+        if (clip.sourceVrm && clip.sourceVrm !== activeVrmFile) {
+          console.info(
+            `[mocap] clip ${id.slice(0, 8)} recorded on ${clip.sourceVrm} playing on ${activeVrmFile} — finger tracks will be suppressed for cross-rig safety`,
+          );
+        }
       })
       .catch(() => {
-        // Swallow — the character keeps its procedural pose if the
-        // fetch fails. The /mocap page surfaces upload/fetch errors.
+        // Fetch failed — drop the retain we took above and leave the
+        // playback state untouched. The character keeps whatever pose
+        // it had. The /mocap page surfaces upload/fetch errors.
+        clipCache.release(id);
       });
     return () => {
+      // The effect is being torn down (either because ``mocapClipId``
+      // changed again or the component unmounted). The retain we took
+      // at the top is tracked via exactly one of these states:
+      //
+      //   (a) ``ensure`` never resolved → ``id`` is in neither slot.
+      //       Release now to balance the retain.
+      //   (b) ``ensure`` resolved and ``id`` is still ``currentId`` →
+      //       the frame loop WILL eventually roll it to ``previousId``
+      //       (on the next clip change) and release there. EXCEPT if
+      //       the component unmounts while this effect is the "live"
+      //       one, the frame loop stops running and the release never
+      //       fires. We can't distinguish "unmount" from "id changed"
+      //       here, but if this cleanup runs and ``currentId === id``,
+      //       then either a new effect is about to fire (in which case
+      //       it'll shift current→previous and release on fade done)
+      //       or we're unmounting. To avoid leaks on unmount we keep
+      //       release here for case (a), and leave (b)/(c) to the
+      //       frame loop + subsequent effect runs.
+      //   (c) ``ensure`` resolved and a later effect run has already
+      //       shifted ``id`` to ``previousId`` → the frame loop
+      //       releases it at fade-done.
+      //
+      // Net: release iff the id isn't held by either slot.
       cancelled = true;
-      clipCache.release(id);
-      mocapRuntimeRef.current = null;
+      if (state.currentId !== id && state.previousId !== id) {
+        clipCache.release(id);
+      }
     };
   }, [mocapClipId]);
+
+  // Clean up any retained mocap runtimes on unmount. The per-id effect
+  // cleanup can't unconditionally release (the runtime may still be
+  // live as ``current`` or mid-fade as ``previous`` across a clipId
+  // change), so we drop the final retains here exactly once. Capturing
+  // the ref object itself (not ``.current``) in the effect scope keeps
+  // react-hooks/exhaustive-deps happy — the mutable payload is the
+  // same object we read in the cleanup.
+  useEffect(() => {
+    const stateRef = mocapPlaybackRef;
+    return () => {
+      const state = stateRef.current;
+      if (state.currentId) {
+        clipCache.release(state.currentId);
+        state.currentId = null;
+        state.current = null;
+      }
+      if (state.previousId) {
+        clipCache.release(state.previousId);
+        state.previousId = null;
+        state.previous = null;
+      }
+    };
+  }, []);
 
   useFrame((_, rawDelta) => {
     if (!vrm) return;
@@ -1329,41 +1467,125 @@ function VRMModel({
       }
     }
 
-    // ── Mocap clip override (covered bones + expressions) ────────────
+    // ── Mocap clip override with crossfade ───────────────────────────
     // When a clip is active for the current (agent, mood/emote/state),
     // sample it and OVERWRITE the procedural pose on bones it drives.
     // Uncovered bones keep whatever the idle loop wrote — this is how
     // a face-only recording layers cleanly against the body idle.
     // Expressions are written after mood/mouth so the recorded mouth
     // shapes win when the clip covers vowels.
-    const mocapRt = mocapRuntimeRef.current;
-    if (mocapRt) {
-      mocapRt.sampleInto(performance.now() / 1000, mocapSampleRef.current);
-      const sample = mocapSampleRef.current;
-      const mocapBones = mocapBonesRef.current;
-      for (const name of Object.keys(sample.bones) as MocapBone[]) {
-        const q = sample.bones[name]!;
-        const node = mocapBones[name];
-        if (!node) continue;
-        // Raw scene bones (finger fallback) have a non-identity rest
-        // pose stashed in userData — compose to keep the rig's original
-        // finger splay instead of snapping to identity on each frame.
-        const rest = node.userData?.mocapRest as THREE.Quaternion | undefined;
-        if (rest) {
-          _mocapScratchQ.set(q[0], q[1], q[2], q[3]);
-          node.quaternion.copy(rest).multiply(_mocapScratchQ);
-        } else {
-          node.quaternion.set(q[0], q[1], q[2], q[3]);
-        }
+    //
+    // Crossfade: if a ``previous`` runtime is still alive, sample both
+    // and slerp each covered bone (lerp each covered expression) from
+    // previous → current as ``fadeAlpha`` goes 0 → 1. Bones covered by
+    // only one side interpolate toward quaternion identity on the
+    // missing side — that way a body-only clip blending into a
+    // face-only clip still produces a smooth motion on arms instead of
+    // a jump.
+    const playback = mocapPlaybackRef.current;
+    const nowSec = performance.now() / 1000;
+    const fadeElapsed = nowSec - playback.fadeStartedAt;
+    const fadeAlpha = playback.previous
+      ? Math.min(1, Math.max(0, fadeElapsed / FADE_DURATION_S))
+      : 1;
+
+    const sampleA = mocapSampleARef.current;
+    const sampleB = mocapSampleBRef.current;
+    // Clear both buffers so stale keys from the last frame don't leak
+    // into the covered-bones union.
+    for (const k of Object.keys(sampleA.bones)) {
+      delete sampleA.bones[k as MocapBone];
+    }
+    for (const k of Object.keys(sampleA.expressions)) {
+      delete sampleA.expressions[k as MocapExpression];
+    }
+    for (const k of Object.keys(sampleB.bones)) {
+      delete sampleB.bones[k as MocapBone];
+    }
+    for (const k of Object.keys(sampleB.expressions)) {
+      delete sampleB.expressions[k as MocapExpression];
+    }
+    if (playback.current) playback.current.sampleInto(nowSec, sampleA);
+    if (playback.previous) playback.previous.sampleInto(nowSec, sampleB);
+
+    // Cross-rig retargeting (minimal): body + face tracks are generic
+    // enough to play across rigs, but finger bones use different local
+    // curl axes on different VRMs. When the contributing clip's
+    // ``sourceVrm`` differs from the active character's VRM file, we
+    // suppress finger tracks from that side and let the idle loop keep
+    // driving those bones. A fade involves BOTH sides — each is
+    // evaluated for foreignness independently so a foreign→native
+    // transition smoothly pulls fingers back under procedural control.
+    const activeVrmFile = vrmFileRef.current;
+    const currentSourceVrm = playback.current?.sourceVrm ?? "";
+    const previousSourceVrm = playback.previous?.sourceVrm ?? "";
+    const currentIsForeign =
+      currentSourceVrm !== "" && currentSourceVrm !== activeVrmFile;
+    const previousIsForeign =
+      previousSourceVrm !== "" && previousSourceVrm !== activeVrmFile;
+
+    const mocapBones = mocapBonesRef.current;
+    const coveredBones = new Set<MocapBone>();
+    for (const k of Object.keys(sampleA.bones)) {
+      coveredBones.add(k as MocapBone);
+    }
+    for (const k of Object.keys(sampleB.bones)) {
+      coveredBones.add(k as MocapBone);
+    }
+    for (const name of coveredBones) {
+      const node = mocapBones[name];
+      if (!node) continue;
+      const isFinger = FINGER_BONE_SET.has(name);
+      // Cross-rig finger suppression: a side whose clip was recorded on
+      // a different VRM contributes nothing to finger bones this frame.
+      // Body and face tracks always contribute regardless.
+      const useA = !isFinger || !currentIsForeign;
+      const useB = !isFinger || !previousIsForeign;
+      // Both sides suppressed → skip the bone entirely so idle drives it.
+      if (!useA && !useB) continue;
+      const qA = useA ? sampleA.bones[name] : undefined;
+      const qB = useB ? sampleB.bones[name] : undefined;
+      // Missing side → identity, so a one-sided bone fades toward/from
+      // the rig's rest pose on that bone rather than snapping.
+      _mocapCurQ.set(qA?.[0] ?? 0, qA?.[1] ?? 0, qA?.[2] ?? 0, qA?.[3] ?? 1);
+      _mocapPrevQ.set(qB?.[0] ?? 0, qB?.[1] ?? 0, qB?.[2] ?? 0, qB?.[3] ?? 1);
+      // Slerp previous → current by fadeAlpha.
+      _mocapBlendQ.copy(_mocapPrevQ).slerp(_mocapCurQ, fadeAlpha);
+      // Raw scene bones (finger fallback) have a non-identity rest
+      // pose stashed in userData — compose to keep the rig's original
+      // finger splay instead of snapping to identity on each frame.
+      const rest = node.userData?.mocapRest as THREE.Quaternion | undefined;
+      if (rest) {
+        node.quaternion.copy(rest).multiply(_mocapBlendQ);
+      } else {
+        node.quaternion.copy(_mocapBlendQ);
       }
-      if (em) {
-        for (const [name, v] of Object.entries(sample.expressions) as [
-          MocapExpression,
-          number,
-        ][]) {
-          if (em.getExpression?.(name)) em.setValue(name, v);
-        }
+    }
+
+    if (em) {
+      const coveredExp = new Set<MocapExpression>();
+      for (const k of Object.keys(sampleA.expressions)) {
+        coveredExp.add(k as MocapExpression);
       }
+      for (const k of Object.keys(sampleB.expressions)) {
+        coveredExp.add(k as MocapExpression);
+      }
+      for (const name of coveredExp) {
+        if (!em.getExpression?.(name)) continue;
+        const vA = sampleA.expressions[name] ?? 0;
+        const vB = sampleB.expressions[name] ?? 0;
+        em.setValue(name, vB + (vA - vB) * fadeAlpha);
+      }
+    }
+
+    // Dispose the previous runtime once the fade window has elapsed.
+    // The retain was taken when the clip was loaded (in the useEffect)
+    // and transferred from ``current`` → ``previous`` on clip change,
+    // so exactly one release per retain balances the books.
+    if (playback.previous && fadeElapsed >= FADE_DURATION_S) {
+      if (playback.previousId) clipCache.release(playback.previousId);
+      playback.previous = null;
+      playback.previousId = null;
     }
 
     vrm.update(delta);
@@ -1567,6 +1789,7 @@ export default function VRMCharacter({
           <Suspense fallback={null}>
             <VRMModel
               url={url}
+              vrmFile={file}
               agentName={agent.name}
               mood={agent.mood}
               state={state ?? agent.state ?? "idle"}
