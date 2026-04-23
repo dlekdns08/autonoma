@@ -1,6 +1,14 @@
 services:
   # ── Python API + WebSocket Server ──────────────────────────────────
+  #
+  # Gated behind the ``container`` profile.  Default deploys run the
+  # API natively on the Mac host (see scripts/run_api_native.sh) so
+  # PyTorch can use MPS for OmniVoice — Docker Desktop on macOS does
+  # not pass Metal through to containers.  To fall back to the
+  # containerised API (e.g. on a Linux host) use:
+  #     docker compose --profile container up -d
   api:
+    profiles: ["container"]
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -17,6 +25,11 @@ services:
       - AUTONOMA_VLLM_BASE_URL=${AUTONOMA_VLLM_BASE_URL:-}
       - AUTONOMA_VLLM_API_KEY=${AUTONOMA_VLLM_API_KEY:-}
       - AUTONOMA_MAX_ROUNDS=${AUTONOMA_MAX_ROUNDS:-30}
+      # TTS (OmniVoice): on by default in prod so the warmup hook in
+      # lifespan() loads the multi-GB model at boot. First-utterance
+      # latency otherwise spikes to 30–60s on CPU.
+      - AUTONOMA_TTS_ENABLED=${AUTONOMA_TTS_ENABLED:-true}
+      - AUTONOMA_TTS_PROVIDER=${AUTONOMA_TTS_PROVIDER:-omnivoice}
     volumes:
       # Named volume (not a bind mount) so agent-generated files never land
       # in the GitHub Actions runner workspace. A bind mount here causes
@@ -42,9 +55,11 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.letskoala.com}
     ports:
       - "3478:3000"
-    depends_on:
-      api:
-        condition: service_healthy
+    # No ``depends_on: api``: in the default (native-api) deploy mode
+    # the API lives outside the compose project entirely.  The web
+    # frontend only talks to the API via its public Cloudflare URL
+    # (baked into NEXT_PUBLIC_API_URL at build time), so it never
+    # needs the api service on the compose network.
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]

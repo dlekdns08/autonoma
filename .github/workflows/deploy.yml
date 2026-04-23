@@ -42,6 +42,8 @@ jobs:
           AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-4-6' }}
           AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
           AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
+          AUTONOMA_TTS_ENABLED: ${{ secrets.AUTONOMA_TTS_ENABLED || 'true' }}
+          AUTONOMA_TTS_PROVIDER: ${{ secrets.AUTONOMA_TTS_PROVIDER || 'omnivoice' }}
         run: |
           printf 'AUTONOMA_ADMIN_PASSWORD=%s\n'      "$AUTONOMA_ADMIN_PASSWORD"      >> .env
           printf 'AUTONOMA_SESSION_SECRET=%s\n'      "$AUTONOMA_SESSION_SECRET"      >> .env
@@ -52,16 +54,48 @@ jobs:
           printf 'AUTONOMA_MODEL=%s\n'               "$AUTONOMA_MODEL"               >> .env
           printf 'AUTONOMA_VLLM_BASE_URL=%s\n'       "$AUTONOMA_VLLM_BASE_URL"       >> .env
           printf 'AUTONOMA_VLLM_API_KEY=%s\n'        "$AUTONOMA_VLLM_API_KEY"        >> .env
+          printf 'AUTONOMA_TTS_ENABLED=%s\n'         "$AUTONOMA_TTS_ENABLED"         >> .env
+          printf 'AUTONOMA_TTS_PROVIDER=%s\n'        "$AUTONOMA_TTS_PROVIDER"        >> .env
 
-      - name: Build and start containers
+      # ── Native-mac API (MPS) ─────────────────────────────────────
+      # Runs uvicorn on the host so PyTorch can target Metal; Docker
+      # Desktop on macOS doesn't expose MPS to containers. The api
+      # service in docker-compose.yml is profile-gated so this plain
+      # ``up`` below only brings up the web container.
+      - name: Sync native API dependencies
         run: |
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          # --extra tts pulls OmniVoice + the MPS-capable arm64 torch
+          # wheel (pyproject.toml routes CPU wheels to linux-x86_64
+          # only).  Idempotent; fast when uv.lock is unchanged.
+          uv sync --no-dev --extra tts
+
+      - name: Install/refresh launchd agent for the API
+        run: |
+          # Installer is idempotent — re-runs bootout before bootstrap
+          # so a plist edit (repo moved, etc.) gets picked up on the
+          # first post-edit deploy.
+          bash scripts/install_native_api.sh
+
+      - name: Restart native API
+        run: |
+          UID_NUM="$(id -u)"
+          # kickstart -k sends SIGTERM then relaunches.  This picks up
+          # the new .env and refreshed venv without touching the plist.
+          launchctl kickstart -k "gui/${UID_NUM}/com.autonoma.api"
+
+      - name: Build and start web container
+        run: |
+          # Bring web down before up so a rebuild doesn't race on the
+          # published port.  --remove-orphans sweeps the old api
+          # container from pre-native-migration deploys.
           docker compose down --remove-orphans || true
-          docker compose up -d --build
+          docker compose up -d --build web
 
       - name: Wait for health checks
         run: |
-          echo "Waiting for API health..."
-          for i in $(seq 1 30); do
+          echo "Waiting for API health (native)…"
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:3479/api/health > /dev/null 2>&1; then
               echo "API is healthy!"
               break
@@ -69,7 +103,7 @@ jobs:
             sleep 2
           done
 
-          echo "Waiting for Web..."
+          echo "Waiting for Web…"
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3478/ > /dev/null 2>&1; then
               echo "Web is healthy!"
@@ -85,7 +119,7 @@ jobs:
         run: |
           echo "### Deployed successfully" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- API: http://localhost:3479" >> $GITHUB_STEP_SUMMARY
-          echo "- Web: http://localhost:3478" >> $GITHUB_STEP_SUMMARY
+          echo "- API (native, MPS): http://localhost:3479" >> $GITHUB_STEP_SUMMARY
+          echo "- Web (docker): http://localhost:3478" >> $GITHUB_STEP_SUMMARY
           echo "- Web: https://autonoma.letskoala.com" >> $GITHUB_STEP_SUMMARY
           echo "- API: https://api.letskoala.com" >> $GITHUB_STEP_SUMMARY
