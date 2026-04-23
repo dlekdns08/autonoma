@@ -399,6 +399,9 @@ FORWARDED_EVENTS = [
     "debate.resolved",
     # Mocap — global character binding changes (broadcast site-wide).
     "mocap.bindings.updated",
+    # Mocap — admin-fired manual trigger. Viewers listen and briefly
+    # play the bound clip on top of the normal mood/state/emote chain.
+    "mocap.trigger.fired",
     # Mocap — clip library mutations (create/rename/delete). Broadcast
     # site-wide so other clients can invalidate their client-side
     # ``clipCache`` before the 5-minute TTL expires.
@@ -3666,6 +3669,33 @@ async def mocap_delete_binding(
         removed=True,
     )
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/mocap-triggers/fire")
+async def mocap_fire_trigger(
+    payload: dict[str, Any],
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    vrm_file = str(payload.get("vrm_file") or "").strip()
+    slug = str(payload.get("value") or "").strip()
+
+    if not is_known_vrm(vrm_file):
+        raise HTTPException(status_code=400, detail="unknown_vrm")
+    if validate_trigger("manual", slug) is not None:
+        raise HTTPException(status_code=400, detail="invalid_manual_slug")
+
+    binding = await mocap_store.get_binding(vrm_file, "manual", slug)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="binding_not_found")
+
+    await bus.emit(
+        "mocap.trigger.fired",
+        vrm_file=vrm_file,
+        trigger_kind="manual",
+        trigger_value=slug,
+        clip_id=binding.clip_id,
+    )
+    return {"ok": True, "clip_id": binding.clip_id}
 
 
 # ── /api/voice/* — moved to autonoma.routers.voice ───────────────────
