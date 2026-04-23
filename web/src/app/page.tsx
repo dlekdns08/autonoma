@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
 import { useAuth } from "@/hooks/useAuth";
 import { useKeyNav } from "@/hooks/useKeyNav";
@@ -28,6 +28,12 @@ import KeyboardHelpModal from "@/components/KeyboardHelpModal";
 import ReviewQueue from "@/components/ReviewQueue";
 import ExecutionTimeline from "@/components/ExecutionTimeline";
 import type { AgentData, AgentEmote } from "@/lib/types";
+
+// How long a manual-trigger override holds before the agent falls
+// back to the normal state/mood/emote binding chain. Kept at 5s
+// deliberately — short enough that the "fire and return" intent
+// reads cleanly, long enough that a recorded gesture completes.
+const MANUAL_OVERRIDE_TTL_MS = 5_000;
 
 // ── Top-level gate ─────────────────────────────────────────────────────
 // The backend expects a logged-in user for everything meaningful, so the
@@ -163,6 +169,7 @@ function Dashboard() {
     resumeFromCheckpoint,
     mocapBindingsRefreshToken,
     mocapBindingEvent,
+    mocapTriggerFiredEvent,
   } = useSwarm();
   // Global mocap clip bindings (vrm_file × trigger → clip). Refreshes
   // fully on mount + WS reconnect via ``mocapBindingsRefreshToken``;
@@ -176,9 +183,60 @@ function Dashboard() {
       console.warn("[mocap] bindings fetch failed:", mocapBindingsError);
     }
   }, [mocapBindingsError]);
+  // Ephemeral "admin fired a manual trigger" override map. Key is the
+  // vrm_file so every agent rendered with that model gets the
+  // one-shot clip. Fixed 5s TTL — clips cap at 60s server-side but
+  // manual triggers are meant for short "fire and return" gestures
+  // anyway, so we keep the cutover snappy. We store this in a ref
+  // (not state) because the priority check in ``mocapClipIdFor`` runs
+  // on every render already via the state/mood/emote tick; bumping a
+  // re-render on every fire would be redundant. We do bump a counter
+  // state so the memoized callback identity changes and viewers see
+  // the new override immediately.
+  const manualOverridesRef = useRef<
+    Map<string, { clipId: string; expiresAt: number }>
+  >(new Map());
+  const [manualOverrideBump, setManualOverrideBump] = useState(0);
+  const lastFiredSeqRef = useRef(0);
+  useEffect(() => {
+    if (!mocapTriggerFiredEvent) return;
+    if (mocapTriggerFiredEvent.seq <= lastFiredSeqRef.current) return;
+    lastFiredSeqRef.current = mocapTriggerFiredEvent.seq;
+    manualOverridesRef.current.set(mocapTriggerFiredEvent.vrm_file, {
+      clipId: mocapTriggerFiredEvent.clip_id,
+      expiresAt: Date.now() + MANUAL_OVERRIDE_TTL_MS,
+    });
+    setManualOverrideBump((n) => n + 1);
+  }, [mocapTriggerFiredEvent]);
+  // Sweep expired overrides every minute so the map doesn't grow
+  // unbounded across a long session. An override that's already past
+  // its expiry is a no-op in ``mocapClipIdFor`` even before the
+  // sweeper gets to it — the sweeper just reclaims the map slot.
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      for (const [vrm, entry] of manualOverridesRef.current) {
+        if (entry.expiresAt <= now) {
+          manualOverridesRef.current.delete(vrm);
+          changed = true;
+        }
+      }
+      if (changed) setManualOverrideBump((n) => n + 1);
+    }, 60_000);
+    return () => clearInterval(t);
+  }, []);
   const mocapClipIdFor = useCallback(
     (agent: AgentData, emote: AgentEmote | null): string | null => {
       const vrmFile = vrmFileForAgent(agent.name);
+      // Manual override wins over every other trigger — admins fire
+      // these knowing they want the gesture to interrupt whatever was
+      // playing. TTL-guarded so a fire auto-returns to the normal
+      // chain after a few seconds.
+      const override = manualOverridesRef.current.get(vrmFile);
+      if (override && override.expiresAt > Date.now()) {
+        return override.clipId;
+      }
       // Priority mirrors the procedural gesture stack (ambient → mood →
       // talking → emote → state, highest wins):
       //   1. non-idle state  — active work/talk/celebrate
@@ -199,9 +257,14 @@ function Dashboard() {
         const hit = mocapLookup({ vrmFile, kind: "mood", value: agent.mood });
         if (hit) return hit.clip_id;
       }
+      // Reference ``manualOverrideBump`` so the callback identity flips
+      // when a new manual override lands — forces VTuberStage to
+      // re-query with the updated ref. Pure memo-bust; no runtime
+      // behavior depends on the counter value.
+      void manualOverrideBump;
       return null;
     },
-    [mocapLookup],
+    [mocapLookup, manualOverrideBump],
   );
   const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
