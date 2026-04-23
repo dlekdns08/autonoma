@@ -764,6 +764,14 @@ export class MocapSolver {
     // median is read again.
     this._poseHistoryHead = 0;
     this._poseHistorySize = 0;
+    // Arm-noise diagnostic state: drop "prev direction" and the RMS
+    // ring so the next session starts from a clean baseline.
+    this.resetArmDiag("left");
+    this.resetArmDiag("right");
+    this._armDiagRingSize.left = 0;
+    this._armDiagRingSize.right = 0;
+    this._armDiagRingHead.left = 0;
+    this._armDiagRingHead.right = 0;
   }
 
   /** Push the latest pose worldLandmarks into the 3-frame ring buffer
@@ -1361,6 +1369,7 @@ export class MocapSolver {
     tsSec: number,
     out: ClipSample,
   ): void {
+    const diagSide: "left" | "right" = sideSign === 1 ? "left" : "right";
     const sh = world[lmShoulder];
     const el = world[lmElbow];
     const wr = world[lmWrist];
@@ -1373,6 +1382,7 @@ export class MocapSolver {
       // fails we drop EVERY bone this chain is responsible for,
       // including the scapular shoulder bone written below.
       this.clearBones(out, [upperBone, lowerBone, shoulderBone]);
+      this.resetArmDiag(diagSide);
       return;
     }
 
@@ -1387,8 +1397,15 @@ export class MocapSolver {
     // left↔right so user's anatomical-left arm data drives VRM's
     // right bone in screen-same-side orientation.
     if (this.mirror) _armA.x = -_armA.x;
-    if (_armA.lengthSq() < 1e-8) return;
+    if (_armA.lengthSq() < 1e-8) {
+      this.resetArmDiag(diagSide);
+      return;
+    }
     _armA.normalize();
+    // Diagnostic: per-frame direction delta of shoulder→elbow. At rest
+    // this should be near 0°; a sustained high RMS implies MediaPipe's
+    // monocular depth estimate is injecting noise the IK then amplifies.
+    this.updateArmDiag(diagSide, _armA.x, _armA.y, _armA.z);
 
     // UpperArm's parent is upperChest. Observe the shoulder→elbow in
     // upperChest-local frame by inverse-rotating through
@@ -2006,4 +2023,92 @@ export class MocapSolver {
    *  Reset on each ``solveInto`` via the frame-max pattern — handy for
    *  "is anything happening?" readouts. */
   latestFingerMaxCurl = 0;
+
+  // ── Arm Z-noise diagnostics ──────────────────────────────────────
+  //
+  // Hypothesis test: MediaPipe's monocular depth estimate is the dominant
+  // source of "impossible" arm motion — the X,Y projection is stable but
+  // Z jumps ±20cm+ frame-to-frame. To check this in the UI without
+  // dumping frames to disk, we track the shoulder→elbow direction (after
+  // fixCoord + mirror) and compute the angle between consecutive frames.
+  // At rest the body hasn't moved, so this angle should be near 0°; if
+  // it's 10°+/frame we have our culprit.
+  //
+  // Populated inside ``solveArmChain``. ``latestArmDiag`` is reset to
+  // ``ok: false`` when a frame's arm landmarks fall below visibility
+  // (stale readout would otherwise freeze the badge on the last good
+  // value and look like "the arm is fine" even when capture is dead).
+  readonly latestArmDiag = {
+    left:  { jumpDeg: 0, rmsDeg: 0, ok: false },
+    right: { jumpDeg: 0, rmsDeg: 0, ok: false },
+  };
+  /** Previous-frame unit direction for the upperArm, per VRM side. */
+  private readonly _armDiagPrev = {
+    left:  { x: 0, y: 0, z: 0, valid: false },
+    right: { x: 0, y: 0, z: 0, valid: false },
+  };
+  /** 30-sample ring of per-frame angle deltas (degrees), per VRM side.
+   *  Pre-allocated so the hot path stays allocation-free. */
+  private readonly _armDiagRing = {
+    left:  new Float32Array(30),
+    right: new Float32Array(30),
+  };
+  private readonly _armDiagRingHead = { left: 0, right: 0 };
+  private readonly _armDiagRingSize = { left: 0, right: 0 };
+
+  /** Called from ``solveArmChain`` after ``_armA`` is computed + mirror-
+   *  flipped but before the IK math. ``dir`` is the unit direction of
+   *  shoulder→elbow in three.js world frame. ``side`` keys the per-arm
+   *  ring buffers.
+   *
+   *  When the arm landmarks fail visibility, the caller should invoke
+   *  ``resetArmDiag(side)`` instead of this — a gap resets the "prev"
+   *  pointer so the next valid frame doesn't produce a bogus 180° jump
+   *  off a stale direction. */
+  private updateArmDiag(
+    side: "left" | "right",
+    dx: number,
+    dy: number,
+    dz: number,
+  ): void {
+    const prev = this._armDiagPrev[side];
+    const out = this.latestArmDiag[side];
+    if (prev.valid) {
+      // atan2(|cross|, dot) is more numerically stable than acos(dot)
+      // near the small-angle regime (which is where we live at rest).
+      const dot = prev.x * dx + prev.y * dy + prev.z * dz;
+      const cx = prev.y * dz - prev.z * dy;
+      const cy = prev.z * dx - prev.x * dz;
+      const cz = prev.x * dy - prev.y * dx;
+      const crossMag = Math.sqrt(cx * cx + cy * cy + cz * cz);
+      const angleDeg = (Math.atan2(crossMag, dot) * 180) / Math.PI;
+      out.jumpDeg = angleDeg;
+      // Ring buffer of angle deltas — materialise RMS over the window.
+      const ring = this._armDiagRing[side];
+      ring[this._armDiagRingHead[side]] = angleDeg;
+      this._armDiagRingHead[side] = (this._armDiagRingHead[side] + 1) % ring.length;
+      if (this._armDiagRingSize[side] < ring.length) this._armDiagRingSize[side]++;
+      let sumSq = 0;
+      const n = this._armDiagRingSize[side];
+      for (let i = 0; i < n; i++) sumSq += ring[i] * ring[i];
+      out.rmsDeg = Math.sqrt(sumSq / n);
+    } else {
+      out.jumpDeg = 0;
+    }
+    out.ok = true;
+    prev.x = dx;
+    prev.y = dy;
+    prev.z = dz;
+    prev.valid = true;
+  }
+
+  /** Invalidate the "previous direction" for one side. Called on
+   *  visibility-gate failure so the next valid frame doesn't compute its
+   *  jump against a stale direction. Does NOT clear the ring — RMS stays
+   *  representative of the last N valid frames rather than snapping to
+   *  zero the moment the user steps out of frame. */
+  private resetArmDiag(side: "left" | "right"): void {
+    this._armDiagPrev[side].valid = false;
+    this.latestArmDiag[side].ok = false;
+  }
 }

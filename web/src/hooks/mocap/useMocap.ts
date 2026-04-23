@@ -101,6 +101,22 @@ export interface HandDiagnostics {
   maxCurl: number;
 }
 
+/** Per-arm noise badge. ``jumpDeg`` is the frame-to-frame angle of the
+ *  shoulder→elbow direction (degrees); ``rmsDeg`` is its 30-frame RMS.
+ *  At rest both should be near 0; if the RMS sits above ~5° while the
+ *  user is holding still, MediaPipe's monocular depth estimate is the
+ *  dominant source of arm wobble. ``ok`` is false when the arm
+ *  landmarks failed visibility this frame — the numbers are stale. */
+export interface ArmNoise {
+  jumpDeg: number;
+  rmsDeg: number;
+  ok: boolean;
+}
+export interface ArmDiagnostics {
+  left: ArmNoise;
+  right: ArmNoise;
+}
+
 export interface UseMocapReturn {
   status: MocapStatus;
   error: string | null;
@@ -113,6 +129,10 @@ export interface UseMocapReturn {
   frameSeq: number;
   /** Live hand-capture diagnostics. Null when hands aren't enabled. */
   handDiagnostics: HandDiagnostics | null;
+  /** Live arm-noise diagnostics (per-frame direction jump + RMS over
+   *  the last 30 frames, per VRM side). Null when the camera is off or
+   *  before the first solved frame produces numbers. */
+  armDiagnostics: ArmDiagnostics | null;
   /** Non-null when the HandLandmarker failed to initialise; face+pose
    *  capture still runs, but finger tracks will be empty. */
   handsError: string | null;
@@ -169,6 +189,9 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   // Throttled hand diagnostics — refreshed every ~10 frames so the UI
   // readout doesn't cause re-renders at full 30fps.
   const [handDiagnostics, setHandDiagnostics] = useState<HandDiagnostics | null>(
+    null,
+  );
+  const [armDiagnostics, setArmDiagnostics] = useState<ArmDiagnostics | null>(
     null,
   );
   const lastDiagSeqRef = useRef(0);
@@ -236,6 +259,10 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     setRecording(false);
     setRecordingMeta(null);
     setHandsError(null);
+    // Clear diagnostic badges so they don't freeze at the last-seen
+    // values after the camera goes away.
+    setHandDiagnostics(null);
+    setArmDiagnostics(null);
     setStatus("idle");
   }, []);
 
@@ -439,14 +466,23 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         // whole page at 30fps just for a status readout. ~3× per second
         // is plenty for a "hand count · max curl" text strip.
         const solver = solverRef.current;
-        if (opts.hands && solver) {
+        if (solver) {
           lastDiagSeqRef.current = (lastDiagSeqRef.current + 1) % 10;
           if (lastDiagSeqRef.current === 0) {
-            setHandDiagnostics({
-              count: solver.latestHandCount,
-              leftActive: solver.latestHandSides.left,
-              rightActive: solver.latestHandSides.right,
-              maxCurl: solver.latestFingerMaxCurl,
+            if (opts.hands) {
+              setHandDiagnostics({
+                count: solver.latestHandCount,
+                leftActive: solver.latestHandSides.left,
+                rightActive: solver.latestHandSides.right,
+                maxCurl: solver.latestFingerMaxCurl,
+              });
+            }
+            // Arm diag always published — the hypothesis we're testing
+            // (Z-depth noise) is independent of the hand toggle.
+            const ad = solver.latestArmDiag;
+            setArmDiagnostics({
+              left:  { jumpDeg: ad.left.jumpDeg,  rmsDeg: ad.left.rmsDeg,  ok: ad.left.ok },
+              right: { jumpDeg: ad.right.jumpDeg, rmsDeg: ad.right.rmsDeg, ok: ad.right.ok },
             });
           }
         }
@@ -565,6 +601,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     videoRef,
     frameSeq,
     handDiagnostics: opts.hands ? handDiagnostics : null,
+    armDiagnostics,
     handsError,
     poseLandmarksRef,
     handLandmarksRef,

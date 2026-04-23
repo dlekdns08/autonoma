@@ -690,6 +690,36 @@ export default function MocapPage() {
                     정합도 {Math.round(alignmentScore * 100)}%
                   </span>
                 )}
+                {/* Arm-noise badge (debug only). RMS of the frame-to-
+                    frame shoulder→elbow angle jump over the last 30
+                    frames. At rest this should sit near 0°; a sustained
+                    ≥5° RMS means MediaPipe's monocular depth is the
+                    dominant source of the "팔이 이상하게 움직이는"
+                    complaint and the fix belongs in the landmark-
+                    smoothing layer, not the IK. */}
+                {debugMode && mocap.status === "running" && mocap.armDiagnostics && (
+                  <span
+                    className={
+                      "rounded border px-2 py-1 tabular-nums " +
+                      (Math.max(
+                        mocap.armDiagnostics.left.rmsDeg,
+                        mocap.armDiagnostics.right.rmsDeg,
+                      ) >= 5
+                        ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                        : "border-cyan-500/30 bg-cyan-500/5 text-cyan-200/80")
+                    }
+                    title="shoulder→elbow 방향의 프레임간 각도 변화 (RMS/jump). 가만히 있는데 RMS가 5°를 넘으면 MediaPipe Z-노이즈가 원인."
+                  >
+                    팔 L {mocap.armDiagnostics.left.ok ? mocap.armDiagnostics.left.rmsDeg.toFixed(1) : "–"}°
+                    {" · "}
+                    R {mocap.armDiagnostics.right.ok ? mocap.armDiagnostics.right.rmsDeg.toFixed(1) : "–"}°
+                    {" (jump "}
+                    {mocap.armDiagnostics.left.ok ? mocap.armDiagnostics.left.jumpDeg.toFixed(0) : "–"}
+                    /
+                    {mocap.armDiagnostics.right.ok ? mocap.armDiagnostics.right.jumpDeg.toFixed(0) : "–"}
+                    °)
+                  </span>
+                )}
                 {/* Finger-axis bisection. Each button forces a 3-second
                     60° rotation on every finger proximal around that
                     axis. Whichever axis visibly bends the fingers is
