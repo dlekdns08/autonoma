@@ -48,8 +48,10 @@ ALLOWED_BONES: frozenset[str] = frozenset(
         # distal). Driven from MediaPipe HandLandmarker via the
         # "relative angle at each joint" metric in ``solver.ts``. The
         # thumb skips Intermediate (VRM spec has only Metacarpal /
-        # Proximal / Distal for thumb) and we also skip Metacarpal for
-        # now because its rest reference is ill-defined on a webcam.
+        # Proximal / Distal for thumb); Metacarpal is driven via
+        # palm-forward reference to capture CMC opposition (bringing
+        # the thumb across the palm).
+        "leftThumbMetacarpal",
         "leftThumbProximal",
         "leftThumbDistal",
         "leftIndexProximal",
@@ -64,6 +66,7 @@ ALLOWED_BONES: frozenset[str] = frozenset(
         "leftLittleProximal",
         "leftLittleIntermediate",
         "leftLittleDistal",
+        "rightThumbMetacarpal",
         "rightThumbProximal",
         "rightThumbDistal",
         "rightIndexProximal",
