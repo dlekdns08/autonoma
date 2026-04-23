@@ -27,10 +27,10 @@ const SESSION_KEY = "autonoma_auth";
 // it is guaranteed to run client-side.
 function getWsUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
-  if (typeof window === "undefined") return "ws://localhost:3479/ws";
+  if (typeof window === "undefined") return "ws://localhost:3479/api/ws";
   return window.location.hostname === "autonoma.letskoala.com"
     ? "wss://api.letskoala.com/api/ws"
-    : "ws://localhost:3479/ws";
+    : "ws://localhost:3479/api/ws";
 }
 
 // ``API_BASE_URL`` is used in template strings during render (download

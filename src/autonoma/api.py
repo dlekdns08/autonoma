@@ -1861,7 +1861,7 @@ async def _notify_room_membership(room_id: int) -> None:
         await manager.send_to_ws(v.ws, "room.viewers", payload)
 
 
-@app.websocket("/ws")
+@app.websocket("/api/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     # Using a monotonic counter instead of ``id(ws)`` so the id can't
     # collide with a previous (GC'd) connection's session, which would
