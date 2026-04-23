@@ -103,6 +103,15 @@ export default function ClipLibrary({
                 {clip.name}
               </button>
             )}
+            {sourceVrmFilter && clip.source_vrm !== sourceVrmFilter && (
+              <span
+                className="text-amber-300/80"
+                title="다른 VRM으로 녹화됨 — 손가락 부분은 재생되지 않습니다"
+                aria-label="다른 VRM으로 녹화됨 — 손가락 부분은 재생되지 않습니다"
+              >
+                ⚠
+              </span>
+            )}
             <span className="text-white/40">
               {clip.duration_s.toFixed(1)}s · {clip.source_vrm}
             </span>
