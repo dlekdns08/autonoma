@@ -165,8 +165,15 @@ export default function MocapPreview({
   sampleRef,
   testFingerAxis,
   testFingerUntil,
+  sampleSourceVrm,
 }: Props) {
   const url = useMemo(() => `/vrm/${vrmFile}`, [vrmFile]);
+  // Suppress finger tracks when the sample came from a different rig —
+  // finger local axes are the main cross-rig failure mode. When the
+  // caller omits ``sampleSourceVrm`` (live-capture previews), this is
+  // always false.
+  const skipFingers =
+    !!sampleSourceVrm && sampleSourceVrm !== "" && sampleSourceVrm !== vrmFile;
   return (
     <div className="aspect-[3/4] overflow-hidden rounded-lg border border-white/10 bg-slate-950/60">
       <Canvas
@@ -185,6 +192,7 @@ export default function MocapPreview({
             sampleRef={sampleRef}
             testFingerAxis={testFingerAxis}
             testFingerUntil={testFingerUntil}
+            skipFingers={skipFingers}
           />
         </Suspense>
         <OrbitControls
