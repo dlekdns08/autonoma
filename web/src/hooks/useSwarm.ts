@@ -29,7 +29,7 @@ function getWsUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   if (typeof window === "undefined") return "ws://localhost:3479/ws";
   return window.location.hostname === "autonoma.letskoala.com"
-    ? "wss://api.letkoala.com/api/ws"
+    ? "wss://api.letskoala.com/api/ws"
     : "ws://localhost:3479/ws";
 }
 
@@ -45,7 +45,7 @@ function resolveApiBase(): string {
     return "";
   }
   return window.location.hostname === "autonoma.letskoala.com"
-    ? "https://api.letkoala.com"
+    ? "https://api.letskoala.com"
     : "http://localhost:3479";
 }
 

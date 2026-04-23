@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WEB_DOMAIN="autonoma.letskoala.com"
-API_DOMAIN="api.letkoala.com"
+API_DOMAIN="api.letskoala.com"
 EMAIL="${1:-admin@letskoala.com}"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
