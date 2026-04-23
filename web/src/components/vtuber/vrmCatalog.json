@@ -14,6 +14,30 @@
       "redistribution": "Allow",
       "alterations": "Allow",
       "attribution": "Required"
+    },
+    "mocap": {
+      "proximalAxis": "z",
+      "proximalRestDeg": 50,
+      "proximalFistDeg": 90,
+      "proximalOutDeg": 90,
+      "intermediateAxis": "z",
+      "intermediateRestDeg": 10,
+      "intermediateFistDeg": 90,
+      "intermediateOutDeg": 90,
+      "distalAxis": "z",
+      "distalRestDeg": 10,
+      "distalFistDeg": 70,
+      "distalOutDeg": 70,
+      "thumbProximalAxis": "x",
+      "thumbProximalFlipSign": true,
+      "thumbProximalRestDeg": 5,
+      "thumbProximalFistDeg": 30,
+      "thumbProximalOutDeg": 85,
+      "thumbDistalAxis": "x",
+      "thumbDistalFlipSign": true,
+      "thumbDistalRestDeg": 5,
+      "thumbDistalFistDeg": 30,
+      "thumbDistalOutDeg": 75
     }
   },
   "konomi.vrm": {
