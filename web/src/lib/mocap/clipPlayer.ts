@@ -133,6 +133,13 @@ export class ClipRuntime {
     return this.clip.durationS;
   }
 
+  /** VRM filename the clip was recorded against (e.g. ``"midori.vrm"``).
+   *  Surfaced so the playback path can detect cross-rig playback and
+   *  suppress finger tracks that don't retarget cleanly. */
+  get sourceVrm(): string {
+    return this.clip.sourceVrm;
+  }
+
   elapsedSec(nowSec: number): number {
     return nowSec - this.startedAt;
   }
