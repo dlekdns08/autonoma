@@ -62,5 +62,3 @@ async def _rate_limit_sleep(exc: Exception, agent_name: str) -> dict[str, Any]:
 @register("action.llm_error_handling", "abort")
 async def _abort(exc: Exception, agent_name: str) -> dict[str, Any]:
     raise exc
-
-
