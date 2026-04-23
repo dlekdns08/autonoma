@@ -138,15 +138,26 @@ const LM_RIGHT_FOOT_INDEX = 32;
 /** Minimum per-landmark visibility needed to trust a body-bone write.
  *  Low-visibility landmarks produce jittery garbage — we gate every
  *  bone-family computation on the visibilities of its source
- *  landmarks. If a family's landmarks drop out we simply don't write
- *  its bones this frame and the OneEuro filter holds the last value.
+ *  landmarks.
  *
- *  0.25 is lenient — MediaPipe's pose landmarker is conservative with
- *  visibility on limbs that are partially occluded or near frame
- *  edges. 0.5 leaves the VRM's body mostly stuck at rest even in
- *  normal webcam setups. 0.25 lets the body actually move; OneEuro
- *  handles any jitter from the marginally-reliable frames. */
-const VIS_GATE = 0.25;
+ *  When visibility drops we DELETE bone entries (not skip). Deletion
+ *  lets the playback layer fall through to idle/procedural animation
+ *  rather than freezing on a stale IK value, which was the
+ *  "body doesn't move when partially out of frame" bug symptom.
+ *
+ *  0.15 is lenient — MediaPipe Pose is conservative on limb visibility
+ *  (legitimate mid-torso shots frequently have hip/shoulder visibility
+ *  in the 0.2-0.4 range). 0.15 still rejects "totally off-frame" while
+ *  admitting realistic captures; OneEuro handles any residual jitter. */
+const VIS_GATE = 0.15;
+
+/** Bones cleared when the torso visibility gate fails. */
+const TORSO_BONES: readonly MocapBone[] = [
+  "hips",
+  "spine",
+  "chest",
+  "upperChest",
+] as const;
 
 // Scratch objects for the body IK solver. Module-scoped so the per-
 // frame solve does zero allocations in steady state.
@@ -672,11 +683,13 @@ export class MocapSolver {
    *  already in the mirrored frame, and (b) arm/leg landmark-triplets
    *  swap L↔R source landmarks before passing to the chain solver.
    *
-   *  Visibility gating: MediaPipe ships ``visibility`` per landmark. We
-   *  skip whole bone families when their source landmarks fall below
-   *  ``VIS_GATE``. Skipping means "no write this frame" — the OneEuro
-   *  filter holds its last value, which is less disruptive than
-   *  freezing on a garbage landmark.
+   *  Visibility gating: MediaPipe ships ``visibility`` per landmark. When
+   *  a family's source landmarks fall below ``VIS_GATE`` we DELETE that
+   *  family's bone entries from ``out.bones`` (via ``clearBones``) — we
+   *  do NOT just ``return`` and leave stale values in place. Deletion
+   *  lets the playback layer fall through to idle/procedural animation
+   *  rather than freezing on a stale IK value, which was the
+   *  "body doesn't move when partially out of frame" bug symptom.
    */
   private solveBodyIK(
     pose: PoseLandmarkerResult,
@@ -696,7 +709,10 @@ export class MocapSolver {
       (rHip?.visibility ?? 0) > VIS_GATE &&
       (lSh?.visibility ?? 0) > VIS_GATE &&
       (rSh?.visibility ?? 0) > VIS_GATE;
-    if (!torsoVis) return;
+    if (!torsoVis) {
+      this.clearBones(out, TORSO_BONES);
+      return;
+    }
 
     // MediaPipe world X increases toward the subject's LEFT, so
     // ``leftHip - rightHip`` has positive x → points from the right
@@ -909,6 +925,7 @@ export class MocapSolver {
       (el?.visibility ?? 0) < VIS_GATE ||
       (wr?.visibility ?? 0) < VIS_GATE
     ) {
+      this.clearBones(out, [upperBone, lowerBone]);
       return;
     }
 
@@ -1016,6 +1033,7 @@ export class MocapSolver {
       (hip?.visibility ?? 0) < VIS_GATE ||
       (kn?.visibility ?? 0) < VIS_GATE
     ) {
+      this.clearBones(out, [upperBone, lowerBone]);
       return;
     }
 
@@ -1047,7 +1065,10 @@ export class MocapSolver {
     _upperArmWorld.copy(_yawQuat).multiply(_bqA);
 
     // LowerLeg: knee → ankle. No per-vector mirror flip (see _legA).
-    if ((an?.visibility ?? 0) < VIS_GATE) return;
+    if ((an?.visibility ?? 0) < VIS_GATE) {
+      this.clearBones(out, [lowerBone, footBone]);
+      return;
+    }
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
     fixCoord(_legB);
     if (this.mirror) _legB.x = -_legB.x;
@@ -1070,7 +1091,10 @@ export class MocapSolver {
     // translates roughly to (0, 0, 1). SIGN-FLIP NOTE: this is the
     // most-likely-wrong sign among the leg bones. If feet point
     // backward in preview, try (0, 0, -1).
-    if ((ft?.visibility ?? 0) < VIS_GATE) return;
+    if ((ft?.visibility ?? 0) < VIS_GATE) {
+      this.clearBones(out, [footBone]);
+      return;
+    }
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
     fixCoord(_legC);
     if (this.mirror) _legC.x = -_legC.x;
@@ -1099,6 +1123,15 @@ export class MocapSolver {
     const pool: [number, number, number, number] = out.bones[name] ?? [0, 0, 0, 1];
     this.quatFilter(name).filter(q[0], q[1], q[2], q[3], tsSec, pool);
     out.bones[name] = pool;
+  }
+
+  /** Remove bone entries from the output sample. Called at visibility-gate
+   *  failure sites so the playback layer falls through to idle/procedural
+   *  animation instead of holding the previous frame's stale IK value
+   *  (which manifested as the VRM "freezing" when partially out of frame).
+   */
+  private clearBones(out: ClipSample, names: readonly MocapBone[]): void {
+    for (const n of names) delete out.bones[n];
   }
 
   /** Drive each hand's finger-proximal bones from a HandLandmarker

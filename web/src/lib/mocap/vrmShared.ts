@@ -90,7 +90,19 @@ export type MocapBoneMap = Partial<Record<MocapBone, Object3D | null>>;
  *  raw scene bone is returned instead of a humanoid-normalized bone,
  *  its resting quaternion is ALSO captured in ``userData.mocapRest`` so
  *  the playback path can compose the mocap rotation on top of rest
- *  instead of overwriting it (raw bones aren't identity-rest). */
+ *  instead of overwriting it (raw bones aren't identity-rest).
+ *
+ *  In addition, every resolved bone gets its CURRENT quaternion cloned
+ *  into ``userData.mocapBaseline``. This is distinct from ``mocapRest``
+ *  (which only exists on finger scene-fallback bones and affects the
+ *  playback compose path in ``applyBoneSample``). ``mocapBaseline`` is
+ *  captured for future phases — a Phase A.5 idle↔mocap crossfade will
+ *  read it to blend live IK samples against the idle/rest pose when
+ *  landmarks drop out. The current playback path does NOT read it, so
+ *  adding this field is behaviour-neutral. If callers adjust bone
+ *  rotations AFTER ``collectMocapBones`` returns (e.g. dropping T-pose
+ *  arms to a hanging silhouette), they should call
+ *  ``recaptureMocapBaseline`` to refresh the stored values. */
 export function collectMocapBones(vrm: VRM): MocapBoneMap {
   const h = vrm.humanoid;
   const out: MocapBoneMap = {};
@@ -98,6 +110,7 @@ export function collectMocapBones(vrm: VRM): MocapBoneMap {
   for (const name of MOCAP_BONES) {
     const humanoid = h.getNormalizedBoneNode(name);
     if (humanoid) {
+      (humanoid.userData ??= {}).mocapBaseline = humanoid.quaternion.clone();
       out[name] = humanoid;
       continue;
     }
@@ -112,10 +125,26 @@ export function collectMocapBones(vrm: VRM): MocapBoneMap {
     if (scene) {
       // Stash the rest pose so the apply path can compose with it.
       (scene.userData ??= {}).mocapRest = scene.quaternion.clone();
+      scene.userData.mocapBaseline = scene.quaternion.clone();
     }
     out[name] = scene;
   }
   return out;
+}
+
+/** Re-capture the baseline quaternion for every resolved bone. Use this
+ *  when bone rotations are adjusted AFTER ``collectMocapBones`` (e.g.
+ *  the T-pose-to-hanging-arms adjustment in ``VRMCharacter``) so the
+ *  stored ``userData.mocapBaseline`` reflects the final rest pose
+ *  rather than the pre-adjustment identity state. Does not touch
+ *  ``userData.mocapRest`` — that field drives the finger scene-fallback
+ *  compose path and must stay pinned to the original rest. */
+export function recaptureMocapBaseline(map: MocapBoneMap): void {
+  for (const bone of Object.values(map)) {
+    if (bone) {
+      (bone.userData ??= {}).mocapBaseline = bone.quaternion.clone();
+    }
+  }
 }
 
 /** Count how many bones in the map are non-null. Useful as a one-line

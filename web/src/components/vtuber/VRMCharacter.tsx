@@ -64,6 +64,7 @@ import {
 } from "@/lib/mocap/clipPlayer";
 import {
   collectMocapBones,
+  recaptureMocapBaseline,
   type MocapBoneMap,
 } from "@/lib/mocap/vrmShared";
 import {
@@ -599,6 +600,15 @@ function VRMModel({
     const rightUpper = h?.getNormalizedBoneNode("rightUpperArm") ?? null;
     if (leftUpper) leftUpper.rotation.z = 1.4;
     if (rightUpper) rightUpper.rotation.z = -1.4;
+    // Resolve the mocap bone map and refresh its baseline AFTER the
+    // hanging-arm adjustment so the stored ``userData.mocapBaseline``
+    // reflects the post-adjustment rest pose. ``collectMocapBones``
+    // captures an initial baseline for every resolved bone, but for
+    // ``leftUpperArm`` / ``rightUpperArm`` that snapshot is the
+    // pre-adjustment identity — we re-capture here so Phase A.5
+    // idle↔mocap crossfade logic reads the final hanging-arm pose.
+    mocapBonesRef.current = collectMocapBones(vrm);
+    recaptureMocapBaseline(mocapBonesRef.current);
     // Cache every bone the render loop touches. `chest` isn't guaranteed
     // on every VRM (some rigs only define upperChest or spine), so fall
     // through those in priority order rather than skipping breathing.
@@ -919,10 +929,9 @@ function VRMModel({
     vrmFileRef.current = vrmFile;
   }, [vrmFile]);
 
-  useEffect(() => {
-    if (!vrm) return;
-    mocapBonesRef.current = collectMocapBones(vrm);
-  }, [vrm]);
+  // ``mocapBonesRef`` is populated inside the main VRM-setup useEffect
+  // (above), so that ``recaptureMocapBaseline`` can run AFTER the
+  // hanging-arm adjustment on the same bone map.
 
   useEffect(() => {
     const state = mocapPlaybackRef.current;
