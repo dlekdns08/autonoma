@@ -28,8 +28,8 @@ const SESSION_KEY = "autonoma_auth";
 function getWsUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   if (typeof window === "undefined") return "ws://localhost:3479/ws";
-  return window.location.hostname === "autonoma.koala.ai.kr"
-    ? "wss://autonoma.koala.ai.kr/api/ws"
+  return window.location.hostname === "autonoma.letskoala.com"
+    ? "wss://api.letkoala.com/api/ws"
     : "ws://localhost:3479/ws";
 }
 
@@ -44,8 +44,8 @@ function resolveApiBase(): string {
     // operator should set NEXT_PUBLIC_API_URL so SSR and CSR agree.
     return "";
   }
-  return window.location.hostname === "autonoma.koala.ai.kr"
-    ? "https://autonoma.koala.ai.kr"
+  return window.location.hostname === "autonoma.letskoala.com"
+    ? "https://api.letkoala.com"
     : "http://localhost:3479";
 }
 

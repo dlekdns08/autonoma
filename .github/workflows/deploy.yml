@@ -35,7 +35,7 @@ jobs:
         env:
           AUTONOMA_ADMIN_PASSWORD: ${{ secrets.AUTONOMA_ADMIN_PASSWORD }}
           AUTONOMA_SESSION_SECRET: ${{ secrets.AUTONOMA_SESSION_SECRET }}
-          AUTONOMA_CORS_ALLOW_ORIGINS: ${{ secrets.AUTONOMA_CORS_ALLOW_ORIGINS || 'https://autonoma.koala.ai.kr' }}
+          AUTONOMA_CORS_ALLOW_ORIGINS: ${{ secrets.AUTONOMA_CORS_ALLOW_ORIGINS || 'https://autonoma.letskoala.com' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AUTONOMA_PROVIDER: ${{ secrets.AUTONOMA_PROVIDER || 'anthropic' }}
@@ -87,4 +87,5 @@ jobs:
           echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- API: http://localhost:3479" >> $GITHUB_STEP_SUMMARY
           echo "- Web: http://localhost:3478" >> $GITHUB_STEP_SUMMARY
-          echo "- URL: https://autonoma.koala.ai.kr" >> $GITHUB_STEP_SUMMARY
+          echo "- Web: https://autonoma.letskoala.com" >> $GITHUB_STEP_SUMMARY
+          echo "- API: https://api.letkoala.com" >> $GITHUB_STEP_SUMMARY
