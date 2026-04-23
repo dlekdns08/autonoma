@@ -32,6 +32,7 @@ import BindingEditor from "@/components/mocap/BindingEditor";
 import { encodeClip } from "@/lib/mocap/gzipEncode";
 import {
   ClipRuntime,
+  clipCache,
   createSampleBuffer,
   type ClipSample,
 } from "@/lib/mocap/clipPlayer";
@@ -133,16 +134,17 @@ export default function MocapPage() {
   // user-driven stop from the server-limit cutoff and surface the right
   // toast. Reset inside ``onStopRecord`` after it's been consumed.
   const autoStoppedByMaxRef = useRef(false);
+  const [targetVrm, setTargetVrm] = useState<string | null>(null);
   const mocap = useMocap({
     mirror: true,
     hands: handsEnabled,
     maxDurationS,
+    vrmFile: targetVrm ?? undefined,
     onMaxDurationReached: () => {
       autoStoppedByMaxRef.current = true;
       autoStopRef.current();
     },
   });
-  const [targetVrm, setTargetVrm] = useState<string | null>(null);
 
   // Clip list + bindings. Bindings need a refresh token bumped by the
   // ``mocap.bindings.updated`` WS event; we mirror it as a local counter
@@ -178,6 +180,16 @@ export default function MocapPage() {
   const [recordElapsed, setRecordElapsed] = useState(0);
   const playheadRef = useRef(0);
   const rafRef = useRef<number | null>(null);
+
+  // Selected-clip preview state. When a library clip is clicked (and
+  // there's no active recording / draft), we load it into a dedicated
+  // ClipRuntime + sample buffer and drive an rAF loop that keeps the
+  // preview panel alive. Separate from ``trimSampleRef`` so clicking a
+  // library clip doesn't disturb an in-progress trim.
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const selectedRuntimeRef = useRef<ClipRuntime | null>(null);
+  const selectedSampleRef = useRef<ClipSample>(createSampleBuffer());
+  const selectedRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!draftClip) {
@@ -237,6 +249,49 @@ export default function MocapPage() {
     };
   }, [playing, draftClip, trimStart, trimEnd]);
 
+  // Load + loop-play the currently selected library clip. Cleanup
+  // cancels the rAF and drops the runtime so switching clips (or
+  // deselecting) never leaves a zombie tick running.
+  useEffect(() => {
+    if (!selectedClipId) {
+      selectedRuntimeRef.current = null;
+      if (selectedRafRef.current !== null) {
+        cancelAnimationFrame(selectedRafRef.current);
+        selectedRafRef.current = null;
+      }
+      return;
+    }
+    const id = selectedClipId;
+    let cancelled = false;
+    clipCache
+      .ensure(id)
+      .then((clip) => {
+        if (cancelled || selectedClipId !== id) return;
+        const rt = new ClipRuntime(clip, performance.now() / 1000, {
+          loop: true,
+        });
+        selectedRuntimeRef.current = rt;
+        const tick = () => {
+          const cur = selectedRuntimeRef.current;
+          if (!cur) return;
+          cur.sampleInto(performance.now() / 1000, selectedSampleRef.current);
+          selectedRafRef.current = requestAnimationFrame(tick);
+        };
+        selectedRafRef.current = requestAnimationFrame(tick);
+      })
+      .catch((err) => {
+        console.warn("[mocap] clip preview load failed:", err);
+      });
+    return () => {
+      cancelled = true;
+      if (selectedRafRef.current !== null) {
+        cancelAnimationFrame(selectedRafRef.current);
+        selectedRafRef.current = null;
+      }
+      selectedRuntimeRef.current = null;
+    };
+  }, [selectedClipId]);
+
   const onSeek = (t: number) => {
     setPlaying(false);
     setPlayhead(t);
@@ -258,6 +313,9 @@ export default function MocapPage() {
     mocap.stop();
   };
   const onRecord = () => {
+    // Live camera needs the preview pane — drop any library clip
+    // preview that's currently driving it.
+    if (selectedClipId) setSelectedClipId(null);
     mocap.startRecording();
   };
   const onStopRecord = () => {
@@ -330,7 +388,13 @@ export default function MocapPage() {
   // Boxing it once is enough; MocapPreview reads ``.current`` via
   // ``useFrame`` and always sees the freshest bones.
   const liveSampleRef = useRef<ClipSample>(mocap.latestSample);
-  const previewSampleRef = stage === "recorded" ? trimSampleRef : liveSampleRef;
+  // Priority: draft-trim beats library-clip preview beats live camera.
+  const previewSampleRef =
+    stage === "recorded"
+      ? trimSampleRef
+      : selectedClipId
+        ? selectedSampleRef
+        : liveSampleRef;
 
   const tracking = useMemo(() => {
     return mocap.frameSeq > 0 && Object.keys(mocap.latestSample.bones).length > 0;
@@ -404,6 +468,7 @@ export default function MocapPage() {
             onSelect={(f) => {
               setTargetVrm(f);
               if (stage === "recorded") onDiscard();
+              setSelectedClipId(null);
             }}
             bindings={bindingsApi.bindings}
           />
@@ -423,6 +488,22 @@ export default function MocapPage() {
               {mocap.handsError && (
                 <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-mono text-amber-200">
                   손 모델 로드 실패 — body/face만 캡처됩니다: {mocap.handsError}
+                </div>
+              )}
+              {selectedClipId && stage !== "recorded" && (
+                <div className="flex items-center gap-2 rounded border border-white/15 bg-slate-950/70 px-2 py-1 text-[11px] font-mono text-white/70">
+                  <span className="text-white/50">클립 미리보기:</span>
+                  <span className="truncate text-white">
+                    {clipsApi.clips.find((c) => c.id === selectedClipId)?.name ??
+                      "(이름 없음)"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedClipId(null)}
+                    className="ml-auto rounded border border-white/15 bg-slate-900/60 px-2 py-0.5 text-white/70 hover:border-white/35"
+                  >
+                    선택 해제
+                  </button>
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
@@ -576,11 +657,13 @@ export default function MocapPage() {
               <ClipLibrary
                 clips={clipsApi.clips}
                 loading={clipsApi.loading}
-                selectedClipId={null}
+                selectedClipId={selectedClipId}
                 sourceVrmFilter={targetVrm}
                 currentUserId={user?.id != null ? String(user.id) : ""}
                 isAdmin={isAdmin}
-                onSelect={() => {}}
+                onSelect={(id) =>
+                  setSelectedClipId((cur) => (cur === id ? null : id))
+                }
                 onRename={clipsApi.rename}
                 onDelete={clipsApi.remove}
               />
