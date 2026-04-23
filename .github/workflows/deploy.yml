@@ -34,6 +34,8 @@ jobs:
       - name: Create .env file
         env:
           AUTONOMA_ADMIN_PASSWORD: ${{ secrets.AUTONOMA_ADMIN_PASSWORD }}
+          AUTONOMA_SESSION_SECRET: ${{ secrets.AUTONOMA_SESSION_SECRET }}
+          AUTONOMA_CORS_ALLOW_ORIGINS: ${{ secrets.AUTONOMA_CORS_ALLOW_ORIGINS || 'https://autonoma.koala.ai.kr' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AUTONOMA_PROVIDER: ${{ secrets.AUTONOMA_PROVIDER || 'anthropic' }}
@@ -41,13 +43,15 @@ jobs:
           AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
           AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
         run: |
-          printf 'AUTONOMA_ADMIN_PASSWORD=%s\n' "$AUTONOMA_ADMIN_PASSWORD" >> .env
-          printf 'ANTHROPIC_API_KEY=%s\n'       "$ANTHROPIC_API_KEY"       >> .env
-          printf 'OPENAI_API_KEY=%s\n'          "$OPENAI_API_KEY"          >> .env
-          printf 'AUTONOMA_PROVIDER=%s\n'       "$AUTONOMA_PROVIDER"       >> .env
-          printf 'AUTONOMA_MODEL=%s\n'          "$AUTONOMA_MODEL"          >> .env
-          printf 'AUTONOMA_VLLM_BASE_URL=%s\n'  "$AUTONOMA_VLLM_BASE_URL"  >> .env
-          printf 'AUTONOMA_VLLM_API_KEY=%s\n'   "$AUTONOMA_VLLM_API_KEY"   >> .env
+          printf 'AUTONOMA_ADMIN_PASSWORD=%s\n'      "$AUTONOMA_ADMIN_PASSWORD"      >> .env
+          printf 'AUTONOMA_SESSION_SECRET=%s\n'      "$AUTONOMA_SESSION_SECRET"      >> .env
+          printf 'AUTONOMA_CORS_ALLOW_ORIGINS=%s\n'  "$AUTONOMA_CORS_ALLOW_ORIGINS"  >> .env
+          printf 'ANTHROPIC_API_KEY=%s\n'            "$ANTHROPIC_API_KEY"            >> .env
+          printf 'OPENAI_API_KEY=%s\n'               "$OPENAI_API_KEY"               >> .env
+          printf 'AUTONOMA_PROVIDER=%s\n'            "$AUTONOMA_PROVIDER"            >> .env
+          printf 'AUTONOMA_MODEL=%s\n'               "$AUTONOMA_MODEL"               >> .env
+          printf 'AUTONOMA_VLLM_BASE_URL=%s\n'       "$AUTONOMA_VLLM_BASE_URL"       >> .env
+          printf 'AUTONOMA_VLLM_API_KEY=%s\n'        "$AUTONOMA_VLLM_API_KEY"        >> .env
 
       - name: Build and start containers
         run: |
