@@ -172,12 +172,18 @@ export function applyBoneSample(
   }
 }
 
-/** Write every covered bone from a ``ClipSample`` onto the rig. */
+/** Write every covered bone from a ``ClipSample`` onto the rig. If
+ *  ``skipBones`` is provided, bones in that set are left untouched —
+ *  used by the preview path to suppress finger tracks on cross-rig
+ *  playback (the source VRM's finger curl axis may not match the
+ *  preview rig's). */
 export function applyBoneSampleAll(
   map: MocapBoneMap,
   sample: ClipSample,
+  skipBones?: ReadonlySet<MocapBone>,
 ): void {
   for (const name of Object.keys(sample.bones) as MocapBone[]) {
+    if (skipBones && skipBones.has(name)) continue;
     applyBoneSample(map, name, sample);
   }
 }
