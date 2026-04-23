@@ -27,6 +27,7 @@ import {
   PoseLandmarker,
   type FaceLandmarkerResult,
   type HandLandmarkerResult,
+  type NormalizedLandmark,
   type PoseLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import {
@@ -115,6 +116,15 @@ export interface UseMocapReturn {
   /** Non-null when the HandLandmarker failed to initialise; face+pose
    *  capture still runs, but finger tracks will be empty. */
   handsError: string | null;
+  /** Raw MediaPipe pose landmarks from the most recent frame (33 pts).
+   *  Ref-stable so the overlay renderer can read at 30fps without
+   *  re-rendering the whole page. ``null`` while camera is stopped
+   *  or the detector hasn't produced a frame yet. */
+  poseLandmarksRef: React.RefObject<NormalizedLandmark[] | null>;
+  /** Latest ``HandLandmarkerResult`` (contains ``landmarks`` +
+   *  ``handednesses``). ``null`` when camera is off or hands capture
+   *  is disabled. Ref-stable; same 30fps rationale as pose. */
+  handLandmarksRef: React.RefObject<HandLandmarkerResult | null>;
   /** True while a recording is actively collecting frames. */
   recording: boolean;
   recordingMeta: RecordingMeta | null;
@@ -151,6 +161,11 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
   const handRef = useRef<HandLandmarker | null>(null);
   const solverRef = useRef<MocapSolver | null>(null);
   const sampleRef = useRef<ClipSample>(createSampleBuffer());
+  // Raw landmarks exposed for the SkeletonOverlay. Populated each frame
+  // in the tick; nulled in ``stop()`` so the overlay clears when the
+  // camera goes away.
+  const poseLandmarksRef = useRef<NormalizedLandmark[] | null>(null);
+  const handLandmarksRef = useRef<HandLandmarkerResult | null>(null);
   // Throttled hand diagnostics — refreshed every ~10 frames so the UI
   // readout doesn't cause re-renders at full 30fps.
   const [handDiagnostics, setHandDiagnostics] = useState<HandDiagnostics | null>(
@@ -213,6 +228,10 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     handRef.current?.close();
     handRef.current = null;
     solverRef.current?.reset();
+    // Clear the overlay-facing landmark refs so the skeleton stops
+    // rendering a frozen last-frame when the camera goes away.
+    poseLandmarksRef.current = null;
+    handLandmarksRef.current = null;
     recordingRef.current = false;
     setRecording(false);
     setRecordingMeta(null);
@@ -399,6 +418,11 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
           handRes = null;
         }
         const tsSec = tsMs / 1000;
+        // Publish the raw landmarks for the skeleton overlay. Using
+        // refs (not state) keeps 30fps updates out of React's render
+        // cycle — the overlay reads these inside its own rAF loop.
+        poseLandmarksRef.current = poseRes?.landmarks?.[0] ?? null;
+        handLandmarksRef.current = handRes;
         solverRef.current?.solveInto(
           faceRes,
           poseRes,
@@ -542,6 +566,8 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
     frameSeq,
     handDiagnostics: opts.hands ? handDiagnostics : null,
     handsError,
+    poseLandmarksRef,
+    handLandmarksRef,
     recording,
     recordingMeta,
     start,

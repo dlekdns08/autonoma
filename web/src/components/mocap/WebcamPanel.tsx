@@ -6,7 +6,7 @@
  * give it a parent and label the current state.
  */
 
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { MocapStatus } from "@/hooks/mocap/useMocap";
 
 interface Props {
@@ -20,6 +20,11 @@ interface Props {
    *  the full ``ClipSample``. */
   tracking: boolean;
   mirror: boolean;
+  /** Absolutely-positioned content stacked on top of the video — used
+   *  by ``SkeletonOverlay`` to draw the pose/hand skeleton on top of
+   *  the live feed. Rendered between the video and the status badge
+   *  so the badge stays readable. */
+  overlay?: ReactNode;
 }
 
 export default function WebcamPanel({
@@ -29,6 +34,7 @@ export default function WebcamPanel({
   targetLabel,
   tracking,
   mirror,
+  overlay,
 }: Props) {
   return (
     <div className="relative overflow-hidden rounded-lg border border-white/10 bg-black/50">
@@ -39,6 +45,7 @@ export default function WebcamPanel({
         playsInline
         muted
       />
+      {overlay}
       <div className="absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/70 to-transparent px-3 py-2 text-[11px] font-mono">
         <span className="text-white/70">
           {targetLabel ? `→ ${targetLabel}` : "대상 없음"}

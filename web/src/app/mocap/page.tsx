@@ -25,7 +25,9 @@ import { useMocapClips } from "@/hooks/mocap/useMocapClips";
 import { useMocapBindings } from "@/hooks/mocap/useMocapBindings";
 import CharacterPicker from "@/components/mocap/CharacterPicker";
 import WebcamPanel from "@/components/mocap/WebcamPanel";
+import SkeletonOverlay from "@/components/mocap/SkeletonOverlay";
 import MocapPreview, { type FingerTestAxis } from "@/components/mocap/MocapPreview";
+import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import TimelineTrimmer from "@/components/mocap/TimelineTrimmer";
 import ClipLibrary from "@/components/mocap/ClipLibrary";
 import BindingEditor from "@/components/mocap/BindingEditor";
@@ -103,6 +105,20 @@ export default function MocapPage() {
   // next ``start()``; we disable the checkbox while the camera is live.
   const [handsEnabled, setHandsEnabled] = useState<boolean>(false);
 
+  // Skeleton overlay controls.
+  //   * ``overlayEnabled`` — toggle the canvas layer on/off.
+  //   * ``referencePose`` — frozen 33-landmark snapshot used as the
+  //     "guide" the user tries to match. Null ⇒ no guide, overlay
+  //     draws only the live skeleton in green.
+  //   * ``matchThreshold`` — per-joint normalized-distance threshold
+  //     past which the joint flips to red to show the user which body
+  //     part is off-pose. 0.08 ≈ 8% of image width (≈ fist-width).
+  const [overlayEnabled, setOverlayEnabled] = useState(true);
+  const [referencePose, setReferencePose] = useState<
+    NormalizedLandmark[] | null
+  >(null);
+  const [matchThreshold, setMatchThreshold] = useState(0.08);
+
   // Finger-axis diagnostic. When set, MocapPreview bypasses the solver
   // for finger proximals and forces a fixed 60° rotation around the
   // chosen axis. Whichever axis visibly bends the fingers inward is
@@ -145,6 +161,18 @@ export default function MocapPage() {
       autoStopRef.current();
     },
   });
+
+  // Snapshot the user's current pose into ``referencePose`` so the
+  // overlay's guide layer draws it. Deep-copy each landmark: the ref
+  // holds the mutable buffer MediaPipe writes into, so retaining a
+  // reference would clobber the guide next frame. Plain function —
+  // the React compiler handles memoization automatically and useCallback
+  // here trips the "existing memoization could not be preserved" rule.
+  const captureReferencePose = () => {
+    const pose = mocap.poseLandmarksRef.current;
+    if (!pose || pose.length === 0) return;
+    setReferencePose(pose.map((l) => ({ ...l })));
+  };
 
   // Clip list + bindings. Bindings need a refresh token bumped by the
   // ``mocap.bindings.updated`` WS event; we mirror it as a local counter
@@ -484,6 +512,17 @@ export default function MocapPage() {
                 targetLabel={targetVrm}
                 tracking={tracking}
                 mirror={true}
+                overlay={
+                  overlayEnabled && mocap.status === "running" ? (
+                    <SkeletonOverlay
+                      poseLandmarksRef={mocap.poseLandmarksRef}
+                      handLandmarksRef={mocap.handLandmarksRef}
+                      referencePose={referencePose}
+                      matchThreshold={matchThreshold}
+                      mirror={true}
+                    />
+                  ) : null
+                }
               />
               {mocap.handsError && (
                 <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] font-mono text-amber-200">
@@ -506,6 +545,57 @@ export default function MocapPage() {
                   </button>
                 </div>
               )}
+              {/* Skeleton overlay controls — separate row so the
+                  recording controls below stay unambiguous. */}
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                <label className="flex cursor-pointer items-center gap-1.5 rounded border border-white/15 bg-slate-950/70 px-2 py-1 text-white/70 hover:border-white/35">
+                  <input
+                    type="checkbox"
+                    className="accent-emerald-500"
+                    checked={overlayEnabled}
+                    onChange={(e) => setOverlayEnabled(e.target.checked)}
+                  />
+                  스켈레톤
+                </label>
+                <button
+                  type="button"
+                  onClick={captureReferencePose}
+                  disabled={mocap.status !== "running"}
+                  title="지금의 자세를 가이드로 저장 — 카메라가 켜져 있어야 합니다"
+                  className="rounded border border-white/15 bg-slate-950/70 px-2 py-1 text-white/80 hover:border-white/35 disabled:opacity-40"
+                >
+                  📌 가이드 저장
+                </button>
+                {referencePose && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setReferencePose(null)}
+                      className="rounded border border-white/15 bg-slate-950/70 px-2 py-1 text-white/60 hover:border-white/35"
+                    >
+                      가이드 지우기
+                    </button>
+                    <label className="flex items-center gap-1.5 text-white/50">
+                      허용오차
+                      <input
+                        type="range"
+                        min={0.04}
+                        max={0.2}
+                        step={0.01}
+                        value={matchThreshold}
+                        onChange={(e) =>
+                          setMatchThreshold(parseFloat(e.target.value))
+                        }
+                        className="w-20 accent-emerald-500"
+                      />
+                      <span className="w-8 tabular-nums text-white/70">
+                        {Math.round(matchThreshold * 100)}
+                      </span>
+                    </label>
+                  </>
+                )}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
                 {mocap.status !== "running" ? (
                   <button
