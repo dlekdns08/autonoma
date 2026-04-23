@@ -84,6 +84,24 @@ export const MOCAP_BONES = [
 export type MocapBone = (typeof MOCAP_BONES)[number];
 export const MOCAP_BONE_SET: ReadonlySet<MocapBone> = new Set(MOCAP_BONES);
 
+/** All 30 finger-chain bones (thumb/index/middle/ring/little × proximal/
+ *  intermediate/distal/metacarpal). Different VRM rigs use different
+ *  local-axis conventions for finger curl — cross-rig playback of finger
+ *  tracks tends to look wrong. The playback path suppresses these bones
+ *  when the clip's ``sourceVrm`` doesn't match the active character's
+ *  VRM file, letting the idle loop drive them instead. This set is the
+ *  membership test for that skip; it does NOT affect iteration order of
+ *  ``MOCAP_BONES``. */
+export const FINGER_BONE_SET: ReadonlySet<MocapBone> = new Set(
+  MOCAP_BONES.filter(
+    (b) =>
+      b.endsWith("Proximal") ||
+      b.endsWith("Intermediate") ||
+      b.endsWith("Distal") ||
+      b.endsWith("Metacarpal"),
+  ),
+);
+
 /** VRM expression slots we record. VRM 1.0 standard five emotions +
  *  procedural vowels (used by the existing lip-sync) + blinks. A clip
  *  that only contains vowels can still layer cleanly against the
