@@ -41,3 +41,13 @@ export const ONE_EURO_DEFAULTS: OneEuroConfig = {
   beta: 0.4,
   dCutoff: 1.0,
 };
+
+/** Softer filter preset for body bones — wider-amplitude slower
+ *  motion than fingers, so the aggressive minCutoff needed for
+ *  anti-finger-jitter over-smooths body motion. This preset keeps
+ *  responsiveness high while retaining some anti-jitter. */
+export const ONE_EURO_BODY: OneEuroConfig = {
+  minCutoff: 1.0,
+  beta: 0.7,
+  dCutoff: 1.0,
+};

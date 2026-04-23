@@ -39,6 +39,7 @@ import type {
 import * as THREE from "three";
 import type { MocapBone, MocapExpression } from "./clipFormat";
 import type { ClipSample } from "./clipPlayer";
+import { ONE_EURO_BODY, ONE_EURO_DEFAULTS } from "./config";
 import { OneEuroQuat, OneEuroScalar, type OneEuroConfig } from "./oneEuro";
 import type { VrmMocapOverrides } from "./vrmCalibration";
 
@@ -239,27 +240,21 @@ const _chestQuat = new THREE.Quaternion();
 const _upperChestQuat = new THREE.Quaternion();
 
 // ── Phase B: forearm roll calibration ─────────────────────────────
-/** Rest reference for the hand-dir twist angle in the lower-arm local
- *  frame. At rest the palm-forward vector (wrist→middle-MCP) sits
- *  along the lower-arm's +Y axis; the twist angle is measured in the
- *  X-Z plane via ``atan2(x, z)`` — zero when the hand's projection
- *  lands on +Z. If the rig's rest palm lands on a different axis
- *  quadrant this constant takes up the slack. */
-const FOREARM_ROLL_REST_RAD = 0;
 /** Cap the applied roll at ±60° to guard against the hand-landmark
  *  detector producing spurious extremes (partial occlusion, one
- *  finger visible, etc). */
+ *  finger visible, etc). Per-VRM rest/gain/sign-flip live on the
+ *  ``MocapSolver`` class fields and are driven via
+ *  ``BodyIKOverrides.forearmRoll``. */
 const FOREARM_ROLL_CLAMP_RAD = (60 * Math.PI) / 180;
-/** Scale the raw twist angle by 0.8 before composing — the palm-dir
- *  proxy overshoots a real forearm roll slightly because it mixes
- *  wrist flexion into the measurement. */
-const FOREARM_ROLL_GAIN = 0.8;
 
 // ── Phase C: shoulder shrug heuristic ─────────────────────────────
 /** Max rotation applied to left/rightShoulder when the arm is fully
  *  raised overhead. 20° is at the low end of the anatomical scapular
  *  elevation range — enough to avoid the "stiff collarbone" look
- *  without overshooting into comical shrugs. */
+ *  without overshooting into comical shrugs. Per-VRM scaling of the
+ *  applied rotation lives on the ``MocapSolver`` class fields
+ *  (``shoulderLiftGain``) and is driven via
+ *  ``BodyIKOverrides.shoulderLiftGain``. */
 const SHOULDER_LIFT_MAX_RAD = (20 * Math.PI) / 180;
 /** Lift component (upperArm's current Y in parent-local) must exceed
  *  this before shoulder starts moving. 0 = arm at or above horizontal
@@ -268,14 +263,37 @@ const SHOULDER_LIFT_MAX_RAD = (20 * Math.PI) / 180;
 const SHOULDER_LIFT_THRESHOLD = 0;
 
 // ── Phase D: spine chain weights ──────────────────────────────────
-/** Per-bone share of the torso's remaining (pitch+roll) rotation.
- *  Sum = 1.0, lumbar-biased to match the spine's actual bending
- *  distribution (lumbar flexes far more than thoracic/cervical). */
-const SPINE_WEIGHTS = {
-  spine: 0.45,
-  chest: 0.35,
-  upperChest: 0.2,
-};
+// Default spine distribution lives on the ``MocapSolver`` class
+// fields (``spineWeightSpine`` / ``spineWeightChest`` /
+// ``spineWeightUpperChest``) so it can be overridden per-VRM via
+// ``BodyIKOverrides.spineWeights``. Default values (0.45/0.35/0.20)
+// are lumbar-biased to match the spine's real bending distribution.
+
+/** Bones that get the softer body-tuned OneEuro preset. Finger bones
+ *  are intentionally excluded — their output amplifies raw landmark
+ *  noise and needs the aggressive ``ONE_EURO_DEFAULTS`` preset. */
+const BODY_BONE_NAMES: ReadonlySet<MocapBone> = new Set<MocapBone>([
+  "hips",
+  "spine",
+  "chest",
+  "upperChest",
+  "neck",
+  "head",
+  "leftShoulder",
+  "rightShoulder",
+  "leftUpperArm",
+  "rightUpperArm",
+  "leftLowerArm",
+  "rightLowerArm",
+  "leftHand",
+  "rightHand",
+  "leftUpperLeg",
+  "rightUpperLeg",
+  "leftLowerLeg",
+  "rightLowerLeg",
+  "leftFoot",
+  "rightFoot",
+]);
 
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
@@ -558,6 +576,16 @@ export class MocapSolver {
   private readonly quatFilters: Partial<Record<MocapBone, OneEuroQuat>> = {};
   private readonly scalarFilters: Partial<Record<MocapExpression, OneEuroScalar>> = {};
   private readonly scratch: [number, number, number, number] = [0, 0, 0, 1];
+  /** Body-IK tunables — defaults match the former module constants so
+   *  rigs without ``body`` overrides behave identically to the baseline
+   *  tuning. Mutated in ``setVrmOverrides``. */
+  private shoulderLiftGain = 1.0;
+  private forearmRollRestRad = 0;
+  private forearmRollGain = 0.8;
+  private forearmRollSignFlip = false;
+  private spineWeightSpine = 0.45;
+  private spineWeightChest = 0.35;
+  private spineWeightUpperChest = 0.2;
   /** Live calibration table — defaults to ``CALIBRATION`` and can be
    *  swapped in per-VRM via ``setVrmOverrides``. Read each frame by
    *  ``solveOneHand`` so override changes take effect on the next
@@ -582,8 +610,26 @@ export class MocapSolver {
    *  the base. Degree fields on the override are converted to radians
    *  at merge time so the solve loop never has to divide by π. */
   setVrmOverrides(overrides: VrmMocapOverrides | null): void {
+    // Body defaults — restored whenever overrides are null or whenever
+    // a specific body field is omitted. Keep in sync with the class-
+    // field initialisers above.
+    const defaultShoulderLiftGain = 1.0;
+    const defaultForearmRollRestRad = 0;
+    const defaultForearmRollGain = 0.8;
+    const defaultForearmRollSignFlip = false;
+    const defaultSpineWeightSpine = 0.45;
+    const defaultSpineWeightChest = 0.35;
+    const defaultSpineWeightUpperChest = 0.2;
+
     if (!overrides) {
       this.effectiveCalibration = { ...CALIBRATION };
+      this.shoulderLiftGain = defaultShoulderLiftGain;
+      this.forearmRollRestRad = defaultForearmRollRestRad;
+      this.forearmRollGain = defaultForearmRollGain;
+      this.forearmRollSignFlip = defaultForearmRollSignFlip;
+      this.spineWeightSpine = defaultSpineWeightSpine;
+      this.spineWeightChest = defaultSpineWeightChest;
+      this.spineWeightUpperChest = defaultSpineWeightUpperChest;
       return;
     }
     const merged: Record<JointType, JointCalibration> = { ...CALIBRATION };
@@ -614,6 +660,52 @@ export class MocapSolver {
       };
     }
     this.effectiveCalibration = merged;
+
+    // --- Body section --------------------------------------------------
+    const body = overrides.body;
+    this.shoulderLiftGain =
+      body?.shoulderLiftGain !== undefined && isFinite(body.shoulderLiftGain)
+        ? body.shoulderLiftGain
+        : defaultShoulderLiftGain;
+
+    if (body?.spineWeights) {
+      const { spine, chest, upperChest } = body.spineWeights;
+      const sum = spine + chest + upperChest;
+      // Loose tolerance — the weights are applied as slerp parameters,
+      // so small drift is fine but a wildly-off sum suggests the
+      // catalog author intended something else. Warn + keep defaults.
+      if (Math.abs(sum - 1.0) > 0.05) {
+        console.warn(
+          `[mocap] spineWeights sum ${sum.toFixed(3)} deviates from 1.0;` +
+            " keeping default spine weights.",
+        );
+        this.spineWeightSpine = defaultSpineWeightSpine;
+        this.spineWeightChest = defaultSpineWeightChest;
+        this.spineWeightUpperChest = defaultSpineWeightUpperChest;
+      } else {
+        this.spineWeightSpine = spine;
+        this.spineWeightChest = chest;
+        this.spineWeightUpperChest = upperChest;
+      }
+    } else {
+      this.spineWeightSpine = defaultSpineWeightSpine;
+      this.spineWeightChest = defaultSpineWeightChest;
+      this.spineWeightUpperChest = defaultSpineWeightUpperChest;
+    }
+
+    const forearm = body?.forearmRoll;
+    this.forearmRollRestRad =
+      forearm?.restRad !== undefined && isFinite(forearm.restRad)
+        ? forearm.restRad
+        : defaultForearmRollRestRad;
+    this.forearmRollGain =
+      forearm?.gain !== undefined && isFinite(forearm.gain)
+        ? forearm.gain
+        : defaultForearmRollGain;
+    this.forearmRollSignFlip =
+      forearm?.signFlip !== undefined
+        ? forearm.signFlip
+        : defaultForearmRollSignFlip;
   }
 
   reset(): void {
@@ -624,7 +716,18 @@ export class MocapSolver {
   private quatFilter(name: MocapBone): OneEuroQuat {
     let f = this.quatFilters[name];
     if (!f) {
-      f = new OneEuroQuat(this.cfg);
+      // Body bones use the softer ``ONE_EURO_BODY`` preset (slower
+      // wide-amplitude motion needs less aggressive smoothing to feel
+      // responsive). Fingers keep the tighter ``ONE_EURO_DEFAULTS``
+      // preset since their output amplifies raw landmark noise.
+      // A caller-supplied ``opts.oneEuro`` still wins over the body
+      // preset when set — it's intended as a full override.
+      const config = this.cfg
+        ? this.cfg
+        : BODY_BONE_NAMES.has(name)
+          ? ONE_EURO_BODY
+          : ONE_EURO_DEFAULTS;
+      f = new OneEuroQuat(config);
       this.quatFilters[name] = f;
     }
     return f;
@@ -871,9 +974,9 @@ export class MocapSolver {
     // thoracic / cervical-adjacent segments.
     _remaining.copy(_torsoQuat).multiply(_tmpQuat.copy(_yawQuat).invert());
     _identity.identity();
-    _spineQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.spine);
-    _chestQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.chest);
-    _upperChestQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.upperChest);
+    _spineQuat.copy(_identity).slerp(_remaining, this.spineWeightSpine);
+    _chestQuat.copy(_identity).slerp(_remaining, this.spineWeightChest);
+    _upperChestQuat.copy(_identity).slerp(_remaining, this.spineWeightUpperChest);
     this.writeBoneSmoothed(
       "spine",
       [_spineQuat.x, _spineQuat.y, _spineQuat.z, _spineQuat.w],
@@ -1087,14 +1190,22 @@ export class MocapSolver {
       // anatomically-backwards instead of elevating, try negating
       // ``shrug`` (flip the sign in the axis-angle call).
       const clamped = Math.min(1, lift);
-      const shrug = clamped * SHOULDER_LIFT_MAX_RAD * sideSign;
-      _shoulderQuat.setFromAxisAngle(_unitX, shrug);
-      this.writeBoneSmoothed(
-        shoulderBone,
-        [_shoulderQuat.x, _shoulderQuat.y, _shoulderQuat.z, _shoulderQuat.w],
-        tsSec,
-        out,
-      );
+      const shrug =
+        clamped * SHOULDER_LIFT_MAX_RAD * sideSign * this.shoulderLiftGain;
+      // ``shoulderLiftGain === 0`` disables the shoulder write entirely
+      // (bone stays at rest). Skip the bone write so the playback path
+      // sees no track for it and keeps whatever the rest layer owns.
+      if (this.shoulderLiftGain === 0) {
+        this.clearBones(out, [shoulderBone]);
+      } else {
+        _shoulderQuat.setFromAxisAngle(_unitX, shrug);
+        this.writeBoneSmoothed(
+          shoulderBone,
+          [_shoulderQuat.x, _shoulderQuat.y, _shoulderQuat.z, _shoulderQuat.w],
+          tsSec,
+          out,
+        );
+      }
     } else {
       // Arm below horizontal — let the bone rest. Delete so stale
       // shrug from the previous frame doesn't persist.
@@ -1148,11 +1259,12 @@ export class MocapSolver {
     // When ``mirror=false`` the hand labels match, and the mapping
     // flips — so key off ``sideSign ^ mirror``.
     //
-    // SIGN-FLIP NOTE: ``FOREARM_ROLL_REST_RAD`` + sign of ``twistAngle``
-    // are the knobs most likely to need a visual tweak. If at rest
-    // the forearm sits pre-twisted or if turning the palm toward the
-    // camera makes the bone rotate the wrong way, invert the sign of
-    // ``twistAngle`` or adjust the rest constant.
+    // SIGN-FLIP NOTE: ``this.forearmRollRestRad`` + sign of
+    // ``twistAngle`` are the knobs most likely to need a visual tweak.
+    // If at rest the forearm sits pre-twisted or if turning the palm
+    // toward the camera makes the bone rotate the wrong way, set
+    // ``body.forearmRoll.signFlip`` in the catalog or adjust
+    // ``body.forearmRoll.restRad``.
     const hr = this._latestHandResult;
     if (hr && hr.landmarks && hr.handednesses) {
       // Pick the MediaPipe label that matches this VRM side.
@@ -1198,15 +1310,16 @@ export class MocapSolver {
             _lowerArmWorldInv.copy(_lowerArmWorld).invert();
             _handDirLocal.copy(_handDir).applyQuaternion(_lowerArmWorldInv);
             // atan2(x, z): 0 when hand points along +Z in lower-arm-
-            // local (matches the FOREARM_ROLL_REST_RAD reference);
+            // local (matches the ``forearmRollRestRad`` reference);
             // π/2 when pointing along +X.
             let twistAngle =
               Math.atan2(_handDirLocal.x, _handDirLocal.z) -
-              FOREARM_ROLL_REST_RAD;
+              this.forearmRollRestRad;
             // Normalize to [-π, π] so clamp/gain act on the short arc.
             while (twistAngle > Math.PI) twistAngle -= 2 * Math.PI;
             while (twistAngle < -Math.PI) twistAngle += 2 * Math.PI;
-            twistAngle *= FOREARM_ROLL_GAIN;
+            twistAngle *= this.forearmRollGain;
+            if (this.forearmRollSignFlip) twistAngle = -twistAngle;
             if (twistAngle > FOREARM_ROLL_CLAMP_RAD) {
               twistAngle = FOREARM_ROLL_CLAMP_RAD;
             } else if (twistAngle < -FOREARM_ROLL_CLAMP_RAD) {
