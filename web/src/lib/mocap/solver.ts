@@ -932,20 +932,15 @@ export class MocapSolver {
     const mat = mats?.[0]?.data;
     if (mat) {
       quatFromMatrix(mat, this.scratch);
-      // MediaPipe's face transformation matrix uses an OpenCV-style
-      // camera frame (+Y down, +Z away). VRM is three.js Y-up, +Z
-      // toward viewer. To convert AND apply the selfie-mirror (yaw/
-      // roll flipped, pitch preserved across sagittal plane), negate
-      // all three xyz components — that's the quaternion conjugate,
-      // which for face turns out to be the right combined transform.
-      //
-      // Empirical note: with only y,z flip, pitch was reversed
-      // (user nodding down → VRM nodding up). Adding x flip matches
-      // the MP→three.js coord convention on the pitch axis.
+      // Mirror ONLY yaw (negate y). Pitch (x) and roll (z) stay as MP
+      // gives them — empirically those match user-to-VRM directly for
+      // this face-matrix convention. Earlier revisions also flipped z
+      // for "sagittal mirror", but that inverted user-perceived roll
+      // (head tilt L↔R): the MP face-matrix's z axis already produces
+      // a screen-same-side roll without further negation when applied
+      // to a VRM facing the viewer.
       if (this.mirror) {
-        this.scratch[0] = -this.scratch[0];
         this.scratch[1] = -this.scratch[1];
-        this.scratch[2] = -this.scratch[2];
       }
       // Split evenly between neck and head so the motion reads as a
       // natural spine chain rather than a bobblehead.
