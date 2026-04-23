@@ -39,6 +39,7 @@ import * as THREE from "three";
 import type { MocapBone, MocapExpression } from "./clipFormat";
 import type { ClipSample } from "./clipPlayer";
 import { OneEuroQuat, OneEuroScalar, type OneEuroConfig } from "./oneEuro";
+import type { VrmMocapOverrides } from "./vrmCalibration";
 
 /** Which Tasks Vision blendshapes map to which VRM 1.0 expressions. The
  *  ARKit shapes are a superset — we blend the relevant ones per VRM slot
@@ -200,7 +201,9 @@ const BONE_EULER_ORDER: Partial<Record<MocapBone, THREE.EulerOrder>> = {
 //   13-16: RING      (MCP, PIP, DIP, TIP)
 //   17-20: LITTLE    (MCP, PIP, DIP, TIP)
 const WRIST_LM = 0;
+const INDEX_MCP_LM = 5;
 const MIDDLE_MCP_LM = 9;
+const PINKY_MCP_LM = 17;
 
 /** Joint type — selects calibration constants (rest/fist/out-range)
  *  and the VRM-local rotation axis. Different joints have different
@@ -214,7 +217,8 @@ type JointType =
   | "intermediate"    // PIP joint
   | "distal"          // DIP joint
   | "thumbProximal"   // MCP of thumb (measured relative to metacarpal)
-  | "thumbDistal";    // IP of thumb (measured relative to proximal)
+  | "thumbDistal"     // IP of thumb (measured relative to proximal)
+  | "thumbMetacarpal"; // CMC of thumb (measured relative to palm-forward)
 
 type RotationAxis = "x" | "y" | "z";
 
@@ -228,7 +232,54 @@ interface JointCalibration {
    *  positive direction goes AWAY from flexion (e.g. the thumb's local
    *  +X points toward the tip and flexion requires -X). */
   flipSign?: boolean;
+  /** If true, the raw curl is replaced by ``(π/2 − curl)`` before
+   *  calibration. Useful when the measured angle DECREASES as the
+   *  joint "flexes" — e.g. thumb opposition brings CMC→MCP closer to
+   *  palm-forward, shrinking the angle. The diagnostic
+   *  ``latestFingerMaxCurl`` still tracks the ORIGINAL curl so its
+   *  "is any signal present?" semantics stay meaningful. */
+  invertRaw?: boolean;
 }
+
+/** Per-finger rest splay (abduction angle at a relaxed hand) in the
+ *  palm frame. Signed, radians — positive points toward the pinky side.
+ *  Fingers naturally splay a little even at rest, so we subtract this
+ *  before scaling into bone rotation. Only defined for the four
+ *  non-thumb proximals: thumb abduction is handled separately (not in
+ *  this pass) and intermediate/distal joints are single-axis hinges.
+ *
+ *  Values measured from a relaxed hand against the MediaPipe palm
+ *  frame: index sits ~10° toward the thumb, ring ~6° toward pinky,
+ *  little ~16° toward pinky; middle is the zero reference. */
+const SPREAD_REST_RAD: Partial<Record<MocapBone, number>> = {
+  leftIndexProximal:  -0.18,
+  leftMiddleProximal:  0.00,
+  leftRingProximal:    0.10,
+  leftLittleProximal:  0.28,
+  rightIndexProximal: -0.18,
+  rightMiddleProximal: 0.00,
+  rightRingProximal:   0.10,
+  rightLittleProximal: 0.28,
+};
+
+/** Spread (abduction / adduction) config shared across all non-thumb
+ *  proximals. Assumes a VRoid-family rig where the bone's local +Y is
+ *  the abduction axis (perpendicular to the +X "along finger" and +Z
+ *  "flexion" axes). If a rig ships with a different spread axis we'll
+ *  add per-VRM overrides in a follow-up — for now this is hard-coded. */
+const PROXIMAL_SPREAD = {
+  /** Local bone axis around which spread rotates. */
+  axis: "y" as RotationAxis,
+  /** Visible bone rotation at the clamp edge. */
+  outRangeRad: (30 * Math.PI) / 180,
+  /** Flip sign per rig chirality. Left/right-hand sign flip is handled
+   *  by ``curlSign`` in the solve loop; this is the raw axis override. */
+  flipSign: false,
+  /** Clamp the raw (splay − restSplay) delta to this magnitude before
+   *  mapping to ``outRangeRad``. Prevents extreme finger-crossing poses
+   *  (e.g. index crossing over middle) from producing garbage angles. */
+  clampRad: (20 * Math.PI) / 180,
+};
 
 const CALIBRATION: Record<JointType, JointCalibration> = {
   // Validated empirically with Midori rig. Any mis-tuning shows as
@@ -284,6 +335,33 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
     axis: "x",
     flipSign: true,
   },
+  // Thumb CMC (``thumbMetacarpal``) — opposition motion brings the
+  // thumb ACROSS the palm (OK-sign, fist wrap, pinch). Parent
+  // reference is palm-forward (wrist→middle-MCP) because the wrist
+  // isn't a tracked segment we can use as a parent direction. Child
+  // segment is CMC→MCP (landmarks 1→2).
+  //
+  // Raw geometry: at rest the thumb points out to the side, so the
+  // angle between palm-forward and CMC→MCP is wide (~85°). As the
+  // thumb opposes, that angle SHRINKS toward ~30-50°. Because the
+  // signal decreases with flexion we set ``invertRaw: true`` so the
+  // solver uses ``(π/2 − curl)`` — a fully-opposing thumb then maps
+  // to a large "virtual curl" value and the standard rest/fist/out
+  // calibration works with the usual sign. After inversion the
+  // measured range is roughly rest ~5° → fist ~55°. OUT range is wide
+  // because opposition is a large visible deflection on the VRM.
+  //
+  // Axis "y" is a GUESS — needs empirical validation via the
+  // ``?debug=1`` axis test harness. If wrong, flip via the per-VRM
+  // override or edit here.
+  thumbMetacarpal: {
+    restRad: (5 * Math.PI) / 180,
+    fistRad: (55 * Math.PI) / 180,
+    outRangeRad: (60 * Math.PI) / 180,
+    axis: "y",
+    flipSign: false,
+    invertRaw: true,
+  },
 };
 
 /** Parent direction reference for a joint's curl metric.
@@ -308,7 +386,12 @@ type FingerJoint = readonly [
 ];
 
 const LEFT_JOINTS: readonly FingerJoint[] = [
-  // Thumb (2 of 3 segments — thumbMetacarpal skipped; see module doc)
+  // Thumb — all three segments. Metacarpal uses palm-forward as
+  // parent (the wrist isn't a tracked segment we can use anywhere
+  // else), so its "curl" is really the angle between palm-forward and
+  // CMC→MCP. That angle DECREASES as the thumb opposes, which is why
+  // ``thumbMetacarpal`` sets ``invertRaw: true`` in CALIBRATION.
+  ["leftThumbMetacarpal",    "palm", 1, 2, "thumbMetacarpal"],
   ["leftThumbProximal",      [1, 2], 2, 3, "thumbProximal"],
   ["leftThumbDistal",        [2, 3], 3, 4, "thumbDistal"],
   // Index
@@ -329,6 +412,7 @@ const LEFT_JOINTS: readonly FingerJoint[] = [
   ["leftLittleDistal",       [18, 19], 19, 20, "distal"],
 ];
 const RIGHT_JOINTS: readonly FingerJoint[] = [
+  ["rightThumbMetacarpal",    "palm", 1, 2, "thumbMetacarpal"],
   ["rightThumbProximal",      [1, 2], 2, 3, "thumbProximal"],
   ["rightThumbDistal",        [2, 3], 3, 4, "thumbDistal"],
   ["rightIndexProximal",      "palm", 5, 6, "proximal"],
@@ -350,6 +434,8 @@ const RIGHT_JOINTS: readonly FingerJoint[] = [
 // allocations in steady state.
 const _hWrist = new THREE.Vector3();
 const _hMid = new THREE.Vector3();
+const _hIdxMcp = new THREE.Vector3();
+const _hPkyMcp = new THREE.Vector3();
 const _hParentA = new THREE.Vector3();
 const _hParentB = new THREE.Vector3();
 const _hChildA = new THREE.Vector3();
@@ -357,8 +443,17 @@ const _hChildB = new THREE.Vector3();
 const _parentDir = new THREE.Vector3();
 const _childDir = new THREE.Vector3();
 const _palmY = new THREE.Vector3();
+const _palmX = new THREE.Vector3();
+const _palmZ = new THREE.Vector3();
 const _curlEuler = new THREE.Euler();
+const _spreadEuler = new THREE.Euler();
 const _handQ = new THREE.Quaternion();
+const _composedQ = new THREE.Quaternion();
+/** True when the palm frame derived this frame is degenerate (palm
+ *  edge-on to camera). Gate spread application on this — curl still
+ *  uses the orthogonalised ``_palmY`` which comes from a separate
+ *  length check in ``solveOneHand``. */
+let _palmFrameValid = false;
 
 export interface SolverOptions {
   /** Mirror the webcam on horizontal axis so the user's left hand drives
@@ -378,10 +473,56 @@ export class MocapSolver {
   private readonly quatFilters: Partial<Record<MocapBone, OneEuroQuat>> = {};
   private readonly scalarFilters: Partial<Record<MocapExpression, OneEuroScalar>> = {};
   private readonly scratch: [number, number, number, number] = [0, 0, 0, 1];
+  /** Live calibration table — defaults to ``CALIBRATION`` and can be
+   *  swapped in per-VRM via ``setVrmOverrides``. Read each frame by
+   *  ``solveOneHand`` so override changes take effect on the next
+   *  solve without needing a solver reinit. */
+  private effectiveCalibration: Record<JointType, JointCalibration>;
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
     this.cfg = opts.oneEuro;
+    this.effectiveCalibration = { ...CALIBRATION };
+  }
+
+  /** Apply per-VRM calibration overrides on top of the default
+   *  ``CALIBRATION`` table. Pass ``null`` to revert to defaults. Only
+   *  specified fields are overridden — missing fields fall through to
+   *  the base. Degree fields on the override are converted to radians
+   *  at merge time so the solve loop never has to divide by π. */
+  setVrmOverrides(overrides: VrmMocapOverrides | null): void {
+    if (!overrides) {
+      this.effectiveCalibration = { ...CALIBRATION };
+      return;
+    }
+    const merged: Record<JointType, JointCalibration> = { ...CALIBRATION };
+    for (const key of Object.keys(CALIBRATION) as JointType[]) {
+      const base = CALIBRATION[key];
+      const ov = overrides[key];
+      if (!ov) continue;
+      merged[key] = {
+        axis: ov.axis ?? base.axis,
+        flipSign: ov.flipSign ?? base.flipSign,
+        // ``invertRaw`` is an intrinsic property of the joint type
+        // (driven by which way the landmark geometry moves during
+        // flexion) — not something a per-VRM override should be able
+        // to flip. Always carry it through from the base.
+        invertRaw: base.invertRaw,
+        restRad:
+          ov.restDeg !== undefined
+            ? (ov.restDeg * Math.PI) / 180
+            : base.restRad,
+        fistRad:
+          ov.fistDeg !== undefined
+            ? (ov.fistDeg * Math.PI) / 180
+            : base.fistRad,
+        outRangeRad:
+          ov.outDeg !== undefined
+            ? (ov.outDeg * Math.PI) / 180
+            : base.outRangeRad,
+      };
+    }
+    this.effectiveCalibration = merged;
   }
 
   reset(): void {
@@ -657,8 +798,12 @@ export class MocapSolver {
    *  finger-bone local axes per-side. Both per-joint axis and per-hand
    *  sign are driven from the ``CALIBRATION`` table.
    *
-   *  Trade-off: still curl-only — no finger spread (abduction) and no
-   *  thumb opposition. Those need explicit 2nd-axis rotation work.
+   *  Non-thumb proximals also get a signed abduction rotation around
+   *  the local palm-normal axis (see ``PROXIMAL_SPREAD``), composed on
+   *  top of curl via a second quaternion multiply. This gives V-signs,
+   *  spread-hand, and adjacent-finger-split gestures in addition to
+   *  plain flexion. Thumb opposition still pending — would need its
+   *  own palm-frame work.
    */
   private solveOneHand(
     lm: { x: number; y: number; z: number }[],
@@ -674,6 +819,25 @@ export class MocapSolver {
     _palmY.copy(_hMid).sub(_hWrist);
     if (_palmY.lengthSq() < 1e-10) return;
     _palmY.normalize();
+
+    // Full palm frame — needed for finger spread (abduction). Build
+    // ``palmX`` (across palm, index-MCP → pinky-MCP orthogonalised
+    // against palmY) and ``palmZ`` (palm normal). If the hand is
+    // edge-on to the camera, the index/pinky-MCP span collapses along
+    // ``palmY`` and the cross axis becomes degenerate — in that case
+    // flag the frame so spread is skipped but curl still runs.
+    _hIdxMcp.set(lm[INDEX_MCP_LM].x, lm[INDEX_MCP_LM].y, lm[INDEX_MCP_LM].z);
+    _hPkyMcp.set(lm[PINKY_MCP_LM].x, lm[PINKY_MCP_LM].y, lm[PINKY_MCP_LM].z);
+    _palmX.copy(_hPkyMcp).sub(_hIdxMcp);
+    const dotXY = _palmX.dot(_palmY);
+    _palmX.addScaledVector(_palmY, -dotXY);
+    if (_palmX.lengthSq() < 1e-10) {
+      _palmFrameValid = false;
+    } else {
+      _palmX.normalize();
+      _palmZ.copy(_palmX).cross(_palmY).normalize();
+      _palmFrameValid = true;
+    }
 
     const joints = vrmIsLeft ? LEFT_JOINTS : RIGHT_JOINTS;
     // Right hand's local Z is flipped relative to the left on VRoid-
@@ -716,13 +880,20 @@ export class MocapSolver {
       const curl = Math.acos(cos);
       // Track peak across ALL joints for the "is anything moving?"
       // diagnostic. Proximals dominate at open/close; intermediate/
-      // distal reach similar magnitudes only at full fist.
+      // distal reach similar magnitudes only at full fist. We
+      // deliberately track the RAW curl here (pre-``invertRaw``) so
+      // the diagnostic's "signal present?" semantics stay consistent
+      // across joint types.
       this.latestFingerMaxCurl = Math.max(this.latestFingerMaxCurl, curl);
 
-      const cal = CALIBRATION[jointType];
+      const cal = this.effectiveCalibration[jointType];
+      // Joints whose measured angle DECREASES during flexion (thumb
+      // CMC opposition) invert the raw signal so the usual
+      // rest<fist mapping still applies.
+      const rawCurl = cal.invertRaw ? Math.PI / 2 - curl : curl;
       const span = cal.fistRad - cal.restRad;
       const norm =
-        span > 1e-6 ? Math.max(0, Math.min(1, (curl - cal.restRad) / span)) : 0;
+        span > 1e-6 ? Math.max(0, Math.min(1, (rawCurl - cal.restRad) / span)) : 0;
       const sign = (cal.flipSign ? -1 : 1) * curlSign;
       const boneRot = norm * cal.outRangeRad * sign;
 
@@ -741,6 +912,46 @@ export class MocapSolver {
           break;
       }
       _handQ.setFromEuler(_curlEuler);
+
+      // --- Spread (abduction/adduction) composed on top of curl ---
+      //
+      // Only non-thumb proximals carry a ``SPREAD_REST_RAD`` entry. We
+      // compose curl and spread inside the solver (rather than writing
+      // two separate animation tracks per bone) because the OneEuro
+      // filter is a single per-bone quaternion-space smoother — one
+      // composed quaternion in / out preserves the filter's stability
+      // guarantees. Composing externally would require two filters per
+      // bone and a post-hoc multiply on the playback side, which is
+      // more state to reason about with no quality gain.
+      //
+      // Application order: curl first, then spread. Both rotations act
+      // on the rest-pose frame, so ``_handQ = curl; _handQ.multiply(
+      // spread)`` produces ``curl ∘ spread`` applied to the rest
+      // vector (three.js multiplies on the right).
+      const restSplay = SPREAD_REST_RAD[boneName];
+      if (restSplay !== undefined && _palmFrameValid) {
+        // ``_childDir`` here is the MCP→PIP segment (e.g. lm 5→6 for
+        // index). Project onto the palm plane by using its palmX /
+        // palmY components only — palmZ would be "how much the finger
+        // lifts off the palm plane" which we ignore.
+        const dirX = _childDir.dot(_palmX);
+        const dirY = _childDir.dot(_palmY);
+        const splayRaw = Math.atan2(dirX, dirY);
+        let delta = splayRaw - restSplay;
+        if (delta > PROXIMAL_SPREAD.clampRad) delta = PROXIMAL_SPREAD.clampRad;
+        else if (delta < -PROXIMAL_SPREAD.clampRad) delta = -PROXIMAL_SPREAD.clampRad;
+        const normSplay = delta / PROXIMAL_SPREAD.clampRad; // -1..+1
+        const spreadSign = (PROXIMAL_SPREAD.flipSign ? -1 : 1) * curlSign;
+        const spreadRot = normSplay * PROXIMAL_SPREAD.outRangeRad * spreadSign;
+
+        _spreadEuler.set(0, 0, 0, "XYZ");
+        if (PROXIMAL_SPREAD.axis === "x") _spreadEuler.x = spreadRot;
+        else if (PROXIMAL_SPREAD.axis === "y") _spreadEuler.y = spreadRot;
+        else _spreadEuler.z = spreadRot;
+        _composedQ.setFromEuler(_spreadEuler);
+        _handQ.multiply(_composedQ);
+      }
+
       this.writeBoneSmoothed(
         boneName,
         [_handQ.x, _handQ.y, _handQ.z, _handQ.w],
