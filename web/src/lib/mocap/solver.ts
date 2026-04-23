@@ -932,14 +932,21 @@ export class MocapSolver {
     const mat = mats?.[0]?.data;
     if (mat) {
       quatFromMatrix(mat, this.scratch);
-      // Mirror ONLY yaw (negate y). Pitch (x) and roll (z) stay as MP
-      // gives them — empirically those match user-to-VRM directly for
-      // this face-matrix convention. Earlier revisions also flipped z
-      // for "sagittal mirror", but that inverted user-perceived roll
-      // (head tilt L↔R): the MP face-matrix's z axis already produces
-      // a screen-same-side roll without further negation when applied
-      // to a VRM facing the viewer.
+      // Face mirror — final empirically-validated combination:
+      //   * pitch (x): FLIP   — MP face-matrix's pitch axis is opposite
+      //     three.js for this VRM rig, so negating x makes nod up/down
+      //     match.
+      //   * yaw (y):   FLIP   — sagittal-mirror convention for head
+      //     shake (도리도리).
+      //   * roll (z):  KEEP   — unlike y, the face-matrix's roll axis
+      //     already produces screen-same-side tilt when applied to a
+      //     viewer-facing VRM, so negating z would invert it.
+      // History: we shipped all-three-flipped (conjugate) which left
+      // roll inverted; then we went y-only which flipped pitch back to
+      // wrong. The combination below matches all three axes the user
+      // verified at once.
       if (this.mirror) {
+        this.scratch[0] = -this.scratch[0];
         this.scratch[1] = -this.scratch[1];
       }
       // Split evenly between neck and head so the motion reads as a
