@@ -26,6 +26,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Fix Docker credential config
+        run: |
+          mkdir -p ~/.docker
+          echo '{}' > ~/.docker/config.json
+
       - name: Create .env file
         env:
           AUTONOMA_ADMIN_PASSWORD: ${{ secrets.AUTONOMA_ADMIN_PASSWORD }}
