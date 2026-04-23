@@ -35,7 +35,7 @@ import {
   type MocapBoneMap,
 } from "@/lib/mocap/vrmShared";
 import type { ClipSample } from "@/lib/mocap/clipPlayer";
-import type { MocapBone } from "@/lib/mocap/clipFormat";
+import { FINGER_BONE_SET, type MocapBone } from "@/lib/mocap/clipFormat";
 
 /** Finger-axis test — axis the caller wants to force. Null = no test. */
 export type FingerTestAxis = "x" | "y" | "z" | null;
@@ -47,6 +47,11 @@ interface Props {
    *  axis (ignoring the sample) until ``testFingerUntil`` passes. */
   testFingerAxis?: FingerTestAxis;
   testFingerUntil?: number;
+  /** VRM filename the sample was recorded against. When this differs
+   *  from ``vrmFile``, finger-bone tracks are suppressed (cross-rig
+   *  finger curl axes don't line up). Omit for live-capture previews
+   *  where the sample is always native by construction. */
+  sampleSourceVrm?: string;
 }
 
 const FINGER_PROXIMALS: readonly MocapBone[] = [
