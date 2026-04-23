@@ -595,10 +595,18 @@ export class MocapSolver {
     const mat = mats?.[0]?.data;
     if (mat) {
       quatFromMatrix(mat, this.scratch);
-      // Mirror the rotation's Y/Z around the vertical axis so a head
-      // tilt-left in the mirror drives a head tilt-left on the VRM.
-      // For a rotation (x, y, z, w), mirroring across X → (x, -y, -z, w).
+      // MediaPipe's face transformation matrix uses an OpenCV-style
+      // camera frame (+Y down, +Z away). VRM is three.js Y-up, +Z
+      // toward viewer. To convert AND apply the selfie-mirror (yaw/
+      // roll flipped, pitch preserved across sagittal plane), negate
+      // all three xyz components — that's the quaternion conjugate,
+      // which for face turns out to be the right combined transform.
+      //
+      // Empirical note: with only y,z flip, pitch was reversed
+      // (user nodding down → VRM nodding up). Adding x flip matches
+      // the MP→three.js coord convention on the pitch axis.
       if (this.mirror) {
+        this.scratch[0] = -this.scratch[0];
         this.scratch[1] = -this.scratch[1];
         this.scratch[2] = -this.scratch[2];
       }
@@ -910,6 +918,11 @@ export class MocapSolver {
     // double-mirror.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
+    // Mirror: sagittal-plane reflection. ``fixCoord`` handles the
+    // MP→three.js Y/Z coord conversion; the X flip here reflects
+    // left↔right so user's anatomical-left arm data drives VRM's
+    // right bone in screen-same-side orientation.
+    if (this.mirror) _armA.x = -_armA.x;
     if (_armA.lengthSq() < 1e-8) return;
     _armA.normalize();
 
@@ -946,9 +959,9 @@ export class MocapSolver {
     // preview, try flipping _restDirLower's Y sign here.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
+    if (this.mirror) _armB.x = -_armB.x;
     if (_armB.lengthSq() < 1e-8) return;
     _armB.normalize();
-    // No per-vector mirror flip — see note on ``_armA`` above.
 
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_armB).applyQuaternion(_parentInv);
@@ -1011,6 +1024,7 @@ export class MocapSolver {
     // again — double-mirror would invert legs.
     _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
     fixCoord(_legA);
+    if (this.mirror) _legA.x = -_legA.x;
     if (_legA.lengthSq() < 1e-8) return;
     _legA.normalize();
 
@@ -1036,6 +1050,7 @@ export class MocapSolver {
     if ((an?.visibility ?? 0) < VIS_GATE) return;
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
     fixCoord(_legB);
+    if (this.mirror) _legB.x = -_legB.x;
     if (_legB.lengthSq() < 1e-8) return;
     _legB.normalize();
     _parentInv.copy(_upperArmWorld).invert();
@@ -1058,9 +1073,9 @@ export class MocapSolver {
     if ((ft?.visibility ?? 0) < VIS_GATE) return;
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
     fixCoord(_legC);
+    if (this.mirror) _legC.x = -_legC.x;
     if (_legC.lengthSq() < 1e-8) return;
     _legC.normalize();
-    // No per-vector mirror flip (see _legA).
     // Accumulated world rotation at lowerLeg.
     _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
     _parentInv.copy(_lowerArmWorld).invert();
