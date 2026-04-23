@@ -151,6 +151,22 @@ const VIS_GATE = 0.25;
 // Scratch objects for the body IK solver. Module-scoped so the per-
 // frame solve does zero allocations in steady state.
 const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** Convert a landmark-derived vector from MediaPipe worldLandmarks
+ *  coordinates to three.js / VRM coordinates.
+ *
+ *  MediaPipe worldLandmarks use image-camera convention:
+ *    +X = subject's LEFT, +Y = DOWN, +Z = AWAY from camera.
+ *  three.js / VRM expect:
+ *    +X same, +Y = UP, +Z = TOWARD camera.
+ *
+ *  So we negate Y and Z on every vector derived from a landmark
+ *  difference. Without this the VRM renders upside-down and rotations
+ *  around horizontal axes invert. */
+function fixCoord(v: THREE.Vector3): void {
+  v.y = -v.y;
+  v.z = -v.z;
+}
 const _bX = new THREE.Vector3();
 const _bY = new THREE.Vector3();
 const _bZ = new THREE.Vector3();
@@ -679,6 +695,7 @@ export class MocapSolver {
     // hip to the left hip. That's body's +X (subject-left) and lines
     // up with the VRM T-pose convention (left arm along +X).
     _bX.set(lHip.x - rHip.x, lHip.y - rHip.y, lHip.z - rHip.z);
+    fixCoord(_bX);
     if (_bX.lengthSq() < 1e-6) return;
     _bX.normalize();
     // Torso-up = midShoulder - midHip, orthogonalised against +X so the
@@ -688,11 +705,13 @@ export class MocapSolver {
       (lHip.y + rHip.y) * 0.5,
       (lHip.z + rHip.z) * 0.5,
     );
+    fixCoord(_midHip);
     _midSh.set(
       (lSh.x + rSh.x) * 0.5,
       (lSh.y + rSh.y) * 0.5,
       (lSh.z + rSh.z) * 0.5,
     );
+    fixCoord(_midSh);
     _bY.copy(_midSh).sub(_midHip);
     _bY.addScaledVector(_bX, -_bY.dot(_bX));
     if (_bY.lengthSq() < 1e-6) return;
@@ -890,6 +909,7 @@ export class MocapSolver {
     // negation of ``_torsoQuat``). Flipping the vector again would
     // double-mirror.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
+    fixCoord(_armA);
     if (_armA.lengthSq() < 1e-8) return;
     _armA.normalize();
 
@@ -925,6 +945,7 @@ export class MocapSolver {
     // SIGN-FLIP NOTE: if elbow-to-wrist math looks inverted in the
     // preview, try flipping _restDirLower's Y sign here.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
+    fixCoord(_armB);
     if (_armB.lengthSq() < 1e-8) return;
     _armB.normalize();
     // No per-vector mirror flip — see note on ``_armA`` above.
@@ -989,6 +1010,7 @@ export class MocapSolver {
     // ``_yawQuat`` (via torsoQuat's y,z negation). Don't flip vectors
     // again — double-mirror would invert legs.
     _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
+    fixCoord(_legA);
     if (_legA.lengthSq() < 1e-8) return;
     _legA.normalize();
 
@@ -1013,6 +1035,7 @@ export class MocapSolver {
     // LowerLeg: knee → ankle. No per-vector mirror flip (see _legA).
     if ((an?.visibility ?? 0) < VIS_GATE) return;
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
+    fixCoord(_legB);
     if (_legB.lengthSq() < 1e-8) return;
     _legB.normalize();
     _parentInv.copy(_upperArmWorld).invert();
@@ -1034,6 +1057,7 @@ export class MocapSolver {
     // backward in preview, try (0, 0, -1).
     if ((ft?.visibility ?? 0) < VIS_GATE) return;
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
+    fixCoord(_legC);
     if (_legC.lengthSq() < 1e-8) return;
     _legC.normalize();
     // No per-vector mirror flip (see _legA).
