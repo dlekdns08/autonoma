@@ -160,6 +160,19 @@ export interface MocapClipEvent {
   action: "created" | "renamed" | "deleted";
 }
 
+/** Admin-fired manual trigger event. Viewers apply an ephemeral
+ *  override on the normal binding lookup so the bound clip plays
+ *  briefly (bounded TTL) before returning to the mood/state/emote
+ *  chain. ``seq`` lets subscribers distinguish two back-to-back fires
+ *  of the same (vrm, slug) pair. */
+export interface MocapTriggerFiredEvent {
+  seq: number;
+  vrm_file: string;
+  trigger_kind: string;
+  trigger_value: string;
+  clip_id: string;
+}
+
 // Voice binding event state lives in ``useVoiceEventState`` so the WS
 // routing here stays thin — the hook below composes it. The exported
 // type is re-exposed from this module so existing consumers don't have
@@ -197,6 +210,12 @@ export function useSwarm() {
   const [mocapClipEvent, setMocapClipEvent] =
     useState<MocapClipEvent | null>(null);
   const mocapClipEventSeqRef = useRef(0);
+  // Admin-fired manual trigger — ephemeral "play this clip once" signal.
+  // Same pattern as binding/clip events: monotonic seq guards re-applies
+  // when React hands the same event object back on a re-render.
+  const [mocapTriggerFiredEvent, setMocapTriggerFiredEvent] =
+    useState<MocapTriggerFiredEvent | null>(null);
+  const mocapTriggerFiredEventSeqRef = useRef(0);
   // Same pattern as mocap bindings, for voice profile bindings. The
   // state lives in ``useVoiceEventState`` so the concrete refresh/patch
   // plumbing is out of this file.
@@ -352,6 +371,27 @@ export function useSwarm() {
               seq: ++mocapClipEventSeqRef.current,
               clip_id: clipId,
               action,
+            });
+          }
+          return;
+        }
+
+        // Admin-fired manual trigger. Propagates as a one-shot event
+        // object; subscribers (page.tsx) record an ephemeral override
+        // per vrm so the currently-rendered clip briefly switches to
+        // the bound manual clip, then falls back to the normal chain
+        // after the TTL. Suppressed from the event log so repeat fires
+        // don't pollute it.
+        if (event === "mocap.trigger.fired") {
+          const vrm = String(data.vrm_file ?? "");
+          const clipId = String(data.clip_id ?? "");
+          if (vrm && clipId) {
+            setMocapTriggerFiredEvent({
+              seq: ++mocapTriggerFiredEventSeqRef.current,
+              vrm_file: vrm,
+              trigger_kind: String(data.trigger_kind ?? "manual"),
+              trigger_value: String(data.trigger_value ?? ""),
+              clip_id: clipId,
             });
           }
           return;
@@ -1313,6 +1353,7 @@ export function useSwarm() {
     mocapBindingsRefreshToken,
     mocapBindingEvent,
     mocapClipEvent,
+    mocapTriggerFiredEvent,
     voiceBindingsRefreshToken,
     voiceBindingEvent,
   };
