@@ -79,11 +79,15 @@ function PreviewVRM({
   sampleRef,
   testFingerAxis,
   testFingerUntil,
+  skipFingers,
 }: {
   url: string;
   sampleRef: RefObject<ClipSample>;
   testFingerAxis?: FingerTestAxis;
   testFingerUntil?: number;
+  /** When true, finger bones aren't written from the sample — used for
+   *  cross-rig clip playback where finger curl axes may mismatch. */
+  skipFingers: boolean;
 }) {
   const gltf = useLoader(GLTFLoader, url, (loader) => {
     (loader as GLTFLoader).register((p) => new VRMLoaderPlugin(p));
