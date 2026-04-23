@@ -46,11 +46,12 @@ export const MOCAP_BONES = [
   // Hand fingers — full articulation (proximal / intermediate / distal
   // per finger). See ``solveHands`` in ``solver.ts`` for the
   // per-joint relative-angle solver and calibration table. Thumb has
-  // no Intermediate joint (VRM 1.0 humanoid spec) and we skip thumb
-  // Metacarpal because its rest reference is ambiguous at webcam
-  // resolution.
+  // no Intermediate joint (VRM 1.0 humanoid spec); the Metacarpal
+  // joint is driven from the palm-forward reference to capture CMC
+  // opposition (thumb moving across the palm).
   "leftThumbProximal",
   "leftThumbDistal",
+  "leftThumbMetacarpal",
   "leftIndexProximal",
   "leftIndexIntermediate",
   "leftIndexDistal",
@@ -65,6 +66,7 @@ export const MOCAP_BONES = [
   "leftLittleDistal",
   "rightThumbProximal",
   "rightThumbDistal",
+  "rightThumbMetacarpal",
   "rightIndexProximal",
   "rightIndexIntermediate",
   "rightIndexDistal",
