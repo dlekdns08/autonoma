@@ -35,8 +35,9 @@ import * as THREE from "three";
 import {
   collectMocapBones,
   countResolvedBones,
-  applyBoneSampleAll,
+  applyBoneSampleAllWithDecay,
   applyExpressionSample,
+  adjustVrmRestToArmsDown,
   type MocapBoneMap,
 } from "@/lib/mocap/vrmShared";
 import type { ClipSample } from "@/lib/mocap/clipPlayer";
@@ -135,6 +136,13 @@ function PreviewVRM({
   useEffect(() => {
     if (!vrm) return;
     VRMUtils.rotateVRM0(vrm);
+    // Pre-rotate upperArm bones to arms-down BEFORE collecting so the
+    // baseline captured inside ``collectMocapBones`` is arms-down. The
+    // decay-apply path in ``useFrame`` slerps back toward this baseline
+    // whenever the solver drops a bone from ``sample.bones`` (e.g. arm
+    // below the desk → visibility gate fails → bone cleared). Without
+    // this, the fallback pose would be three-vrm's T-pose default.
+    adjustVrmRestToArmsDown(vrm);
     bonesRef.current = collectMocapBones(vrm);
     // One-time diagnostic: log which MOCAP_BONES this rig actually
     // exposes. Finger capture silently no-ops when the rig omits
@@ -158,9 +166,16 @@ function PreviewVRM({
     if (!vrm) return;
     const sample = sampleRef.current;
     if (sample) {
-      applyBoneSampleAll(
+      // Decay-apply: bones present in the sample get the IK-driven
+      // value, bones absent get slerped toward their captured baseline
+      // (arms-down for upperArm, rest-pose identity for everything
+      // else). 0.15 alpha at 60fps ≈ 0.3s to settle — snappy enough
+      // for "arms dropped out of frame → VRM drops them back to side"
+      // without looking twitchy on brief mid-motion gate blips.
+      applyBoneSampleAllWithDecay(
         bonesRef.current,
         sample,
+        0.15,
         skipFingers ? FINGER_BONE_SET : undefined,
       );
       applyExpressionSample(vrm, sample);

@@ -13,6 +13,44 @@ import * as THREE from "three";
 import { MOCAP_BONES, type MocapBone, type MocapExpression } from "./clipFormat";
 import type { ClipSample } from "./clipPlayer";
 
+// ── Rest-pose tuning for mocap preview ──────────────────────────────
+//
+// Three-vrm's normalized humanoid rests at T-pose (identity localQuat
+// = arms extended horizontally). That's awkward as a fallback pose for
+// mocap: when the user's arms aren't in frame, the VRM drops back to
+// T-pose which reads as "the character is doing a crucifixion".
+//
+// Fix: pre-rotate the upperArm bones to a natural arms-at-side pose
+// AT VRM LOAD TIME (before ``collectMocapBones`` captures the baseline).
+// Then the baseline == arms-down, and the decay-apply path slerps the
+// VRM back to arms-down whenever the solver drops a bone from ``out``.
+//
+// Math: ``rightUpperArm`` at rest points along parent's -X (character's
+// anatomical right). Rotating 90° around +Z takes (-X, 0, 0) to
+// (0, -Y, 0) — arm hanging. ``leftUpperArm`` rests at +X; rotating -90°
+// around +Z (equivalent to +90° around -Z) takes it to the same -Y.
+// Quaternion for axis-angle(±Z, 90°) = (0, 0, ±sin(π/4), cos(π/4)).
+const _R2D2 = Math.SQRT1_2;
+const ARMS_DOWN_LEFT_QUAT  = new THREE.Quaternion(0, 0, -_R2D2, _R2D2);
+const ARMS_DOWN_RIGHT_QUAT = new THREE.Quaternion(0, 0,  _R2D2, _R2D2);
+
+/** Pre-rotate ``vrm``'s upperArm bones into an arms-hanging-at-side
+ *  pose. Call BEFORE ``collectMocapBones`` so the captured baseline
+ *  matches the adjusted pose — the decay-apply path below will slerp
+ *  back toward exactly these quaternions whenever a bone leaves the
+ *  mocap output.
+ *
+ *  No-op on rigs that don't expose the normalized upperArm bones
+ *  (shouldn't happen for any humanoid VRM, but we're defensive). */
+export function adjustVrmRestToArmsDown(vrm: VRM): void {
+  const h = vrm.humanoid;
+  if (!h) return;
+  const left = h.getNormalizedBoneNode("leftUpperArm");
+  const right = h.getNormalizedBoneNode("rightUpperArm");
+  if (left) left.quaternion.copy(ARMS_DOWN_LEFT_QUAT);
+  if (right) right.quaternion.copy(ARMS_DOWN_RIGHT_QUAT);
+}
+
 // ── Finger-bone fallback (scene traversal) ───────────────────────────
 // Many VRM exports (VRoid especially) include finger mesh bones but
 // don't register them in the VRM 1.0 humanoid map — finger bones are
@@ -214,6 +252,81 @@ export function applyBoneSampleAll(
   for (const name of Object.keys(sample.bones) as MocapBone[]) {
     if (skipBones && skipBones.has(name)) continue;
     applyBoneSample(map, name, sample);
+  }
+}
+
+/** Live-preview variant of ``applyBoneSampleAll`` that handles the
+ *  "bone missing from the sample this frame" case gracefully.
+ *
+ *  For every ``MOCAP_BONES`` entry the rig actually exposes:
+ *    - If ``sample.bones[name]`` exists → apply it (same semantics as
+ *      ``applyBoneSample``: humanoid bones get copied directly; scene-
+ *      fallback bones compose with ``mocapRest``).
+ *    - Otherwise → slerp the bone's current quaternion toward
+ *      ``mocapBaseline`` at the given per-frame ``decayAlpha``.
+ *
+ *  Why this exists: the solver drops bones from ``out`` whenever the
+ *  source landmarks fail visibility (classic "arms below the desk"
+ *  case). Without the decay path the three-vrm bone would sit frozen
+ *  at whatever the last frame wrote, producing the "VRM stuck in
+ *  raised-arms hallucination" bug we kept chasing in the solver layer.
+ *  Handling it here, DIRECTLY on the VRM quaternion, is immune to
+ *  whether the solver's sample path is working — no indirect
+ *  sample → OneEuro → apply chain to break.
+ *
+ *  ``decayAlpha`` is a nlerp factor per call. 0.15 at 60fps → bone
+ *  reaches ~95% of baseline in ~20 frames (~0.3s). Raise for a
+ *  snappier return, lower for a lazier settle.
+ *
+ *  ``skipBones`` semantics match ``applyBoneSampleAll`` — listed bones
+ *  are neither applied nor decayed (the cross-rig finger suppression
+ *  case leaves fingers entirely to the rig's own rest).
+ *
+ *  The finger-scene-fallback bones keep using ``applyBoneSample``'s
+ *  compose-with-mocapRest path, so their baseline includes the per-rig
+ *  finger rest offset. Baseline for humanoid bones is whatever
+ *  ``collectMocapBones`` captured — meaning the caller must have run
+ *  ``adjustVrmRestToArmsDown`` BEFORE collecting bones if arms-down is
+ *  the desired fallback (otherwise baseline == T-pose identity). */
+const _decayCurrent = new THREE.Quaternion();
+export function applyBoneSampleAllWithDecay(
+  map: MocapBoneMap,
+  sample: ClipSample,
+  decayAlpha: number,
+  skipBones?: ReadonlySet<MocapBone>,
+): void {
+  const clampedAlpha = Math.max(0, Math.min(1, decayAlpha));
+  for (const name of MOCAP_BONES) {
+    if (skipBones && skipBones.has(name)) continue;
+    const bone = map[name];
+    if (!bone) continue;
+    if (sample.bones[name]) {
+      applyBoneSample(map, name, sample);
+      continue;
+    }
+    const baseline = bone.userData?.mocapBaseline as
+      | THREE.Quaternion
+      | undefined;
+    if (!baseline) continue;
+    // nlerp (lerp + normalise). Cheaper than slerp and visually
+    // indistinguishable at these per-frame step sizes.
+    _decayCurrent.copy(bone.quaternion);
+    // Guard the double-cover: pick the short-arc hemisphere before
+    // lerping or the bone will slerp the long way around in quaternion
+    // space (visible as a flip).
+    const dot =
+      _decayCurrent.x * baseline.x +
+      _decayCurrent.y * baseline.y +
+      _decayCurrent.z * baseline.z +
+      _decayCurrent.w * baseline.w;
+    const sign = dot < 0 ? -1 : 1;
+    bone.quaternion.set(
+      (1 - clampedAlpha) * _decayCurrent.x + clampedAlpha * sign * baseline.x,
+      (1 - clampedAlpha) * _decayCurrent.y + clampedAlpha * sign * baseline.y,
+      (1 - clampedAlpha) * _decayCurrent.z + clampedAlpha * sign * baseline.z,
+      (1 - clampedAlpha) * _decayCurrent.w + clampedAlpha * sign * baseline.w,
+    );
+    bone.quaternion.normalize();
   }
 }
 
