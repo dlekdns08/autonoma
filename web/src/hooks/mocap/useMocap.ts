@@ -41,6 +41,7 @@ import {
 import type { ClipSample } from "@/lib/mocap/clipPlayer";
 import { createSampleBuffer } from "@/lib/mocap/clipPlayer";
 import { MocapSolver } from "@/lib/mocap/solver";
+import { loadVrmOverrides } from "@/lib/mocap/vrmCalibration";
 import {
   RECORD_FPS,
   DEFAULT_MAX_CLIP_SECONDS,
@@ -78,6 +79,12 @@ export interface UseMocapOptions {
    *  clip into the upload flow. Without this, the accumulated frames
    *  would be silently dropped on the next ``startRecording``. */
   onMaxDurationReached?: () => void;
+  /** Target VRM filename (e.g. ``"midori.vrm"``) used to look up
+   *  per-rig calibration overrides in ``vrmCatalog.json``. The
+   *  overrides are applied at ``start()`` time — changing this value
+   *  while the camera is live has no effect until the next start.
+   *  Leave undefined to use the solver's built-in defaults. */
+  vrmFile?: string;
 }
 
 export interface HandDiagnostics {
@@ -344,6 +351,13 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
         }
       }
       solverRef.current = new MocapSolver({ mirror: opts.mirror ?? true });
+      // Per-VRM calibration: merge overrides from ``vrmCatalog.json``
+      // on top of the solver's defaults. Changing ``opts.vrmFile``
+      // while the camera is live does NOT re-apply — stop + start the
+      // camera to pick up a new rig's calibration.
+      solverRef.current.setVrmOverrides(
+        loadVrmOverrides(opts.vrmFile ?? ""),
+      );
 
       if (controller.signal.aborted) {
         streamRef.current = null;
@@ -434,7 +448,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       setStatus("error");
       stop();
     }
-  }, [opts.mirror, opts.hands, stop]);
+  }, [opts.mirror, opts.hands, opts.vrmFile, stop]);
 
   const appendRawFrame = (sample: ClipSample, tsSec: number) => {
     // Clone the quaternion tuples — the pool buffer is reused next
