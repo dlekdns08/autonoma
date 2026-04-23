@@ -44,6 +44,10 @@ import {
   fetchTriggerCatalog,
 } from "@/lib/mocap/triggers";
 import { API_BASE_URL, useSwarm } from "@/hooks/useSwarm";
+import {
+  computeAlignment,
+  type VrmBoneWorldPositions,
+} from "@/lib/mocap/alignment";
 
 type Stage = "idle" | "recorded" | "uploading" | "error";
 
@@ -416,6 +420,38 @@ export default function MocapPage() {
   // Boxing it once is enough; MocapPreview reads ``.current`` via
   // ``useFrame`` and always sees the freshest bones.
   const liveSampleRef = useRef<ClipSample>(mocap.latestSample);
+
+  // VRM bone world positions published by MocapPreview each frame. We
+  // compare these against the raw pose landmarks at ~3Hz to surface a
+  // coarse alignment-score badge for IK tuning.
+  const vrmBonesRef = useRef<VrmBoneWorldPositions>({});
+  const [alignmentScore, setAlignmentScore] = useState<number | null>(null);
+  useEffect(() => {
+    // Only run the sampler while the camera is live. When it isn't,
+    // we skip registering the interval at all — the cleanup from the
+    // previous "running" effect has already stopped the tick, and the
+    // stale score stays frozen until the badge is hidden by the same
+    // ``mocap.status === "running"`` guard in JSX.
+    if (mocap.status !== "running") return;
+    const tick = () => {
+      const score = computeAlignment(
+        mocap.poseLandmarksRef.current,
+        vrmBonesRef.current,
+        true, // selfie mirror — matches WebcamPanel / SkeletonOverlay
+      );
+      setAlignmentScore(score);
+    };
+    tick();
+    const id = window.setInterval(tick, 333); // ~3Hz
+    return () => {
+      window.clearInterval(id);
+      // Blow away stale numbers so the next session starts blank —
+      // done in cleanup, not the effect body, to satisfy
+      // react-hooks/set-state-in-effect.
+      setAlignmentScore(null);
+    };
+  }, [mocap.status, mocap.poseLandmarksRef]);
+
   // Priority: draft-trim beats library-clip preview beats live camera.
   const previewSampleRef =
     stage === "recorded"
@@ -639,6 +675,21 @@ export default function MocapPage() {
                     {handDiagLabel(mocap.handDiagnostics)}
                   </span>
                 )}
+                {mocap.status === "running" && alignmentScore !== null && (
+                  <span
+                    className={
+                      "rounded border px-2 py-1 tabular-nums " +
+                      (alignmentScore >= 0.8
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                        : alignmentScore >= 0.5
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                          : "border-rose-500/40 bg-rose-500/10 text-rose-200")
+                    }
+                    title="VRM 본 방향이 MediaPipe 랜드마크 방향과 얼마나 일치하는지 (평균 코사인 유사도). 80% 이상이면 IK가 잘 맞는 상태."
+                  >
+                    정합도 {Math.round(alignmentScore * 100)}%
+                  </span>
+                )}
                 {/* Finger-axis bisection. Each button forces a 3-second
                     60° rotation on every finger proximal around that
                     axis. Whichever axis visibly bends the fingers is
@@ -736,6 +787,7 @@ export default function MocapPage() {
               sampleRef={previewSampleRef}
               testFingerAxis={testFingerAxis}
               testFingerUntil={testFingerUntil}
+              bonePositionsRef={vrmBonesRef}
             />
           </section>
         )}

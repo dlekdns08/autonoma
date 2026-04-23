@@ -21,7 +21,12 @@
 
 import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
+import {
+  VRM,
+  VRMLoaderPlugin,
+  VRMUtils,
+  type VRMHumanBoneName,
+} from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { Suspense, useEffect, useMemo, useRef } from "react";
@@ -36,6 +41,7 @@ import {
 } from "@/lib/mocap/vrmShared";
 import type { ClipSample } from "@/lib/mocap/clipPlayer";
 import { FINGER_BONE_SET, type MocapBone } from "@/lib/mocap/clipFormat";
+import type { VrmBoneWorldPositions } from "@/lib/mocap/alignment";
 
 /** Finger-axis test — axis the caller wants to force. Null = no test. */
 export type FingerTestAxis = "x" | "y" | "z" | null;
@@ -52,6 +58,10 @@ interface Props {
    *  finger curl axes don't line up). Omit for live-capture previews
    *  where the sample is always native by construction. */
   sampleSourceVrm?: string;
+  /** Optional sink for per-frame VRM bone world positions. Feeds the
+   *  alignment-score badge on ``/mocap``. The ref's object is mutated
+   *  in place each frame so the hot path stays allocation-free. */
+  bonePositionsRef?: RefObject<VrmBoneWorldPositions>;
 }
 
 const FINGER_PROXIMALS: readonly MocapBone[] = [
@@ -74,12 +84,38 @@ const TEST_ANGLE_RAD = -Math.PI / 3; // -60°; negative = "inward" guess
 const _testEuler = new THREE.Euler();
 const _testQ = new THREE.Quaternion();
 
+// Scratch vector for world-position reads into ``bonePositionsRef``.
+// Module-scoped → allocation-free per frame.
+const _tmpV = new THREE.Vector3();
+
+/** Humanoid bone → position key mapping used to populate the bone
+ *  positions ref each frame. Flat array so the ``useFrame`` loop is a
+ *  simple for-of over string pairs. */
+const BONE_POSITION_SOURCES: ReadonlyArray<
+  readonly [VRMHumanBoneName, keyof VrmBoneWorldPositions]
+> = [
+  ["head", "nose"],
+  ["leftUpperArm", "leftShoulder"],
+  ["rightUpperArm", "rightShoulder"],
+  ["leftLowerArm", "leftElbow"],
+  ["rightLowerArm", "rightElbow"],
+  ["leftHand", "leftWrist"],
+  ["rightHand", "rightWrist"],
+  ["leftUpperLeg", "leftHip"],
+  ["rightUpperLeg", "rightHip"],
+  ["leftLowerLeg", "leftKnee"],
+  ["rightLowerLeg", "rightKnee"],
+  ["leftFoot", "leftAnkle"],
+  ["rightFoot", "rightAnkle"],
+];
+
 function PreviewVRM({
   url,
   sampleRef,
   testFingerAxis,
   testFingerUntil,
   skipFingers,
+  bonePositionsRef,
 }: {
   url: string;
   sampleRef: RefObject<ClipSample>;
@@ -88,6 +124,7 @@ function PreviewVRM({
   /** When true, finger bones aren't written from the sample — used for
    *  cross-rig clip playback where finger curl axes may mismatch. */
   skipFingers: boolean;
+  bonePositionsRef?: RefObject<VrmBoneWorldPositions>;
 }) {
   const gltf = useLoader(GLTFLoader, url, (loader) => {
     (loader as GLTFLoader).register((p) => new VRMLoaderPlugin(p));
@@ -155,6 +192,36 @@ function PreviewVRM({
       }
     }
     vrm.update(delta);
+
+    // Publish bone world positions for the alignment-score badge. We
+    // mutate the caller's object in place — same identity every frame,
+    // no allocation. ``getWorldPosition`` walks up parent transforms,
+    // so it must run AFTER ``vrm.update`` (which flushes humanoid
+    // rotations into the underlying nodes).
+    if (bonePositionsRef?.current) {
+      const h = vrm.humanoid;
+      if (h) {
+        const out = bonePositionsRef.current;
+        for (const [boneName, key] of BONE_POSITION_SOURCES) {
+          const bone = h.getNormalizedBoneNode(boneName);
+          if (!bone) {
+            // Clear stale positions for bones the rig omits so a later
+            // consumer can distinguish "not present" from "stale".
+            out[key] = undefined;
+            continue;
+          }
+          bone.getWorldPosition(_tmpV);
+          const slot = out[key];
+          if (slot) {
+            slot[0] = _tmpV.x;
+            slot[1] = _tmpV.y;
+            slot[2] = _tmpV.z;
+          } else {
+            out[key] = [_tmpV.x, _tmpV.y, _tmpV.z];
+          }
+        }
+      }
+    }
   });
 
   return <primitive object={vrm.scene} />;
@@ -166,6 +233,7 @@ export default function MocapPreview({
   testFingerAxis,
   testFingerUntil,
   sampleSourceVrm,
+  bonePositionsRef,
 }: Props) {
   const url = useMemo(() => `/vrm/${vrmFile}`, [vrmFile]);
   // Suppress finger tracks when the sample came from a different rig —
@@ -193,6 +261,7 @@ export default function MocapPreview({
             testFingerAxis={testFingerAxis}
             testFingerUntil={testFingerUntil}
             skipFingers={skipFingers}
+            bonePositionsRef={bonePositionsRef}
           />
         </Suspense>
         <OrbitControls
