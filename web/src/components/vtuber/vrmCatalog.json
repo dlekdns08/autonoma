@@ -37,7 +37,11 @@
       "thumbDistalFlipSign": true,
       "thumbDistalRestDeg": 5,
       "thumbDistalFistDeg": 30,
-      "thumbDistalOutDeg": 75
+      "thumbDistalOutDeg": 75,
+      "thumbMetacarpalAxis": "y",
+      "thumbMetacarpalRestDeg": 5,
+      "thumbMetacarpalFistDeg": 55,
+      "thumbMetacarpalOutDeg": 60
     }
   },
   "konomi.vrm": {
