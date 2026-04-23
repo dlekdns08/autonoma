@@ -121,7 +121,11 @@ function PreviewVRM({
     if (!vrm) return;
     const sample = sampleRef.current;
     if (sample) {
-      applyBoneSampleAll(bonesRef.current, sample);
+      applyBoneSampleAll(
+        bonesRef.current,
+        sample,
+        skipFingers ? FINGER_BONE_SET : undefined,
+      );
       applyExpressionSample(vrm, sample);
     }
     // Finger-axis diagnostic: override the sample's finger rotations
