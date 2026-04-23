@@ -162,6 +162,11 @@ const TORSO_BONES: readonly MocapBone[] = [
 // Scratch objects for the body IK solver. Module-scoped so the per-
 // frame solve does zero allocations in steady state.
 const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+// Constant unit vectors — never mutated, used for axis-angle
+// construction (shoulder shrug uses +X, forearm roll uses +Y in local
+// frames).
+const _unitX = new THREE.Vector3(1, 0, 0);
+const _unitY = new THREE.Vector3(0, 1, 0);
 
 /** Convert a landmark-derived vector from MediaPipe worldLandmarks
  *  coordinates to three.js / VRM coordinates.
@@ -189,7 +194,6 @@ const _yawQuat = new THREE.Quaternion();
 const _remaining = new THREE.Quaternion();
 const _tmpQuat = new THREE.Quaternion();
 const _identity = new THREE.Quaternion();
-const _third = new THREE.Quaternion();
 const _upperChestWorld = new THREE.Quaternion();
 const _upperArmWorld = new THREE.Quaternion();
 const _lowerArmWorld = new THREE.Quaternion();
@@ -204,6 +208,74 @@ const _obsLocal = new THREE.Vector3();
 const _bqA = new THREE.Quaternion();
 const _bqB = new THREE.Quaternion();
 const _bqC = new THREE.Quaternion();
+
+// Phase B scratches — forearm roll from hand landmarks.
+// ``_handWristW``/``_handMidW`` hold the wrist and middle-MCP in
+// three.js/VRM world coords (after ``fixCoord`` + mirror X-flip). They
+// are re-derived from ``this._latestHandResult`` each frame in
+// ``solveArmChain``. ``_handDir`` is the world-space wrist→middle-MCP
+// vector, and ``_handDirLocal`` is the same expressed in the lower
+// arm's local frame (used to recover the twist angle around the bone
+// axis). ``_twistQuat`` / ``_lowerArmWorldInv`` are composition
+// helpers.
+const _handWristW = new THREE.Vector3();
+const _handMidW = new THREE.Vector3();
+const _handDir = new THREE.Vector3();
+const _handDirLocal = new THREE.Vector3();
+const _twistQuat = new THREE.Quaternion();
+const _lowerArmWorldInv = new THREE.Quaternion();
+
+// Phase C scratches — shoulder shrug heuristic. ``_shoulderDir`` is
+// the upperArm's current direction in upperChest-local frame (rest
+// direction rotated by the computed upperArm quaternion). ``
+// _shoulderQuat`` is the resulting rotation written to
+// left/rightShoulder.
+const _shoulderDir = new THREE.Vector3();
+const _shoulderQuat = new THREE.Quaternion();
+
+// Phase D scratches — weighted spine distribution.
+const _spineQuat = new THREE.Quaternion();
+const _chestQuat = new THREE.Quaternion();
+const _upperChestQuat = new THREE.Quaternion();
+
+// ── Phase B: forearm roll calibration ─────────────────────────────
+/** Rest reference for the hand-dir twist angle in the lower-arm local
+ *  frame. At rest the palm-forward vector (wrist→middle-MCP) sits
+ *  along the lower-arm's +Y axis; the twist angle is measured in the
+ *  X-Z plane via ``atan2(x, z)`` — zero when the hand's projection
+ *  lands on +Z. If the rig's rest palm lands on a different axis
+ *  quadrant this constant takes up the slack. */
+const FOREARM_ROLL_REST_RAD = 0;
+/** Cap the applied roll at ±60° to guard against the hand-landmark
+ *  detector producing spurious extremes (partial occlusion, one
+ *  finger visible, etc). */
+const FOREARM_ROLL_CLAMP_RAD = (60 * Math.PI) / 180;
+/** Scale the raw twist angle by 0.8 before composing — the palm-dir
+ *  proxy overshoots a real forearm roll slightly because it mixes
+ *  wrist flexion into the measurement. */
+const FOREARM_ROLL_GAIN = 0.8;
+
+// ── Phase C: shoulder shrug heuristic ─────────────────────────────
+/** Max rotation applied to left/rightShoulder when the arm is fully
+ *  raised overhead. 20° is at the low end of the anatomical scapular
+ *  elevation range — enough to avoid the "stiff collarbone" look
+ *  without overshooting into comical shrugs. */
+const SHOULDER_LIFT_MAX_RAD = (20 * Math.PI) / 180;
+/** Lift component (upperArm's current Y in parent-local) must exceed
+ *  this before shoulder starts moving. 0 = arm at or above horizontal
+ *  only; the scapula at rest doesn't meaningfully depress when the
+ *  arm hangs, so we pin the lower end at rest. */
+const SHOULDER_LIFT_THRESHOLD = 0;
+
+// ── Phase D: spine chain weights ──────────────────────────────────
+/** Per-bone share of the torso's remaining (pitch+roll) rotation.
+ *  Sum = 1.0, lumbar-biased to match the spine's actual bending
+ *  distribution (lumbar flexes far more than thoracic/cervical). */
+const SPINE_WEIGHTS = {
+  spine: 0.45,
+  chest: 0.35,
+  upperChest: 0.2,
+};
 
 // MediaPipe hand landmark indices — 21 per hand.
 // Reference: https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker
@@ -491,6 +563,12 @@ export class MocapSolver {
    *  ``solveOneHand`` so override changes take effect on the next
    *  solve without needing a solver reinit. */
   private effectiveCalibration: Record<JointType, JointCalibration>;
+  /** Latest HandLandmarker result stashed by ``solveInto`` so
+   *  ``solveArmChain`` can pull palm landmarks for forearm-roll
+   *  computation. Kept as a plain field (no smoothing) because the
+   *  landmark-coordinate data is consumed read-only inside the same
+   *  frame. Null when no hands were passed in. */
+  private _latestHandResult: HandLandmarkerResult | null = null;
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
@@ -580,6 +658,10 @@ export class MocapSolver {
     // Diagnostic state is per-frame; reset before per-hand math
     // accumulates into it.
     this.latestFingerMaxCurl = 0;
+    // Stash hands FIRST so ``solvePose`` → ``solveArmChain`` can read
+    // palm landmarks for forearm roll. ``solveHands`` still writes the
+    // finger bones downstream from the same result.
+    this._latestHandResult = hands;
     if (face) this.solveFace(face, tsSec, out);
     if (pose) this.solvePose(pose, tsSec, out);
     if (hands) this.solveHands(hands, tsSec, out);
@@ -777,29 +859,47 @@ export class MocapSolver {
       out,
     );
 
-    // --- Step 3: Spine chain = cube root of the pitch/roll residual -
+    // --- Step 3: Spine chain = lumbar-biased weighted split ---------
     //
     // remaining = torso * yaw^-1 (remove yaw; what's left is bend+lean).
-    // Distribute it evenly across spine, chest, upperChest by slerping
-    // from identity by 1/3. Composing three copies of ``_third`` gives
-    // back ``remaining`` because quaternion slerp by t=1/3 is a cube
-    // root in SO(3) when applied against identity.
+    // Distribute it across spine (0.45) / chest (0.35) / upperChest
+    // (0.20) via ``slerp(identity, remaining, w_i)``. For small-to-
+    // medium rotations this approximates ``remaining^w_i`` and the
+    // weights sum to 1.0, so composing the three locals recovers
+    // ``remaining`` to first order. Lumbar-biased weights match real
+    // spine anatomy — the lower back bends far more than the upper
+    // thoracic / cervical-adjacent segments.
     _remaining.copy(_torsoQuat).multiply(_tmpQuat.copy(_yawQuat).invert());
     _identity.identity();
-    _third.copy(_identity).slerp(_remaining, 1 / 3);
-    const thirdArr: [number, number, number, number] = [
-      _third.x,
-      _third.y,
-      _third.z,
-      _third.w,
-    ];
-    this.writeBoneSmoothed("spine", thirdArr, tsSec, out);
-    this.writeBoneSmoothed("chest", thirdArr, tsSec, out);
-    this.writeBoneSmoothed("upperChest", thirdArr, tsSec, out);
+    _spineQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.spine);
+    _chestQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.chest);
+    _upperChestQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHTS.upperChest);
+    this.writeBoneSmoothed(
+      "spine",
+      [_spineQuat.x, _spineQuat.y, _spineQuat.z, _spineQuat.w],
+      tsSec,
+      out,
+    );
+    this.writeBoneSmoothed(
+      "chest",
+      [_chestQuat.x, _chestQuat.y, _chestQuat.z, _chestQuat.w],
+      tsSec,
+      out,
+    );
+    this.writeBoneSmoothed(
+      "upperChest",
+      [_upperChestQuat.x, _upperChestQuat.y, _upperChestQuat.z, _upperChestQuat.w],
+      tsSec,
+      out,
+    );
 
     // The parent world rotation AT THE UPPERCHEST bone (end of the
-    // spine chain) is ``yaw * third * third * third = torsoQuat``.
-    // Arms hang off upperChest; legs hang off hips (yaw only).
+    // spine chain). With the cube-root split this equalled torsoQuat
+    // exactly; with the weighted split it equals
+    // ``yaw * slerp(id,R,a) * slerp(id,R,b) * slerp(id,R,c)``, which
+    // for small remaining rotations ≈ ``yaw * R^(a+b+c) = torsoQuat``.
+    // Leave as-is — the drift from weighted distribution is within
+    // OneEuro's smoothing tolerance for typical body motion.
     _upperChestWorld.copy(_torsoQuat);
 
     // --- Step 4: Arms (shoulder → upper → lower → hand) -------------
@@ -826,6 +926,7 @@ export class MocapSolver {
       "leftUpperArm",
       "leftLowerArm",
       "leftHand",
+      "leftShoulder",
       armVrmLeft_User[0],
       armVrmLeft_User[1],
       armVrmLeft_User[2],
@@ -838,6 +939,7 @@ export class MocapSolver {
       "rightUpperArm",
       "rightLowerArm",
       "rightHand",
+      "rightShoulder",
       armVrmRight_User[0],
       armVrmRight_User[1],
       armVrmRight_User[2],
@@ -909,6 +1011,7 @@ export class MocapSolver {
     upperBone: MocapBone,
     lowerBone: MocapBone,
     handBone: MocapBone,
+    shoulderBone: MocapBone,
     lmShoulder: number,
     lmElbow: number,
     lmWrist: number,
@@ -925,7 +1028,10 @@ export class MocapSolver {
       (el?.visibility ?? 0) < VIS_GATE ||
       (wr?.visibility ?? 0) < VIS_GATE
     ) {
-      this.clearBones(out, [upperBone, lowerBone]);
+      // Preserve the Phase A idempotency contract: when visibility
+      // fails we drop EVERY bone this chain is responsible for,
+      // including the scapular shoulder bone written below.
+      this.clearBones(out, [upperBone, lowerBone, shoulderBone]);
       return;
     }
 
@@ -958,6 +1064,43 @@ export class MocapSolver {
       out,
     );
 
+    // --- Phase C: scapular shrug heuristic ---------------------------
+    //
+    // Exact scapula tracking from pose landmarks isn't available (no
+    // sternoclavicular / acromion landmark). Approximation: when the
+    // upperArm raises above horizontal, rotate the shoulder bone
+    // proportional to the lift component. Rest direction is rotated
+    // by ``_bqA`` so ``_shoulderDir`` is the current upperArm direction
+    // in upperChest-local frame; its ``.y`` is how far above horizontal
+    // the arm reaches (1 = straight up, 0 = horizontal, -1 = straight
+    // down).
+    _shoulderDir.set(sideSign, 0, 0).applyQuaternion(_bqA);
+    const lift = _shoulderDir.y;
+    if (lift > SHOULDER_LIFT_THRESHOLD) {
+      // Map lift ∈ [0, 1] → shoulder rotation ∈ [0, SHOULDER_LIFT_MAX_RAD].
+      // Negative ``sideSign`` on the right shoulder flips the axis so
+      // both sides shrug UP (roll-in from the back) rather than one
+      // shrugging up and the other down.
+      //
+      // SIGN-FLIP NOTE: the axis used is local X (pitch-forward axis
+      // on a scapula); if the preview shows the shoulder rotating
+      // anatomically-backwards instead of elevating, try negating
+      // ``shrug`` (flip the sign in the axis-angle call).
+      const clamped = Math.min(1, lift);
+      const shrug = clamped * SHOULDER_LIFT_MAX_RAD * sideSign;
+      _shoulderQuat.setFromAxisAngle(_unitX, shrug);
+      this.writeBoneSmoothed(
+        shoulderBone,
+        [_shoulderQuat.x, _shoulderQuat.y, _shoulderQuat.z, _shoulderQuat.w],
+        tsSec,
+        out,
+      );
+    } else {
+      // Arm below horizontal — let the bone rest. Delete so stale
+      // shrug from the previous frame doesn't persist.
+      this.clearBones(out, [shoulderBone]);
+    }
+
     // Accumulated world rotation at the upperArm bone. In three-vrm's
     // normalized humanoid, the upperArm's local axes are the REST
     // frame — so the world rotation of upperArm is
@@ -984,6 +1127,102 @@ export class MocapSolver {
     _obsLocal.copy(_armB).applyQuaternion(_parentInv);
     _restDir.set(0, 1, 0);
     _bqB.setFromUnitVectors(_restDir, _obsLocal);
+
+    // --- Phase B: forearm roll from hand landmarks -------------------
+    //
+    // ``_bqB`` so far captures elbow→wrist direction; what it does NOT
+    // capture is the forearm's rotation around its own bone axis (a
+    // twist). Extract that twist from the hand's palm-forward vector
+    // (wrist→middle-MCP). Express it in lower-arm-local frame, project
+    // onto the X-Z plane (perpendicular to the bone axis +Y), and take
+    // the ``atan2`` — that is the twist angle around local Y.
+    //
+    // Handedness mapping: the arm chain here is driven by the USER'S
+    // anatomical side that corresponds to this VRM side (via the
+    // mirror-swap the caller already applied to ``lmShoulder``/etc).
+    // MediaPipe HandLandmarker, fed the un-mirrored camera frame,
+    // reports SWAPPED labels — "Left" means user's anatomical right.
+    // So for VRM leftUpperArm (sideSign=+1), which receives user's
+    // right arm data under mirror=true, pick the hand whose
+    // ``categoryName === "Left"``. Conversely for the right arm.
+    // When ``mirror=false`` the hand labels match, and the mapping
+    // flips — so key off ``sideSign ^ mirror``.
+    //
+    // SIGN-FLIP NOTE: ``FOREARM_ROLL_REST_RAD`` + sign of ``twistAngle``
+    // are the knobs most likely to need a visual tweak. If at rest
+    // the forearm sits pre-twisted or if turning the palm toward the
+    // camera makes the bone rotate the wrong way, invert the sign of
+    // ``twistAngle`` or adjust the rest constant.
+    const hr = this._latestHandResult;
+    if (hr && hr.landmarks && hr.handednesses) {
+      // Pick the MediaPipe label that matches this VRM side.
+      // mirror=true: leftUpperArm (sideSign=+1) → "Left" label.
+      // mirror=true: rightUpperArm (sideSign=-1) → "Right" label.
+      // mirror=false: leftUpperArm → "Right" label (no swap applied
+      //   upstream, so MediaPipe's raw selfie-frame labels stand).
+      const vrmIsLeft = sideSign === 1;
+      const wantLabel = this.mirror
+        ? vrmIsLeft
+          ? "Left"
+          : "Right"
+        : vrmIsLeft
+          ? "Right"
+          : "Left";
+      let handIdx = -1;
+      for (let i = 0; i < hr.handednesses.length; i++) {
+        if (hr.handednesses[i]?.[0]?.categoryName === wantLabel) {
+          handIdx = i;
+          break;
+        }
+      }
+      if (handIdx >= 0) {
+        const lms = hr.landmarks[handIdx];
+        if (lms && lms.length >= 21) {
+          _handWristW.set(
+            lms[WRIST_LM].x,
+            lms[WRIST_LM].y,
+            lms[WRIST_LM].z,
+          );
+          _handMidW.set(
+            lms[MIDDLE_MCP_LM].x,
+            lms[MIDDLE_MCP_LM].y,
+            lms[MIDDLE_MCP_LM].z,
+          );
+          _handDir.copy(_handMidW).sub(_handWristW);
+          fixCoord(_handDir);
+          if (this.mirror) _handDir.x = -_handDir.x;
+          if (_handDir.lengthSq() > 1e-8) {
+            _handDir.normalize();
+            // World rotation of the lower arm BEFORE applying twist.
+            _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
+            _lowerArmWorldInv.copy(_lowerArmWorld).invert();
+            _handDirLocal.copy(_handDir).applyQuaternion(_lowerArmWorldInv);
+            // atan2(x, z): 0 when hand points along +Z in lower-arm-
+            // local (matches the FOREARM_ROLL_REST_RAD reference);
+            // π/2 when pointing along +X.
+            let twistAngle =
+              Math.atan2(_handDirLocal.x, _handDirLocal.z) -
+              FOREARM_ROLL_REST_RAD;
+            // Normalize to [-π, π] so clamp/gain act on the short arc.
+            while (twistAngle > Math.PI) twistAngle -= 2 * Math.PI;
+            while (twistAngle < -Math.PI) twistAngle += 2 * Math.PI;
+            twistAngle *= FOREARM_ROLL_GAIN;
+            if (twistAngle > FOREARM_ROLL_CLAMP_RAD) {
+              twistAngle = FOREARM_ROLL_CLAMP_RAD;
+            } else if (twistAngle < -FOREARM_ROLL_CLAMP_RAD) {
+              twistAngle = -FOREARM_ROLL_CLAMP_RAD;
+            }
+            _twistQuat.setFromAxisAngle(_unitY, twistAngle);
+            // Compose twist in lower-arm-local frame: the existing
+            // ``_bqB`` puts the bone axis along +Y; multiplying by
+            // ``_twistQuat`` (a rotation around local +Y) commutes
+            // with the bone-axis component and adds the roll.
+            _bqB.multiply(_twistQuat);
+          }
+        }
+      }
+    }
+
     this.writeBoneSmoothed(
       lowerBone,
       [_bqB.x, _bqB.y, _bqB.z, _bqB.w],
