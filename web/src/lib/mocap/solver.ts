@@ -43,10 +43,17 @@ import { ONE_EURO_BODY, ONE_EURO_DEFAULTS } from "./config";
 import { OneEuroQuat, OneEuroScalar, type OneEuroConfig } from "./oneEuro";
 import type { VrmMocapOverrides } from "./vrmCalibration";
 
-// ── Blendshape → VRM expression mapping (unchanged) ─────────────────
+// ── Blendshape → VRM expression mapping ─────────────────────────────
+// Side-specific blink shapes use a CROSSED mapping to match the body
+// solver's ``mirror=true`` (user's anatomical-left eye drives the
+// VRM's anatomical-right eye). Composite expressions like "blink"
+// are side-independent so they stay as-is. Other per-side shapes
+// (smile / squint / frown / brow) fold into composite VRM expressions
+// ("happy", "angry", etc.) that don't distinguish sides, so the
+// mapping is invariant under left/right swap and doesn't need editing.
 const BLENDSHAPE_TO_VRM: Record<string, [MocapExpression, number][]> = {
-  eyeBlinkLeft: [["blinkLeft", 1], ["blink", 0.5]],
-  eyeBlinkRight: [["blinkRight", 1], ["blink", 0.5]],
+  eyeBlinkLeft: [["blinkRight", 1], ["blink", 0.5]],
+  eyeBlinkRight: [["blinkLeft", 1], ["blink", 0.5]],
   mouthSmileLeft: [["happy", 0.6]],
   mouthSmileRight: [["happy", 0.6]],
   cheekSquintLeft: [["happy", 0.2]],
@@ -911,7 +918,18 @@ export class MocapSolver {
 
     // Spine chain: weighted slerp of the torso's remaining rotation
     // (bend + lean = torso × yaw⁻¹) across three vertebra bones.
+    //
+    // Conjugate by the scene-root 180° Y so pitch (user bends forward
+    // → avatar bends forward) isn't inverted by ``rotateVRM0``.
+    // Element-wise this flips the quaternion's y and w components:
+    // 180°Y × q × 180°Y evaluates to (x, -y, z, -w) for q=(x,y,z,w),
+    // which for a pure X-axis rotation is the same axis with negated
+    // angle. Y-axis rotations (yaw) stay invariant, so hips/yaw
+    // aren't affected — which matches ``_yawQuat`` being written
+    // above without this conjugation.
     _remaining.copy(_torsoQuat).multiply(_tmpQuat.copy(_yawQuat).invert());
+    _remaining.y = -_remaining.y;
+    _remaining.w = -_remaining.w;
     _identity.identity();
     _spineQuat.copy(_identity).slerp(_remaining, SPINE_WEIGHT);
     _chestQuat.copy(_identity).slerp(_remaining, CHEST_WEIGHT);
@@ -1015,11 +1033,11 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world. Under crossed body mapping
-    // (``mirror=true``) the slot already carries the opposite-side
-    // user's elbow, so ``fixCoord``'s Y flip alone gives the right
-    // sign for ``setFromUnitVectors`` downstream — no empirical
-    // per-axis flip needed.
+    // shoulder → elbow in world. Under the crossed body mapping
+    // (``mirror=true``) applyPoseMirror already delivers the
+    // opposite-side landmarks, so ``fixCoord``'s Y negate is enough
+    // to put the observed arm direction in the right frame for
+    // ``setFromUnitVectors`` below.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
     if (_armA.lengthSq() < 1e-8) {
