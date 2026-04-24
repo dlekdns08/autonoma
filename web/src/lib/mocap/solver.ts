@@ -1439,14 +1439,24 @@ export class MocapSolver {
     }
 
     // Shoulder → elbow in world. Mirror=true uses CROSSED anatomical
-    // mapping (upstream landmark swap) plus this per-vector X flip so
-    // the observed direction lands at the correct side of the rest
-    // frame after the ``_torsoQuat`` y/z negation has reflected the
-    // parent.  The three reflections compose to a clean sagittal
-    // mirror: user moves L → VRM-R moves symmetrically.
+    // mapping (upstream landmark swap) plus these per-vector flips:
+    //   - X flip composes with the ``_torsoQuat`` y/z negation to
+    //     land the observed direction at the correct side of the
+    //     rest frame (user moves L → VRM-R moves symmetrically).
+    //   - Y flip corrects an empirical up/down inversion: without
+    //     it, raising the user's arm made the avatar's arm drop
+    //     (and vice versa).  The three.js-framed ``_armA`` after
+    //     fixCoord has the right sign algebraically, but the
+    //     combined parent-inverse × setFromUnitVectors × bone-local
+    //     rotation path comes out Y-inverted on the normalised
+    //     humanoid rig we target — flipping here is the cheapest
+    //     correction and keeps torso / hips code untouched.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
-    if (this.mirror) _armA.x = -_armA.x;
+    if (this.mirror) {
+      _armA.x = -_armA.x;
+      _armA.y = -_armA.y;
+    }
     if (_armA.lengthSq() < 1e-8) {
       // Shoulder ≡ elbow — degenerate. Drop bones; apply-layer decay
       // returns them to rest.
@@ -1540,7 +1550,12 @@ export class MocapSolver {
     // preview, try flipping _restDirLower's Y sign here.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    if (this.mirror) _armB.x = -_armB.x;
+    // Same Y-inversion correction as ``_armA`` above — without it
+    // the forearm bends opposite to the user's motion.
+    if (this.mirror) {
+      _armB.x = -_armB.x;
+      _armB.y = -_armB.y;
+    }
     if (_armB.lengthSq() < 1e-8) {
       // Elbow ≡ wrist — forearm collapses. UpperArm / shoulder have
       // already been written this frame; drop just the lower chain so
