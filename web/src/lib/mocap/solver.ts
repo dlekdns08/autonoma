@@ -22,8 +22,10 @@
  *   quality is good, it's cheaper to IK directly: torso frame from hip
  *   + shoulder landmarks, spine chain as a cube-root slerp of the
  *   torso-minus-yaw rotation, arms/legs as ``setFromUnitVectors`` in
- *   the parent bone's local frame. L↔R is swapped when ``mirror`` is
- *   on so the VRM tracks the user's visual side (webcam convention).
+ *   the parent bone's local frame. Anatomical-direct mapping is used
+ *   when ``mirror`` is on (selfie webcam — avatar moves on the same
+ *   screen side as the user); mirror=false crosses L↔R for raw
+ *   (un-flipped) camera input.
  *
  * Smoothing:
  *   One-Euro filter per bone/expression. Jitter at 30fps is the single
@@ -452,7 +454,13 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
   thumbProximal: {
     restRad: (5 * Math.PI) / 180,
     fistRad: (30 * Math.PI) / 180,
-    outRangeRad: (85 * Math.PI) / 180,
+    // Clamped to ~45° — anatomical MCP flexion max is ~50°, and the
+    // previous 85° visibly tucked the thumb ACROSS the palm so its
+    // tip overlapped with the other fingers even in casual poses.
+    // The CMC (metacarpal) joint contributes the opposition motion
+    // separately; over-rotating at MCP on top of that pushed the
+    // thumb into the palm.
+    outRangeRad: (45 * Math.PI) / 180,
     axis: "x",
     flipSign: true,
   },
@@ -466,7 +474,10 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
     // for human thumb flexion.
     restRad: (5 * Math.PI) / 180,
     fistRad: (30 * Math.PI) / 180,
-    outRangeRad: (75 * Math.PI) / 180,
+    // Reduced from 75° for the same "thumb crosses palm" reason as
+    // thumbProximal; 55° keeps a visible IP curl on a closed fist
+    // without overshooting past neighboring fingers.
+    outRangeRad: (55 * Math.PI) / 180,
     axis: "x",
     flipSign: true,
   },
@@ -492,7 +503,11 @@ const CALIBRATION: Record<JointType, JointCalibration> = {
   thumbMetacarpal: {
     restRad: (5 * Math.PI) / 180,
     fistRad: (55 * Math.PI) / 180,
-    outRangeRad: (60 * Math.PI) / 180,
+    // Reduced from 60° to 35° so CMC opposition adds a visible
+    // motion without pushing the thumb past the palm plane on top
+    // of the MCP/IP flexion below.  Three serial joints compound
+    // multiplicatively, so each one needs to be conservative.
+    outRangeRad: (35 * Math.PI) / 180,
     axis: "y",
     flipSign: false,
     invertRaw: true,
@@ -1035,13 +1050,21 @@ export class MocapSolver {
    *      reads quaternions via ``sample.bones[name]``; position needs a
    *      separate track + playback wiring. TODO in next pass.
    *
-   *  Mirror convention: ``this.mirror`` true (default) means the user's
-   *  anatomical left maps to the VRM's right, so the preview reads as
-   *  a mirror (user raises left hand → VRM raises right hand on the
-   *  same side of the screen). Implemented two ways: (a) the torso
-   *  basis flips its X and Z axes so the resulting yaw quaternion is
-   *  already in the mirrored frame, and (b) arm/leg landmark-triplets
-   *  swap L↔R source landmarks before passing to the chain solver.
+   *  Mirror convention: ``this.mirror`` true (default) is the selfie-
+   *  camera case.  The user sees themselves via a CSS-flipped preview
+   *  so their anatomical-right hand shows up on the screen-right side,
+   *  which is also where the viewer-facing VRM's anatomical-LEFT arm
+   *  lives.  The solver uses a DIRECT anatomical mapping in this mode
+   *  (user-left landmarks drive VRM-left bones) so the avatar's motion
+   *  lands on the same screen side as the user's own reflection.
+   *
+   *  Implemented in two places: (a) the torso quaternion has its Y
+   *  and Z components negated so yaw/roll mirror while pitch is
+   *  preserved (matches ``solveFace``), and (b) the chain solvers
+   *  select landmarks directly by anatomical side.  mirror=false is
+   *  the un-flipped-camera case — landmark triplets cross L↔R and a
+   *  per-vector X flip compensates so the avatar still moves on the
+   *  viewer's same screen side.
    *
    *  Visibility gating: MediaPipe ships ``visibility`` per landmark. When
    *  a family's source landmarks fall below ``VIS_GATE`` we DELETE that
@@ -1224,16 +1247,30 @@ export class MocapSolver {
 
     // --- Step 4: Arms (shoulder → upper → lower → hand) -------------
     //
-    // ``mirror`` true (default) means the VRM's left bone is driven by
-    // the user's anatomical RIGHT side and vice versa. That's exactly
-    // the convention ``solveHands`` already uses for fingers, so the
-    // hand attached to an arm lines up with its finger bones.
+    // ``mirror`` true (default) = "user looks into a selfie-flipped
+    // camera and expects the avatar to move on the SAME screen side".
+    // The VRM faces the viewer, so its anatomical-left bone is on the
+    // screen-right side of the avatar.  In a selfie preview the
+    // user's anatomical-right hand ALSO shows up on the screen-right
+    // side — so same-screen-side mirroring is a DIRECT anatomical
+    // mapping (VRM-left bone ← user-left landmarks).  The
+    // complementary mirror=false case (raw, un-flipped camera feed)
+    // needs the CROSSED mapping so the avatar still moves on the
+    // same screen side as the user.
+    //
+    // Historical note: the pre-fix code had the two branches reversed
+    // plus a per-vector ``_armA.x = -_armA.x`` below that un-did the
+    // cross.  Net behaviour looked mirrored for horizontal extensions
+    // but screen-inverted for vertical/diagonal motions — what the
+    // user reported as "arms completely reversed".  The face-mirror
+    // path (``solveFace``) already implemented screen-same-side; arms
+    // are now consistent with it.
     const armVrmLeft_User = this.mirror
-      ? [LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const
-      : [LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const;
-    const armVrmRight_User = this.mirror
       ? [LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const
       : [LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const;
+    const armVrmRight_User = this.mirror
+      ? [LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const
+      : [LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const;
 
     // Rest directions for arm bones in their PARENT's local frame at
     // T-pose. Shoulder rest direction in upperChest-local frame is +X
@@ -1276,12 +1313,15 @@ export class MocapSolver {
     // straight down in T-pose. Small outward offset at the hip socket
     // is ignored (worst case a few degrees of baseline bias that the
     // OneEuro filter smooths over).
+    // Legs follow the same mirror convention as arms — direct
+    // anatomical mapping when ``mirror=true`` (selfie feed),
+    // crossed otherwise.  See the arm block above for the rationale.
     const legVrmLeft_User = this.mirror
-      ? [LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const
-      : [LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const;
-    const legVrmRight_User = this.mirror
       ? [LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const
       : [LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const;
+    const legVrmRight_User = this.mirror
+      ? [LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const
+      : [LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const;
 
     this.solveLegChain(
       "leftUpperLeg",
@@ -1326,12 +1366,13 @@ export class MocapSolver {
     tsSec: number,
     out: ClipSample,
   ): void {
+    // Same direct/crossed mirror convention as solvePose (arms block).
     const armVrmLeft_User = this.mirror
-      ? ([LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const)
-      : ([LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const);
-    const armVrmRight_User = this.mirror
       ? ([LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const)
       : ([LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const);
+    const armVrmRight_User = this.mirror
+      ? ([LM_RIGHT_SHOULDER, LM_RIGHT_ELBOW, LM_RIGHT_WRIST] as const)
+      : ([LM_LEFT_SHOULDER, LM_LEFT_ELBOW, LM_LEFT_WRIST] as const);
     this.solveArmChain(
       "leftUpperArm", "leftLowerArm", "leftHand", "leftShoulder",
       armVrmLeft_User[0], armVrmLeft_User[1], armVrmLeft_User[2],
@@ -1352,11 +1393,11 @@ export class MocapSolver {
     out: ClipSample,
   ): void {
     const legVrmLeft_User = this.mirror
-      ? ([LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const)
-      : ([LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const);
-    const legVrmRight_User = this.mirror
       ? ([LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const)
       : ([LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const);
+    const legVrmRight_User = this.mirror
+      ? ([LM_RIGHT_HIP, LM_RIGHT_KNEE, LM_RIGHT_ANKLE, LM_RIGHT_FOOT_INDEX] as const)
+      : ([LM_LEFT_HIP, LM_LEFT_KNEE, LM_LEFT_ANKLE, LM_LEFT_FOOT_INDEX] as const);
     this.solveLegChain(
       "leftUpperLeg", "leftLowerLeg", "leftFoot",
       legVrmLeft_User[0], legVrmLeft_User[1], legVrmLeft_User[2], legVrmLeft_User[3],
@@ -1411,17 +1452,16 @@ export class MocapSolver {
       return;
     }
 
-    // Shoulder → elbow in world. No per-vector mirror flip here — the
-    // mirror is applied once on ``_upperChestWorld`` (via y,z
-    // negation of ``_torsoQuat``). Flipping the vector again would
-    // double-mirror.
+    // Shoulder → elbow in world.  mirror=true uses a direct
+    // anatomical mapping (VRM-left bone ← user-left landmarks); the
+    // ``_torsoQuat`` y/z negation already mirrors the parent frame,
+    // so no per-vector X flip is needed.  mirror=false uses a crossed
+    // mapping (user-right → VRM-left) and DOES need the X flip so
+    // the observed direction lands on the correct side of the
+    // mirrored parent frame.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
-    // Mirror: sagittal-plane reflection. ``fixCoord`` handles the
-    // MP→three.js Y/Z coord conversion; the X flip here reflects
-    // left↔right so user's anatomical-left arm data drives VRM's
-    // right bone in screen-same-side orientation.
-    if (this.mirror) _armA.x = -_armA.x;
+    if (!this.mirror) _armA.x = -_armA.x;
     if (_armA.lengthSq() < 1e-8) {
       // Shoulder ≡ elbow — degenerate. Drop bones; apply-layer decay
       // returns them to rest.
@@ -1515,7 +1555,7 @@ export class MocapSolver {
     // preview, try flipping _restDirLower's Y sign here.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    if (this.mirror) _armB.x = -_armB.x;
+    if (!this.mirror) _armB.x = -_armB.x;
     if (_armB.lengthSq() < 1e-8) {
       // Elbow ≡ wrist — forearm collapses. UpperArm / shoulder have
       // already been written this frame; drop just the lower chain so
@@ -1558,19 +1598,23 @@ export class MocapSolver {
     // ``body.forearmRoll.restRad``.
     const hr = this._latestHandResult;
     if (hr && hr.landmarks && hr.handednesses) {
-      // Pick the MediaPipe label that matches this VRM side.
-      // mirror=true: leftUpperArm (sideSign=+1) → "Left" label.
-      // mirror=true: rightUpperArm (sideSign=-1) → "Right" label.
-      // mirror=false: leftUpperArm → "Right" label (no swap applied
-      //   upstream, so MediaPipe's raw selfie-frame labels stand).
+      // Pick the MediaPipe hand label that matches this VRM side.
+      // MediaPipe HandLandmarker assumes selfie input and labels
+      // hands from the CAMERA's frame, so the ``"Right"`` label is
+      // actually the user's anatomical-left hand (and vice versa).
+      //
+      // Under mirror=true's direct anatomical mapping (leftUpperArm
+      // ← user's anatomical-left landmarks), the MP label we want
+      // for leftUpperArm is therefore ``"Right"``. mirror=false uses
+      // the crossed mapping so the labels flip.
       const vrmIsLeft = sideSign === 1;
       const wantLabel = this.mirror
         ? vrmIsLeft
-          ? "Left"
-          : "Right"
-        : vrmIsLeft
           ? "Right"
-          : "Left";
+          : "Left"
+        : vrmIsLeft
+          ? "Left"
+          : "Right";
       let handIdx = -1;
       for (let i = 0; i < hr.handednesses.length; i++) {
         if (hr.handednesses[i]?.[0]?.categoryName === wantLabel) {
@@ -1593,7 +1637,7 @@ export class MocapSolver {
           );
           _handDir.copy(_handMidW).sub(_handWristW);
           fixCoord(_handDir);
-          if (this.mirror) _handDir.x = -_handDir.x;
+          if (!this.mirror) _handDir.x = -_handDir.x;
           if (_handDir.lengthSq() > 1e-8) {
             _handDir.normalize();
             // World rotation of the lower arm BEFORE applying twist.
@@ -1688,7 +1732,7 @@ export class MocapSolver {
     // again — double-mirror would invert legs.
     _legA.set(kn.x - hip.x, kn.y - hip.y, kn.z - hip.z);
     fixCoord(_legA);
-    if (this.mirror) _legA.x = -_legA.x;
+    if (!this.mirror) _legA.x = -_legA.x;
     if (_legA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone, footBone]);
       return;
@@ -1720,7 +1764,7 @@ export class MocapSolver {
     }
     _legB.set(an.x - kn.x, an.y - kn.y, an.z - kn.z);
     fixCoord(_legB);
-    if (this.mirror) _legB.x = -_legB.x;
+    if (!this.mirror) _legB.x = -_legB.x;
     if (_legB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone, footBone]);
       return;
@@ -1749,7 +1793,7 @@ export class MocapSolver {
     }
     _legC.set(ft.x - an.x, ft.y - an.y, ft.z - an.z);
     fixCoord(_legC);
-    if (this.mirror) _legC.x = -_legC.x;
+    if (!this.mirror) _legC.x = -_legC.x;
     if (_legC.lengthSq() < 1e-8) {
       this.clearBones(out, [footBone]);
       return;
@@ -1829,7 +1873,8 @@ export class MocapSolver {
         const mpLabel = sides[i]?.[0]?.categoryName;
         if (!lm || lm.length < 21 || !mpLabel) continue;
         const userIsLeft = mpLabel === "Right";
-        const vrmIsLeft = this.mirror ? !userIsLeft : userIsLeft;
+        // Same mirror convention as the per-hand solver below.
+        const vrmIsLeft = this.mirror ? userIsLeft : !userIsLeft;
         if (vrmIsLeft) wantedSides.left = true;
         else wantedSides.right = true;
       }
@@ -1856,12 +1901,16 @@ export class MocapSolver {
       const lm = hands[i];
       const mpLabel = sides[i]?.[0]?.categoryName;
       if (!lm || lm.length < 21 || !mpLabel) continue;
-      // MediaPipe selfie-mirror assumption → invert to get the user's
-      // anatomical side.
+      // MediaPipe HandLandmarker's ``categoryName`` is camera-frame
+      // in selfie mode — ``"Right"`` = hand on screen-right = user's
+      // anatomical-LEFT hand (and vice versa).
       const userIsLeft = mpLabel === "Right";
-      // Standard mirror swap — same convention as ``solvePose`` so the
-      // arm and the hand attached to it end up on the same VRM side.
-      const vrmIsLeft = this.mirror ? !userIsLeft : userIsLeft;
+      // mirror=true: direct anatomical mapping (user-left → VRM-left)
+      // so the hand ends up on the same screen side as the user sees
+      // their own hand in the selfie preview, matching the arm /
+      // leg / face convention.  mirror=false: crossed mapping for
+      // raw-camera (non-selfie) input.
+      const vrmIsLeft = this.mirror ? userIsLeft : !userIsLeft;
       if (vrmIsLeft && seenLeft.done) continue;
       if (!vrmIsLeft && seenRight.done) continue;
       if (vrmIsLeft) seenLeft.done = true;
