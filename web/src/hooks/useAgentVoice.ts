@@ -76,27 +76,28 @@ export interface UseAgentVoiceResult {
   speakingAgents: Set<string>;
   /** Tear down everything (call on unmount or hard reset). */
   reset: () => void;
-  /** Speak text directly via Web Speech API (browser built-in). Used when server TTS is not configured. */
-  speakText: (agentName: string, text: string) => void;
   /**
    * TTS-independent "this agent is speaking" flag driven purely by the
    * text of the line. Sets ``speakingAgents`` true, oscillates fake
    * amplitude for lip-sync, and clears after a duration derived from
-   * word count. Safe to call alongside server TTS / Web Speech — if
-   * either of those fires first and sets real amplitude, the fake
-   * oscillation won't overwrite it (we only write fake amp while the
-   * slot.amp remains below a threshold).
+   * word count. Safe to call alongside server TTS — if real audio fires
+   * first and sets real amplitude, the fake oscillation won't overwrite
+   * it (we only write fake amp while the slot.amp remains below a
+   * threshold).
    */
   markSpeakingFromText: (agentName: string, text: string) => void;
   /**
    * Unified speech entry point for the WS ``agent.speech`` event:
-   * - immediately marks the agent as speaking (drives spotlight + VRM
-   *   talking overlay),
-   * - schedules Web Speech API playback with a short delay so that if
-   *   server TTS audio lands within that window, Web Speech is skipped
-   *   (avoids hearing the same line twice, out of sync).
-   * The pending timer is cancelled from ``pushAudioEvent`` when an
-   * ``agent.speech_audio_start`` arrives for the same agent.
+   * marks the agent as speaking (spotlight + VRM talking overlay +
+   * word-count-based lip-sync fallback) WITHOUT scheduling any
+   * browser-side audio.  The only audio source is the server's
+   * self-hosted OmniVoice stream arriving on the WS.  If server TTS
+   * fails (no binding, rate-limit, synth error) the agent simply
+   * stays silent — we deliberately removed the Web Speech API
+   * fallback because it pulls in OS-bundled voices (Edge ships
+   * Azure Neural, macOS ships Siri/Alex) which leaked an unwanted
+   * synthesised voice whenever OmniVoice was slow or missing a
+   * binding.
    */
   requestSpeak: (agentName: string, text: string) => void;
   /** Drop a specific agent's resources (call on agent.despawned). */
@@ -141,18 +142,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
     };
     slotsRef.current.set(agent, slot);
     return slot;
-  }, []);
-
-  const pickWebSpeechVoice = useCallback((agentName: string): SpeechSynthesisVoice | null => {
-    if (typeof window === "undefined") return null;
-    const voices = window.speechSynthesis.getVoices();
-    if (voices.length === 0) return null;
-    // Hash agent name to pick a consistent voice
-    let h = 5381;
-    for (let i = 0; i < agentName.length; i++) {
-      h = ((h << 5) + h + agentName.charCodeAt(i)) >>> 0;
-    }
-    return voices[h % voices.length];
   }, []);
 
   const connectAnalyser = useCallback(
@@ -209,14 +198,11 @@ export function useAgentVoice(): UseAgentVoiceResult {
           // by the chunk handler below.
           slot.seq = data.seq ?? slot.seq + 1;
           slot.chunks = [];
-          // Server TTS is about to take over — cancel any deferred Web
-          // Speech kick-off for this agent and stop any utterance it
-          // already started, so we never hear the same line twice.
-          const pending = pendingWebSpeechRef.current.get(agent);
-          if (pending) {
-            clearTimeout(pending);
-            pendingWebSpeechRef.current.delete(agent);
-          }
+          // Defence-in-depth: if any prior code path or browser
+          // extension ever kicks off a ``speechSynthesis`` utterance
+          // (it shouldn't now that we removed the fallback), cancel
+          // it the instant server audio arrives so the two don't
+          // overlap.  Safe no-op when the queue is empty.
           if (typeof window !== "undefined" && window.speechSynthesis) {
             window.speechSynthesis.cancel();
           }
@@ -346,68 +332,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
     return slot.amp;
   }, []);
 
-  const speakText = useCallback((agentName: string, text: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    // Don't cancel() globally — that fires onend on every in-flight
-    // utterance and causes ``speakingAgents`` to flicker whenever two
-    // agents speak in quick succession (onend clears the previous agent
-    // while the new one hasn't fired onstart yet). Letting the browser
-    // queue is visually better than the flicker.
-
-    const slot = ensureSlot(agentName);
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    // Deterministic pitch/rate so each agent sounds slightly different
-    let h = 5381;
-    for (let i = 0; i < agentName.length; i++) {
-      h = ((h << 5) + h + agentName.charCodeAt(i)) >>> 0;
-    }
-    utterance.pitch = 0.85 + ((h % 30) / 100);  // 0.85 – 1.14
-    utterance.rate  = 0.95 + ((h % 15) / 100);  // 0.95 – 1.09
-    utterance.volume = 0.9;
-
-    const voice = pickWebSpeechVoice(agentName);
-    if (voice) utterance.voice = voice;
-
-    // Fake amplitude oscillation for lip-sync while speaking
-    let fakeAmpTimer: ReturnType<typeof setInterval> | null = null;
-
-    utterance.onstart = () => {
-      slot.speaking = true;
-      slot.amp = 0;
-      setSpeaking(agentName, true);
-      // Oscillate amp to drive mouth animation
-      // Smoothly interpolate toward a random target amplitude so the
-    // lip-sync envelope eases in and out rather than jumping. This
-    // prevents the sharp amplitude spikes that triggered rapid head-nods.
-    let fakeTarget = 0.3;
-    fakeAmpTimer = setInterval(() => {
-        if (!slot.speaking) {
-          if (fakeAmpTimer) clearInterval(fakeAmpTimer);
-          return;
-        }
-        fakeTarget = 0.1 + Math.random() * 0.45;
-        slot.amp = slot.amp * 0.55 + fakeTarget * 0.45; // smooth blend
-      }, 120);
-    };
-
-    utterance.onend = () => {
-      if (fakeAmpTimer) clearInterval(fakeAmpTimer);
-      slot.speaking = false;
-      slot.amp = 0;
-      setSpeaking(agentName, false);
-    };
-
-    utterance.onerror = () => {
-      if (fakeAmpTimer) clearInterval(fakeAmpTimer);
-      slot.speaking = false;
-      slot.amp = 0;
-      setSpeaking(agentName, false);
-    };
-
-    window.speechSynthesis.speak(utterance);
-  }, [ensureSlot, setSpeaking, pickWebSpeechVoice]);
-
   // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
   // each call can cancel the prior timer/interval without rerendering.
   // Mixed timer types match the call sites — ``window.setTimeout``
@@ -417,11 +341,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
   const fallbackTimersRef = useRef<
     Map<string, { clear: number; amp: ReturnType<typeof setInterval> }>
   >(new Map());
-
-  // Pending Web Speech kick-off timers — keyed by agent. Lets
-  // ``pushAudioEvent`` cancel the browser TTS the instant server TTS
-  // audio arrives, avoiding double-speak.
-  const pendingWebSpeechRef = useRef<Map<string, number>>(new Map());
 
   const markSpeakingFromText = useCallback(
     (agentName: string, text: string) => {
@@ -476,20 +395,16 @@ export function useAgentVoice(): UseAgentVoiceResult {
   const requestSpeak = useCallback(
     (agentName: string, text: string) => {
       if (!agentName || !text) return;
-      // Instant UI feedback.
+      // Drive UI-side lip-sync / "speaking" flag immediately from the
+      // line's text so the mouth animates and the spotlight lights up
+      // while the server synthesises.  Server audio — if produced —
+      // arrives via ``pushAudioEvent`` on the WS and overrides the
+      // fake amplitude with the real analyser envelope.  No browser
+      // audio is ever started: OmniVoice is the single source of
+      // sound.
       markSpeakingFromText(agentName, text);
-      // Defer Web Speech by ~400ms so server TTS audio_start (which
-      // cancels the pending timer) usually wins the race on setups that
-      // have server TTS configured.
-      const prior = pendingWebSpeechRef.current.get(agentName);
-      if (prior !== undefined) window.clearTimeout(prior);
-      const t = window.setTimeout(() => {
-        pendingWebSpeechRef.current.delete(agentName);
-        speakText(agentName, text);
-      }, 400);
-      pendingWebSpeechRef.current.set(agentName, t);
     },
-    [markSpeakingFromText, speakText],
+    [markSpeakingFromText],
   );
 
   const cleanupAgent = useCallback((agentName: string) => {
@@ -514,11 +429,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
       clearInterval(fallback.amp);
       clearTimeout(fallback.clear);
       fallbackTimersRef.current.delete(agentName);
-    }
-    const pending = pendingWebSpeechRef.current.get(agentName);
-    if (pending) {
-      clearTimeout(pending);
-      pendingWebSpeechRef.current.delete(agentName);
     }
     setSpeakingAgents((prev) => {
       if (!prev.has(agentName)) return prev;
@@ -545,10 +455,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
       clearTimeout(t.clear);
     }
     fallbackTimersRef.current.clear();
-    for (const t of pendingWebSpeechRef.current.values()) {
-      clearTimeout(t);
-    }
-    pendingWebSpeechRef.current.clear();
     setSpeakingAgents(new Set());
   }, []);
 
@@ -573,7 +479,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
       getMouthAmplitude,
       speakingAgents,
       reset,
-      speakText,
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
@@ -583,7 +488,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
       getMouthAmplitude,
       speakingAgents,
       reset,
-      speakText,
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
