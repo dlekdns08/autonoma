@@ -412,6 +412,15 @@ export interface SolverOptions {
    *  with both appearing on the same screen side (the "real mirror"
    *  feel). Default true — turn off only for non-selfie sources. */
   mirror?: boolean;
+  /** Set when the avatar's scene root has a 180° Y rotation applied
+   *  (three-vrm's ``VRMUtils.rotateVRM0`` does this for VRM 0.x rigs so
+   *  they face +Z like VRM 1.0). With that rotation in the chain, bone
+   *  world-rest directions pick up a Y-axis flip on X and Z, and the
+   *  ``setFromUnitVectors`` math we do against the observed arm vector
+   *  needs to pre-compensate with the inverse flip. Default true
+   *  because every VRM in ``public/vrm`` is 0.x today; set false for a
+   *  native VRM 1.0 rig. */
+  rigYawFlipped?: boolean;
   oneEuro?: OneEuroConfig;
 }
 
@@ -428,6 +437,7 @@ type MutableHandLandmark = { x: number; y: number; z: number };
 
 export class MocapSolver {
   private readonly mirror: boolean;
+  private readonly rigYawFlipped: boolean;
   private readonly cfg: OneEuroConfig | undefined;
   private readonly quatFilters: Partial<Record<MocapBone, OneEuroQuat>> = {};
   private readonly scalarFilters: Partial<Record<MocapExpression, OneEuroScalar>> = {};
@@ -461,6 +471,7 @@ export class MocapSolver {
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
+    this.rigYawFlipped = opts.rigYawFlipped ?? true;
     this.cfg = opts.oneEuro;
     this.effectiveCalibration = { ...CALIBRATION };
     for (let i = 0; i < 33; i++) {
@@ -701,6 +712,28 @@ export class MocapSolver {
     return f;
   }
 
+  /** 180° Y rotation as a quaternion. Used to bridge between the
+   *  solver's "user body" world frame (three.js axes derived from
+   *  MediaPipe ``worldLandmarks`` via ``fixCoord``) and the rig's
+   *  world frame for rigs loaded through ``VRMUtils.rotateVRM0``
+   *  (which applies ``vrm.scene.rotation.y = π`` for VRM 0.x). Applied
+   *  as a LEFT-multiplication on the solver-computed parent-world
+   *  rotations (``_upperChestWorld`` and ``_yawQuat``) so every
+   *  ``_obsLocal = parentInv × armVec`` downstream lands in the bone's
+   *  actual rig-local frame. Scratch/module-level so no allocation. */
+  private readonly _rigYawFlipQuat = new THREE.Quaternion().setFromAxisAngle(
+    _Y_AXIS,
+    Math.PI,
+  );
+
+  /** Left-multiply the given world-frame quaternion by the rig's
+   *  scene-root 180° Y when ``rigYawFlipped`` is on. No-op for VRM 1.0
+   *  rigs. */
+  private applyRigYawFlipToWorldQuat(q: THREE.Quaternion): void {
+    if (!this.rigYawFlipped) return;
+    q.premultiply(this._rigYawFlipQuat);
+  }
+
   solveInto(
     face: FaceLandmarkerResult | null,
     pose: PoseLandmarkerResult | null,
@@ -812,6 +845,9 @@ export class MocapSolver {
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
+      // Bridge solver world → rig world for the chain parents.
+      this.applyRigYawFlipToWorldQuat(_upperChestWorld);
+      this.applyRigYawFlipToWorldQuat(_yawQuat);
       this.solveArms(lm, tsSec, out);
       return;
     }
@@ -823,6 +859,8 @@ export class MocapSolver {
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
+      this.applyRigYawFlipToWorldQuat(_upperChestWorld);
+      this.applyRigYawFlipToWorldQuat(_yawQuat);
       this.solveLegs(lm, tsSec, out);
       return;
     }
@@ -893,6 +931,17 @@ export class MocapSolver {
     );
 
     _upperChestWorld.copy(_torsoQuat);
+    // Bridge from solver's user-body world frame to the rig's actual
+    // world frame (which has ``vrm.scene.rotation.y = π`` baked in for
+    // VRM 0.x rigs). Hips / spine / chest / upperChest have already
+    // been written above using the pre-flip ``_yawQuat`` and torso-
+    // remaining rotations — those bones store rig-local rotations and
+    // the scene-root 180° Y is applied automatically by three-vrm's
+    // humanoid update pipeline. The flip only matters for parent-
+    // inverse math in arm/leg chains, so we do it AFTER the torso
+    // writes and BEFORE solveArms / solveLegs.
+    this.applyRigYawFlipToWorldQuat(_upperChestWorld);
+    this.applyRigYawFlipToWorldQuat(_yawQuat);
 
     this.solveArms(lm, tsSec, out);
     this.solveLegs(lm, tsSec, out);
