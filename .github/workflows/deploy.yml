@@ -42,8 +42,14 @@ jobs:
           AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-4-6' }}
           AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
           AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
-          AUTONOMA_TTS_ENABLED: ${{ secrets.AUTONOMA_TTS_ENABLED || 'true' }}
-          AUTONOMA_TTS_PROVIDER: ${{ secrets.AUTONOMA_TTS_PROVIDER || 'omnivoice' }}
+          # Hardcoded — do NOT read from secrets.  Legacy values like
+          # ``AUTONOMA_TTS_PROVIDER=azure`` still live in older GitHub
+          # secrets stores, but the azure/openai TTS paths were removed
+          # in favor of OmniVoice (see src/autonoma/tts.py header).  A
+          # stale secret override crashes pydantic-settings at startup
+          # and sends the launchd agent into a KeepAlive crash-loop.
+          AUTONOMA_TTS_ENABLED: 'true'
+          AUTONOMA_TTS_PROVIDER: 'omnivoice'
         run: |
           printf 'AUTONOMA_ADMIN_PASSWORD=%s\n'      "$AUTONOMA_ADMIN_PASSWORD"      >> .env
           printf 'AUTONOMA_SESSION_SECRET=%s\n'      "$AUTONOMA_SESSION_SECRET"      >> .env
