@@ -72,17 +72,12 @@ jobs:
 
       - name: Install/refresh launchd agent for the API
         run: |
-          # Installer is idempotent — re-runs bootout before bootstrap
-          # so a plist edit (repo moved, etc.) gets picked up on the
-          # first post-edit deploy.
+          # Installer unloads the previous instance, rewrites the plist
+          # with the current workspace path, and loads it again.  This
+          # is both the "install" path (first deploy on a new Mac) and
+          # the "restart with new code/env" path — one script covers
+          # both so deploy.yml stays dumb.
           bash scripts/install_native_api.sh
-
-      - name: Restart native API
-        run: |
-          UID_NUM="$(id -u)"
-          # kickstart -k sends SIGTERM then relaunches.  This picks up
-          # the new .env and refreshed venv without touching the plist.
-          launchctl kickstart -k "gui/${UID_NUM}/com.autonoma.api"
 
       - name: Build and start web container
         run: |
