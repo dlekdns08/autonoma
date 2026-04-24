@@ -1033,18 +1033,21 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world.
+    // shoulder → elbow in world. ``applyPoseMirror`` (with
+    // ``mirror=true``) already delivers the opposite-side landmarks
+    // X-negated; combined with ``fixCoord``'s Y/Z negation the
+    // resulting ``_armA`` is in the right frame to feed directly
+    // to ``setFromUnitVectors``. No per-axis empirical flip.
     //
-    // Empirical arm-only Y-flip: on the current VRM 0.x rigs the
-    // vertical direction of arm motion consistently reads inverted
-    // against the user — raising drops, lowering raises — regardless
-    // of the ``mirror`` mode. Negating ``_armA.y`` after ``fixCoord``
-    // is the empirical correction. Legs don't need it (rest axis
-    // already aligns), and the same flip on the lowerArm below keeps
-    // the forearm consistent with the upper arm.
+    // Proof: user raises anatomical-left arm. applyPoseMirror puts
+    // that elbow's Y (MP-frame negative = above shoulder) into
+    // ``slot[RIGHT_ELBOW]``. ``fixCoord`` flips to three.js +Y. The
+    // solver outputs rigQ taking bone rest (-X for right side) to
+    // +Y; render-time composition with the scene-root 180° Y
+    // preserves +Y (Y is invariant under 180° Y) so the avatar's
+    // right arm rises in world, matching the user.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
-    _armA.y = -_armA.y;
     if (_armA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -1097,12 +1100,9 @@ export class MocapSolver {
     }
 
     // LowerArm: elbow → wrist. Rest along the bone axis (±X per side).
-    // Same empirical Y-flip as the upper arm above — keeps the
-    // forearm in the same frame as the upper arm so the elbow bend
-    // reads the same direction as the user's motion.
+    // Same frame-convention story as ``_armA`` — no per-axis flip.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    _armB.y = -_armB.y;
     if (_armB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone]);
       return;
