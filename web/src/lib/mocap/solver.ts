@@ -1550,12 +1550,14 @@ export class MocapSolver {
     // preview, try flipping _restDirLower's Y sign here.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    // Same Y-inversion correction as ``_armA`` above — without it
-    // the forearm bends opposite to the user's motion.
-    if (this.mirror) {
-      _armB.x = -_armB.x;
-      _armB.y = -_armB.y;
-    }
+    // Unlike ``_armA``, the forearm does NOT need a Y flip here:
+    // it's resolved in the UPPER-arm's local frame below (via
+    // ``_upperArmWorld.invert()``), and the upper arm already has
+    // the Y correction baked into ``_bqA`` from the block above.
+    // Applying the same Y flip twice would double-invert the
+    // forearm — exactly what showed up as "하완이 반대로 움직인다"
+    // in testing.
+    if (this.mirror) _armB.x = -_armB.x;
     if (_armB.lengthSq() < 1e-8) {
       // Elbow ≡ wrist — forearm collapses. UpperArm / shoulder have
       // already been written this frame; drop just the lower chain so
