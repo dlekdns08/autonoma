@@ -412,14 +412,14 @@ export interface SolverOptions {
    *  with both appearing on the same screen side (the "real mirror"
    *  feel). Default true — turn off only for non-selfie sources. */
   mirror?: boolean;
-  /** Left-multiply the arm/leg chains' parent-world rotations
-   *  (``_upperChestWorld`` and ``_yawQuat``) by 180° around Y. The
-   *  theoretical motivation is ``VRMUtils.rotateVRM0``'s scene-root
-   *  flip for VRM 0.x, but in empirical testing against the current
-   *  set of rigs this compensation actually INVERTS the horizontal
-   *  (arms spread/close swap with it on), so we ship it disabled.
-   *  Left as a knob in case a future rig family needs the opposite
-   *  sign. */
+  /** Left-multiply the leg chain's parent world rotation (``_yawQuat``)
+   *  by 180° around Y. Empirically legs on the current VRM 0.x rigs
+   *  kick forward/back on the wrong side without this compensation.
+   *  Arms (``_upperChestWorld``) intentionally skip the same flip
+   *  because it INVERTED arm spread/close direction in testing — the
+   *  two bone families walk through different parts of three-vrm's
+   *  normalized humanoid pipeline, and the scene-root ``rotateVRM0``
+   *  180° Y rolls up differently for each. Default true. */
   rigYawFlipped?: boolean;
   oneEuro?: OneEuroConfig;
 }
@@ -471,7 +471,7 @@ export class MocapSolver {
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
-    this.rigYawFlipped = opts.rigYawFlipped ?? false;
+    this.rigYawFlipped = opts.rigYawFlipped ?? true;
     this.cfg = opts.oneEuro;
     this.effectiveCalibration = { ...CALIBRATION };
     for (let i = 0; i < 33; i++) {
@@ -845,9 +845,7 @@ export class MocapSolver {
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
-      // Bridge solver world → rig world for the chain parents.
-      this.applyRigYawFlipToWorldQuat(_upperChestWorld);
-      this.applyRigYawFlipToWorldQuat(_yawQuat);
+      // Legs don't run in this fallback; no yaw flip needed here.
       this.solveArms(lm, tsSec, out);
       return;
     }
@@ -859,7 +857,6 @@ export class MocapSolver {
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
-      this.applyRigYawFlipToWorldQuat(_upperChestWorld);
       this.applyRigYawFlipToWorldQuat(_yawQuat);
       this.solveLegs(lm, tsSec, out);
       return;
@@ -931,16 +928,13 @@ export class MocapSolver {
     );
 
     _upperChestWorld.copy(_torsoQuat);
-    // Bridge from solver's user-body world frame to the rig's actual
-    // world frame (which has ``vrm.scene.rotation.y = π`` baked in for
-    // VRM 0.x rigs). Hips / spine / chest / upperChest have already
-    // been written above using the pre-flip ``_yawQuat`` and torso-
-    // remaining rotations — those bones store rig-local rotations and
-    // the scene-root 180° Y is applied automatically by three-vrm's
-    // humanoid update pipeline. The flip only matters for parent-
-    // inverse math in arm/leg chains, so we do it AFTER the torso
-    // writes and BEFORE solveArms / solveLegs.
-    this.applyRigYawFlipToWorldQuat(_upperChestWorld);
+    // Leg chain needs the scene-root 180° Y compensation (kicks would
+    // land on the wrong side without it). Arm chain does NOT — the
+    // same flip on ``_upperChestWorld`` inverts spread/close and
+    // elbow bend direction. These two bone families must have
+    // different pre-rotation baked into three-vrm's normalized rig
+    // pipeline for VRM 0.x. Determined by empirical testing; keep
+    // them separate until the root cause is properly understood.
     this.applyRigYawFlipToWorldQuat(_yawQuat);
 
     this.solveArms(lm, tsSec, out);
