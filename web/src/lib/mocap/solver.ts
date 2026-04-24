@@ -1013,10 +1013,24 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world (mirror-preprocessed landmarks → no
-    // per-vector flips needed).
+    // shoulder → elbow in world.
+    //
+    // Empirical Y-flip (arms only): operator testing shows arm
+    // motion reads inverted vertically — raising the user's arm
+    // drops the VRM arm and vice versa — while legs (rest along the
+    // Y axis, which is invariant under the scene-root ``rotateVRM0``
+    // 180° Y) behave normally with the same IK math. The derivation
+    // (bone world = ``180°Y × rigQ × +X_local``) predicts Y should
+    // be preserved here too, so some load-time rest transform in
+    // three-vrm's normalized humanoid for THIS rig family is
+    // effectively an X-axis 180° flip on top of the scene yaw, and
+    // the straightforward compensation is to reverse the observed
+    // elbow-height sign before feeding ``setFromUnitVectors``.
+    // Scoped to the arm chain so legs (empirically correct) stay
+    // untouched.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
+    _armA.y = -_armA.y;
     if (_armA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -1069,8 +1083,12 @@ export class MocapSolver {
     }
 
     // LowerArm: elbow → wrist. Rest along the bone axis (±X per side).
+    // Same empirical Y-flip as the upper arm above — without it the
+    // forearm bends the opposite direction from the user's motion on
+    // these VRM 0.x rigs.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
+    _armB.y = -_armB.y;
     if (_armB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone]);
       return;
