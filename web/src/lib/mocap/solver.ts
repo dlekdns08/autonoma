@@ -136,14 +136,29 @@ const LR_POSE_PAIRS: ReadonlyArray<readonly [number, number]> = [
  *  shots we still want to drive. */
 const VIS_GATE = 0.15;
 
-/** Gate for arm landmarks — matches the overlay's ``MIN_VISIBILITY``
- *  so that any joint the overlay draws, the solver also trusts. A
- *  stricter value (0.5) used to live here to reject arm-occlusion
- *  hallucinations, but it was rejecting high-confidence real poses
- *  (e.g. arms fully raised above head) where MediaPipe dips briefly
- *  into 0.3–0.5 confidence. Residual bad landmarks are caught by the
- *  OneEuro filter + median pre-smoothing. */
-const ARM_VIS_GATE = 0.3;
+/** Stricter gate for arm landmarks (shoulder, elbow, wrist).
+ *
+ *  MediaPipe Pose hallucinates arm positions with non-zero visibility
+ *  when the arm is occluded / out of frame — an upper-body webcam shot
+ *  with hands below the desk produces "arms raised overhead" pose
+ *  guesses. Empirically those guesses can hit visibility 0.5–0.7, so
+ *  0.5 is NOT enough to suppress them.
+ *
+ *  0.7 was tuned by observing the midori.vrm occluded-arm case: at 0.5
+ *  the VRM's arms stayed pinned overhead (hallucinated IK dominating);
+ *  at 0.7 the apply-layer decay path kicks in and the arms settle to
+ *  the captured baseline (arms-down). Kept strictly above
+ *  ``MIN_VISIBILITY`` (0.3, skeleton overlay) so the IK never runs
+ *  when the overlay isn't drawing the joint.
+ *
+ *  Rest-pose handling (what happens when this gate fails): the solver
+ *  simply drops the bone from ``out.bones`` via ``clearBones``. The
+ *  apply layer (``applyBoneSampleAllWithDecay`` in ``vrmShared``)
+ *  slerps the VRM bone back toward its captured baseline (arms-down).
+ *  Keeping rest logic out of the solver avoids the indirect path where
+ *  solver writes → OneEuro → sample → apply that we previously tried,
+ *  which was brittle enough to visibly fail on ``midori.vrm``. */
+const ARM_VIS_GATE = 0.7;
 
 const TORSO_BONES: readonly MocapBone[] = [
   "hips",
