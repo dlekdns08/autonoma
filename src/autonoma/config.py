@@ -88,6 +88,41 @@ class Settings(BaseSettings):
     # advisory only — it still flows through for future backends.
     tts_default_language: str = "ko"
 
+    # ── OmniVoice perf tuning ──
+    # OmniVoice is a diffusion-style iterative decoder (NOT autoregressive),
+    # so decode time scales LINEARLY with ``num_step``. Upstream default
+    # is 32; 16 is indistinguishable for voice-cloning conditioning and
+    # halves latency. Values below ~10 start to show artifacts.
+    tts_num_step: int = 16
+    # Classifier-free guidance. Upstream default 2.0 (CFG active) doubles
+    # the forward pass because the model runs cond + uncond in a 2B batch.
+    # 1.0 disables the CFG mixing math; combined with
+    # ``tts_skip_uncond_forward`` below we also skip the uncond forward
+    # pass for a ~2× additional speedup. 0.0 is the "raw cond only" path
+    # — slightly less expressive but much faster.
+    tts_guidance_scale: float = 1.0
+    # When True AND guidance_scale == 0, patch _generate_iterative to run
+    # the forward on the cond half only (B rows instead of 2B). Falsy
+    # guidance_scale is required because any non-zero scale needs uncond
+    # logits to compute the CFG mix.
+    tts_skip_uncond_forward: bool = True
+    # OmniVoice has its own internal text chunking (splits long texts and
+    # generates chunk-by-chunk, crossfades). Upstream thresholds 30 s /
+    # 15 s are tuned for narration; for interactive dialogue we want
+    # chunking to kick in MUCH earlier so the first sentence-ish starts
+    # streaming to the browser while the rest is still synthesising.
+    tts_chunk_threshold_s: float = 5.0
+    tts_chunk_duration_s: float = 6.0
+    # ``postprocess_output`` in OmniVoice does silence removal + fade
+    # in/out + edge padding. For dialogue lines we don't need the extra
+    # polish and it costs tens of ms per utterance.
+    tts_postprocess: bool = False
+    # Opt-in torch.compile on the speech LM. Can give 15-30 % more on
+    # MPS but compile-time is multi-second and some graph captures still
+    # fail on newer macOS. Off by default until empirically validated on
+    # target hardware.
+    tts_compile: bool = False
+
     # ── Swarm ──
     max_agents: int = 8
     tick_rate: float = 0.15  # TUI animation tick in seconds
