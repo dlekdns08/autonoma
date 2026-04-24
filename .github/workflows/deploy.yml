@@ -68,22 +68,69 @@ jobs:
       # Desktop on macOS doesn't expose MPS to containers. The api
       # service in docker-compose.yml is profile-gated so this plain
       # ``up`` below only brings up the web container.
-      - name: Sync native API dependencies
+      #
+      # Deploy strategy — the server does NOT run from this CI
+      # workspace. Every ``actions/checkout`` runs ``git clean -ffdx``
+      # which wipes ``.venv/`` out from under the live uvicorn worker,
+      # producing sporadic ``ModuleNotFoundError: No module named
+      # 'librosa.core'`` (and similar lazy-loader failures) whenever a
+      # /tts request lands during the deploy window. To avoid that,
+      # the live server is pinned to ``$HOME/autonoma-prod/`` — a
+      # stable directory CI never wipes — and we promote the freshly
+      # checked-out source into it via rsync below. The CI workspace
+      # exists only long enough to stage files for the promotion and
+      # build the web container.
+      - name: Stop native API before promoting to prod dir
+        run: |
+          # Unload first so ``rsync`` / ``uv sync`` below don't race
+          # against the live Python interpreter holding .venv files
+          # open. A clean unload is preferable to the crash-loop we
+          # hit when files disappear under a running uvicorn.
+          launchctl unload -w "$HOME/Library/LaunchAgents/com.autonoma.api.plist" 2>/dev/null || true
+          launchctl remove com.autonoma.api 2>/dev/null || true
+          # Let launchd actually tear the worker down before rsync
+          # starts rewriting prod files.
+          sleep 2
+
+      - name: Promote checkout to stable prod directory
+        run: |
+          PROD_DIR="$HOME/autonoma-prod"
+          mkdir -p "$PROD_DIR"
+          # Sync everything except:
+          #   - .git/  : version-control metadata, server doesn't need it
+          #   - .venv/ : rebuilt fresh in the next step so its shebangs
+          #              point at the prod dir, not the CI workspace
+          # Trailing slash on source makes rsync copy CONTENTS of CWD
+          # into prod dir (not a nested autonoma/ subdirectory).
+          # --delete mirrors exactly so removed files don't accumulate.
+          rsync -aH --delete \
+            --exclude='.git/' \
+            --exclude='.venv/' \
+            ./ "$PROD_DIR/"
+
+      - name: Sync native API dependencies in prod dir
         run: |
           export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-          # --extra tts pulls OmniVoice + the MPS-capable arm64 torch
-          # wheel (pyproject.toml routes CPU wheels to linux-x86_64
-          # only).  Idempotent; fast when uv.lock is unchanged.
+          # Build prod's own .venv so bin/*/python shebangs are absolute
+          # paths into $HOME/autonoma-prod/.venv (survives future CI
+          # checkouts that would otherwise strip .venv files). --extra
+          # tts pulls OmniVoice + MPS-capable arm64 torch. Warm uv
+          # cache at $HOME/.cache/uv/ makes this 10-30s on repeat
+          # deploys; cold first-install is a few minutes.
+          cd "$HOME/autonoma-prod"
           uv sync --no-dev --extra tts
 
       - name: Install/refresh launchd agent for the API
         run: |
-          # Installer unloads the previous instance, rewrites the plist
-          # with the current workspace path, and loads it again.  This
-          # is both the "install" path (first deploy on a new Mac) and
-          # the "restart with new code/env" path — one script covers
-          # both so deploy.yml stays dumb.
-          bash scripts/install_native_api.sh
+          # Call the installer from the prod dir — the script resolves
+          # REPO_ROOT via SCRIPT_DIR, so every path in the generated
+          # plist (ProgramArguments, WorkingDirectory) anchors on
+          # $HOME/autonoma-prod/ instead of the CI workspace. The
+          # installer unloads any stale instance (e.g. from an older
+          # deploy that still pointed at the CI workspace), rewrites
+          # the plist, and loads it. Idempotent across both first
+          # install and redeploy.
+          bash "$HOME/autonoma-prod/scripts/install_native_api.sh"
 
       - name: Build and start web container
         run: |
