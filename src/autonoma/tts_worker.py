@@ -3,9 +3,10 @@
 Why a worker instead of synthesizing inline?
 
 - ``agent._say`` fires from a tight agent loop; we don't want it to
-  block on a 300-700ms HTTP round-trip. A worker lets us fire-and-forget.
+  block on OmniVoice inference (hundreds of ms on MPS, multi-second
+  on CPU). A worker lets us fire-and-forget.
 - A small in-process queue gives us one place to enforce budgets and
-  rate limits so we don't blow up Azure bills.
+  rate limits so a misbehaving agent can't monopolise the GPU.
 - The worker owns a concurrency limit (semaphore), so two agents
   speaking simultaneously produce two parallel synth calls, not a
   head-of-line block.

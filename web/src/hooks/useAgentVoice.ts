@@ -17,9 +17,10 @@
  *
  * Why no MediaSource? Safari does not support MSE for audio/mpeg, and
  * decoding-on-end keeps the implementation small. The cost is one
- * utterance of latency (~500ms typical for an Azure round-trip), which
- * is acceptable for VTuber dialogue. If we ever need sub-100ms playback
- * we can layer MSE in for Chrome/Firefox without changing the contract.
+ * utterance of latency (server synth + network, typically a few
+ * hundred ms), which is acceptable for VTuber dialogue. If we ever
+ * need sub-100ms playback we can layer MSE in for Chrome/Firefox
+ * without changing the contract.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

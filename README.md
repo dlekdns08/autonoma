@@ -34,7 +34,7 @@ gestures driven by the agents' actual behavior.
 - **Live VTuber performance** — mood-driven blendshapes, 5-vowel lip-sync, contrapposto weight shift, beat gestures during speech, cross-faded state transitions.
 - **Multi-viewer rooms** — host starts a swarm, others join via a short code and watch in sync.
 - **Pluggable LLM backend** — Anthropic, OpenAI, or any OpenAI-compatible endpoint (vLLM).
-- **Optional TTS** — Azure Neural or OpenAI TTS with per-agent voice assignment and budget caps.
+- **Optional TTS** — self-hosted OmniVoice zero-shot cloning (MPS/CUDA/CPU) with per-agent voice assignment and budget caps.
 - **Sandboxed execution** — agents run code they write inside a bubblewrap sandbox with CPU / wall-time / memory limits.
 
 ## Quick start
@@ -128,8 +128,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_MODEL` | Model id | `claude-sonnet-4-6` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | For self-hosted OpenAI-compatible servers | — |
 | `AUTONOMA_ADMIN_PASSWORD` | If set, enables server-key admin login in the web UI | — |
-| `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | `azure` / `openai` / `none` | `false` / `none` |
-| `AUTONOMA_TTS_AZURE_KEY` / `AUTONOMA_TTS_AZURE_REGION` | Azure Neural TTS credentials | — |
+| `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | Toggle + backend: `omnivoice` / `none` | `false` / `none` |
 | `AUTONOMA_MAX_AGENTS` | Cap on concurrent agents | `8` |
 | `AUTONOMA_OUTPUT_DIR` | Where agent-created files land | `./output` |
 | `AUTONOMA_DATA_DIR` | SQLite character database location | `./data` |
