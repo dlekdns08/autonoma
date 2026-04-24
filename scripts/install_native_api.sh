@@ -24,7 +24,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 LABEL="com.autonoma.api"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
-LOG_DIR="$REPO_ROOT/logs"
+# Logs live outside the repo so ``actions/checkout`` (which does
+# ``git clean -ffdx`` by default) cannot wipe history across deploys.
+# Matches the $HOME/.autonoma state root used by run_api_native.sh.
+LOG_DIR="${AUTONOMA_STATE_DIR:-$HOME/.autonoma}/logs"
 
 mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
 

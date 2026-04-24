@@ -38,11 +38,18 @@ fi
 export AUTONOMA_TTS_ENABLED="${AUTONOMA_TTS_ENABLED:-true}"
 export AUTONOMA_TTS_PROVIDER="${AUTONOMA_TTS_PROVIDER:-omnivoice}"
 
-# Keep the HF model cache on-disk across restarts so warmup is fast
-# after the first download.  Override with AUTONOMA_HF_HOME in .env
-# to share a cache across multiple checkouts.
-export HF_HOME="${AUTONOMA_HF_HOME:-$REPO_ROOT/.hf-cache}"
-mkdir -p "$HF_HOME"
+# Persistent state lives OUTSIDE the runner's workspace because
+# ``actions/checkout@v4`` runs ``git clean -ffdx`` by default, which
+# nukes gitignored dirs (``data/``, ``output/``, ``.hf-cache/``) on
+# every deploy.  Parking these under ``$HOME/.autonoma/`` keeps user
+# accounts, voice profiles, VRM bindings, and the 3GB OmniVoice
+# weights alive across redeploys.  All three can be overridden via
+# .env when tests or CI need ephemeral paths.
+STATE_ROOT="${AUTONOMA_STATE_DIR:-$HOME/.autonoma}"
+export AUTONOMA_DATA_DIR="${AUTONOMA_DATA_DIR:-$STATE_ROOT/data}"
+export AUTONOMA_OUTPUT_DIR="${AUTONOMA_OUTPUT_DIR:-$STATE_ROOT/output}"
+export HF_HOME="${AUTONOMA_HF_HOME:-$STATE_ROOT/hf-cache}"
+mkdir -p "$AUTONOMA_DATA_DIR" "$AUTONOMA_OUTPUT_DIR" "$HF_HOME"
 
 # Pick up Homebrew uv when launchd starts the process with a minimal
 # PATH (launchd does not source the user's shell profile).
