@@ -860,7 +860,8 @@ export class MocapSolver {
       _torsoQuat.identity();
       _yawQuat.identity();
       _upperChestWorld.identity();
-      // Legs don't run in this fallback; no yaw flip needed here.
+      // Arm chain still needs the scene-root 180° Y bridge.
+      this.applyRigYawFlipToWorldQuat(_upperChestWorld);
       this.solveArms(lm, tsSec, out);
       return;
     }
@@ -954,13 +955,17 @@ export class MocapSolver {
     );
 
     _upperChestWorld.copy(_torsoQuat);
-    // Leg chain needs the scene-root 180° Y compensation (kicks would
-    // land on the wrong side without it). Arm chain does NOT — the
-    // same flip on ``_upperChestWorld`` inverts spread/close and
-    // elbow bend direction. These two bone families must have
-    // different pre-rotation baked into three-vrm's normalized rig
-    // pipeline for VRM 0.x. Determined by empirical testing; keep
-    // them separate until the root cause is properly understood.
+    // Bridge solver's user-body world frame → rig's world frame (the
+    // ``VRMUtils.rotateVRM0`` 180° Y scene-root flip). Arms AND legs
+    // both need this — the previously-thought "arms don't need it"
+    // was masking a bug where ``_restDir.set(sideSign, 0, 0)`` was
+    // using the opposite sign of the actual rig-bone rest direction.
+    // Now that restDir is fixed (``-sideSign``) to match what
+    // ``_setupTransforms`` captures (avatar faces -Z pre-rotation:
+    // left bone rests at -X, right at +X), the pair of fixes
+    // together makes ``bone_world = 180°Y × rigQ × rest_local``
+    // resolve to exactly ``_armA`` (user-observed direction).
+    this.applyRigYawFlipToWorldQuat(_upperChestWorld);
     this.applyRigYawFlipToWorldQuat(_yawQuat);
 
     this.solveArms(lm, tsSec, out);
@@ -1056,10 +1061,29 @@ export class MocapSolver {
     _armA.normalize();
     this.updateArmDiag(diagSide, _armA.x, _armA.y, _armA.z);
 
-    // UpperArm: rest direction in upperChest-local = (sideSign, 0, 0).
+    // UpperArm: rest direction in the rigBone's own local frame.
+    //
+    // three-vrm's ``_setupTransforms`` captures each rig bone's
+    // child-offset as the world-space delta at LOAD time, which is
+    // BEFORE ``VRMUtils.rotateVRM0`` runs. A VRM 0.x avatar in that
+    // moment faces world -Z (the native VRM 0.x orientation), so:
+    //   * avatar-RIGHT side sits at world +X
+    //   * avatar-LEFT side sits at world -X
+    // Hence ``rightLowerArm.rigBone.position`` in rightUpperArm local
+    // is (+arm_length, 0, 0), and ``leftLowerArm`` is (-arm, 0, 0).
+    // That makes the bone's rest direction +X for the RIGHT arm and
+    // -X for the LEFT arm — the OPPOSITE of ``sideSign`` which is
+    // +1 for left and -1 for right. So restDir = -sideSign * X.
+    //
+    // This is what my earlier empirical ``_armA.y = -_armA.y`` hack
+    // was masking: that flip turned ``setFromUnitVectors(-restDir,
+    // -obs)`` into the same quaternion as ``setFromUnitVectors
+    // (+restDir, +obs)``, but only for pure-Y motion. Anything with
+    // a Z component (forearm forward, palm twist) fell apart. Fixing
+    // ``_restDir`` directly is the real correction.
     _parentInv.copy(_upperChestWorld).invert();
     _obsLocal.copy(_armA).applyQuaternion(_parentInv);
-    _restDir.set(sideSign, 0, 0);
+    _restDir.set(-sideSign, 0, 0);
     _bqA.setFromUnitVectors(_restDir, _obsLocal);
 
     if (armLogEnabled()) {
@@ -1111,18 +1135,11 @@ export class MocapSolver {
 
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_armB).applyQuaternion(_parentInv);
-    // Rest direction is along the bone at T-pose expressed in the
-    // parent (upperArm) local frame. three-vrm's normalized humanoid
-    // bones at identity rotation have their LOCAL frame equal to the
-    // parent's local frame (no baked along-bone rotation — the mesh
-    // is baked to T-pose geometry separately). So the elbow→wrist
-    // direction at T-pose in upperArm-local is the same as in world:
-    // +X for the left arm, -X for the right. Using (0, +1, 0) here
-    // produced an identity bone write whenever the user's forearm
-    // actually pointed along +Y (raised), leaving the lowerArm
-    // locked in T-pose horizontal — symptom the user hit when the
-    // elbows-at-shoulder-level + forearm-up pose.
-    _restDir.set(sideSign, 0, 0);
+    // Rest direction in the upperArm's rigBone local frame, using
+    // the same ``-sideSign`` correction as ``_bqA`` above — forearm
+    // extends toward +X for the RIGHT arm and -X for the LEFT arm at
+    // the rig-capture moment (pre-``rotateVRM0``, avatar facing -Z).
+    _restDir.set(-sideSign, 0, 0);
     _bqB.setFromUnitVectors(_restDir, _obsLocal);
 
     // Forearm roll from the matching hand's palm-forward direction.
