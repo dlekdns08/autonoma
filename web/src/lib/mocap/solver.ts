@@ -136,12 +136,14 @@ const LR_POSE_PAIRS: ReadonlyArray<readonly [number, number]> = [
  *  shots we still want to drive. */
 const VIS_GATE = 0.15;
 
-/** Stricter gate for arm landmarks. MediaPipe hallucinates arm poses
- *  with non-zero visibility when the arm is occluded or out of frame
- *  (common: hands below desk → "arms raised overhead" guess at ~0.3).
- *  0.5 matches the overlay's MIN_VISIBILITY + a margin so the IK
- *  never runs when the user can't see the joint drawn on screen. */
-const ARM_VIS_GATE = 0.5;
+/** Gate for arm landmarks — matches the overlay's ``MIN_VISIBILITY``
+ *  so that any joint the overlay draws, the solver also trusts. A
+ *  stricter value (0.5) used to live here to reject arm-occlusion
+ *  hallucinations, but it was rejecting high-confidence real poses
+ *  (e.g. arms fully raised above head) where MediaPipe dips briefly
+ *  into 0.3–0.5 confidence. Residual bad landmarks are caught by the
+ *  OneEuro filter + median pre-smoothing. */
+const ARM_VIS_GATE = 0.3;
 
 const TORSO_BONES: readonly MocapBone[] = [
   "hips",
