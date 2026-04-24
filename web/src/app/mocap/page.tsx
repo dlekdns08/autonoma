@@ -179,16 +179,12 @@ export default function MocapPage() {
   const autoStoppedByMaxRef = useRef(false);
   const [targetVrm, setTargetVrm] = useState<string | null>(null);
   const mocap = useMocap({
-    // Loaded VRM assets (public/vrm/*.vrm) are all VRM 0.x — three-vrm's
-    // ``VRMUtils.rotateVRM0`` adds a 180° Y scene-root rotation so
-    // avatar-right renders on viewer-right. With the CSS-mirrored selfie
-    // preview, user-right also shows on viewer-right, so a DIRECT
-    // anatomical mapping (user-right landmarks → VRM-right bones) keeps
-    // both on the same screen side. ``mirror: true`` would cross L↔R in
-    // the solver and put avatar motion on the opposite screen side from
-    // the user's own hand — which is what we were seeing. If a VRM 1.0
-    // rig is ever loaded this will need to flip per-rig.
-    mirror: false,
+    // Body cross-mapped (user's anatomical-left arm/leg drives the
+    // VRM's anatomical-right arm/leg and vice versa). Hands stay on
+    // the direct anatomical mapping so finger curl keeps working on
+    // the same-side avatar hand as the user's hand position.
+    mirror: true,
+    handMirror: false,
     hands: handsEnabled,
     maxDurationS,
     vrmFile: targetVrm ?? undefined,
@@ -469,9 +465,9 @@ export default function MocapPage() {
       const score = computeAlignment(
         mocap.poseLandmarksRef.current,
         vrmBonesRef.current,
-        // Must match the solver's ``mirror`` above — direct anatomical
-        // mapping (user-left → VRM-left) for the current VRM 0.x rigs.
-        false,
+        // Must match the solver's body ``mirror`` above — crossed
+        // mapping (user-left → VRM-right).
+        true,
       );
       setAlignmentScore(score);
     };

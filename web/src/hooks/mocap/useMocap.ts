@@ -63,8 +63,11 @@ export interface RecordingMeta {
 }
 
 export interface UseMocapOptions {
-  /** Mirror webcam horizontally. Default true. */
+  /** Cross-map body landmarks (user-left ↔ VRM-right). Default true. */
   mirror?: boolean;
+  /** Cross-map hand landmarks. Default: follows ``mirror``. Split out
+   *  so callers can run crossed body with direct hands or vice versa. */
+  handMirror?: boolean;
   /** Enable MediaPipe HandLandmarker and write finger-proximal bone
    *  tracks for up to two hands. Off by default — the extra 8 MB model
    *  and third detectForVideo call cost a few fps on laptops. Toggling
@@ -396,7 +399,10 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
           }
         }
       }
-      solverRef.current = new MocapSolver({ mirror: opts.mirror ?? true });
+      solverRef.current = new MocapSolver({
+        mirror: opts.mirror ?? true,
+        handMirror: opts.handMirror,
+      });
       // Per-VRM calibration: merge overrides from ``vrmCatalog.json``
       // on top of the solver's defaults. Changing ``opts.vrmFile``
       // while the camera is live does NOT re-apply — stop + start the
@@ -508,7 +514,7 @@ export function useMocap(opts: UseMocapOptions = {}): UseMocapReturn {
       setStatus("error");
       stop();
     }
-  }, [opts.mirror, opts.hands, opts.vrmFile, stop]);
+  }, [opts.mirror, opts.handMirror, opts.hands, opts.vrmFile, stop]);
 
   const appendRawFrame = (sample: ClipSample, tsSec: number) => {
     // Clone the quaternion tuples — the pool buffer is reused next

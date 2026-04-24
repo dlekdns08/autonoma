@@ -407,11 +407,17 @@ let _palmFrameValid = false;
 // ── Public API ──────────────────────────────────────────────────────
 
 export interface SolverOptions {
-  /** Mirror the webcam so the user sees decalcomania behaviour: user
-   *  raises anatomical-left arm → VRM raises its anatomical-right arm,
-   *  with both appearing on the same screen side (the "real mirror"
-   *  feel). Default true — turn off only for non-selfie sources. */
+  /** Cross-map body landmarks: user's anatomical-left arm/leg drives
+   *  the VRM's anatomical-right arm/leg and vice versa. Implemented by
+   *  ``applyPoseMirror``'s X-negate + left/right landmark swap. Default
+   *  true so a selfie webcam reads as a mirror image of the user. */
   mirror?: boolean;
+  /** Same idea for hand tracking, but decoupled from ``mirror`` so the
+   *  operator can run crossed body with direct hands (user's left hand
+   *  drives VRM's left hand, regardless of which arm the body solver
+   *  is crossing). Defaults to ``mirror`` when unspecified so existing
+   *  callers keep the old coupled behaviour. */
+  handMirror?: boolean;
   /** Left-multiply the leg chain's parent world rotation (``_yawQuat``)
    *  by 180° around Y. Empirically legs on the current VRM 0.x rigs
    *  kick forward/back on the wrong side without this compensation.
@@ -437,6 +443,7 @@ type MutableHandLandmark = { x: number; y: number; z: number };
 
 export class MocapSolver {
   private readonly mirror: boolean;
+  private readonly handMirror: boolean;
   private readonly rigYawFlipped: boolean;
   private readonly cfg: OneEuroConfig | undefined;
   private readonly quatFilters: Partial<Record<MocapBone, OneEuroQuat>> = {};
@@ -471,6 +478,7 @@ export class MocapSolver {
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
+    this.handMirror = opts.handMirror ?? this.mirror;
     this.rigYawFlipped = opts.rigYawFlipped ?? true;
     this.cfg = opts.oneEuro;
     this.effectiveCalibration = { ...CALIBRATION };
@@ -675,11 +683,11 @@ export class MocapSolver {
       for (let j = 0; j < 21; j++) {
         const p = src[j];
         const d = dst[j];
-        d.x = this.mirror ? -p.x : p.x;
+        d.x = this.handMirror ? -p.x : p.x;
         d.y = p.y;
         d.z = p.z;
       }
-      this._handVrmSide[i] = this.mirror
+      this._handVrmSide[i] = this.handMirror
         ? mpLabel
         : mpLabel === "Left"
           ? "Right"
@@ -1007,24 +1015,13 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world.
-    //
-    // Empirical Y-flip (arms only): operator testing shows arm
-    // motion reads inverted vertically — raising the user's arm
-    // drops the VRM arm and vice versa — while legs (rest along the
-    // Y axis, which is invariant under the scene-root ``rotateVRM0``
-    // 180° Y) behave normally with the same IK math. The derivation
-    // (bone world = ``180°Y × rigQ × +X_local``) predicts Y should
-    // be preserved here too, so some load-time rest transform in
-    // three-vrm's normalized humanoid for THIS rig family is
-    // effectively an X-axis 180° flip on top of the scene yaw, and
-    // the straightforward compensation is to reverse the observed
-    // elbow-height sign before feeding ``setFromUnitVectors``.
-    // Scoped to the arm chain so legs (empirically correct) stay
-    // untouched.
+    // shoulder → elbow in world. Under crossed body mapping
+    // (``mirror=true``) the slot already carries the opposite-side
+    // user's elbow, so ``fixCoord``'s Y flip alone gives the right
+    // sign for ``setFromUnitVectors`` downstream — no empirical
+    // per-axis flip needed.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
-    _armA.y = -_armA.y;
     if (_armA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -1077,12 +1074,8 @@ export class MocapSolver {
     }
 
     // LowerArm: elbow → wrist. Rest along the bone axis (±X per side).
-    // Same empirical Y-flip as the upper arm above — without it the
-    // forearm bends the opposite direction from the user's motion on
-    // these VRM 0.x rigs.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    _armB.y = -_armB.y;
     if (_armB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone]);
       return;
