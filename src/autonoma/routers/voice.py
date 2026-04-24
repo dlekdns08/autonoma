@@ -236,8 +236,8 @@ async def voice_test_profile(
     test endpoint for the admin UI.
     """
     text_in = str(payload.get("text") or "").strip()
-    if not (1 <= len(text_in) <= 500):
-        raise _voice_error(400, "invalid_text", "문장은 1자 이상 500자 이하여야 합니다.")
+    if not (1 <= len(text_in) <= 2000):
+        raise _voice_error(400, "invalid_text", "문장은 1자 이상 2000자 이하여야 합니다.")
     profile = await voice_service.get_profile(profile_id)
     if profile is None:
         raise _voice_error(404, "profile_not_found", "해당 프로필을 찾을 수 없습니다.")

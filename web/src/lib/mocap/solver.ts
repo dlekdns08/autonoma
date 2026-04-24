@@ -136,29 +136,31 @@ const LR_POSE_PAIRS: ReadonlyArray<readonly [number, number]> = [
  *  shots we still want to drive. */
 const VIS_GATE = 0.15;
 
-/** Stricter gate for arm landmarks (shoulder, elbow, wrist).
+/** Split gate for arm landmarks.
  *
- *  MediaPipe Pose hallucinates arm positions with non-zero visibility
- *  when the arm is occluded / out of frame — an upper-body webcam shot
- *  with hands below the desk produces "arms raised overhead" pose
- *  guesses. Empirically those guesses can hit visibility 0.5–0.7, so
- *  0.5 is NOT enough to suppress them.
+ *  Why split: a single threshold across shoulder+elbow+wrist is a bad
+ *  trade-off. Hallucinated "arms pinned overhead" (MP's guess when
+ *  arms are actually out of frame below the desk) needs a STRICT
+ *  upper-bound (0.7+) to reject, because those guesses land in the
+ *  0.5–0.7 visibility band. But LEGITIMATE raised-arm + closed-fist
+ *  poses also drop WRIST visibility into the 0.5–0.7 band (fists are
+ *  harder to localize than open palms). A single 0.7 gate rejects the
+ *  real pose along with the hallucination.
  *
- *  0.7 was tuned by observing the midori.vrm occluded-arm case: at 0.5
- *  the VRM's arms stayed pinned overhead (hallucinated IK dominating);
- *  at 0.7 the apply-layer decay path kicks in and the arms settle to
- *  the captured baseline (arms-down). Kept strictly above
- *  ``MIN_VISIBILITY`` (0.3, skeleton overlay) so the IK never runs
- *  when the overlay isn't drawing the joint.
+ *  Shoulder + elbow stay at 0.7 — these anchor the upper arm and the
+ *  hallucinated-overhead pose usually fails AT THE ELBOW first. Wrist
+ *  gets 0.5, which admits the closed-fist case while the upper-arm
+ *  hallucination filter (elbow) still does its job. If the upper arm
+ *  is untrusted, the whole chain is dropped; if only the wrist is
+ *  untrusted, the forearm alone is dropped and the lower arm decays
+ *  to rest-extension relative to the correctly-solved upper arm.
  *
- *  Rest-pose handling (what happens when this gate fails): the solver
- *  simply drops the bone from ``out.bones`` via ``clearBones``. The
- *  apply layer (``applyBoneSampleAllWithDecay`` in ``vrmShared``)
- *  slerps the VRM bone back toward its captured baseline (arms-down).
- *  Keeping rest logic out of the solver avoids the indirect path where
- *  solver writes → OneEuro → sample → apply that we previously tried,
- *  which was brittle enough to visibly fail on ``midori.vrm``. */
-const ARM_VIS_GATE = 0.7;
+ *  Rest-pose handling when a gate fails: the solver drops the bone
+ *  from ``out.bones``. The apply layer (``applyBoneSampleAllWithDecay``
+ *  in ``vrmShared``) slerps the VRM bone back toward its captured
+ *  baseline. */
+const ARM_UPPER_VIS_GATE = 0.7;
+const ARM_WRIST_VIS_GATE = 0.5;
 
 const TORSO_BONES: readonly MocapBone[] = [
   "hips",
@@ -935,10 +937,12 @@ export class MocapSolver {
     const sh = lm[lmShoulder];
     const el = lm[lmElbow];
     const wr = lm[lmWrist];
+    // Upper-arm gate: shoulder + elbow both need to clear the strict
+    // anti-hallucination threshold. If the whole upper arm is
+    // untrusted, drop both bones and bail.
     if (
-      sh.visibility < ARM_VIS_GATE ||
-      el.visibility < ARM_VIS_GATE ||
-      wr.visibility < ARM_VIS_GATE
+      sh.visibility < ARM_UPPER_VIS_GATE ||
+      el.visibility < ARM_UPPER_VIS_GATE
     ) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -971,7 +975,18 @@ export class MocapSolver {
 
     _upperArmWorld.copy(_upperChestWorld).multiply(_bqA);
 
-    // LowerArm: elbow → wrist; rest along upperArm-local +Y.
+    // Lower-arm gate: wrist uses a more permissive threshold so that
+    // closed-fist / near-body poses (where MP's wrist confidence
+    // legitimately dips into 0.5–0.7) still drive the forearm. If the
+    // wrist fails this gate, drop just the forearm — the upper arm
+    // is already correctly solved above, and the apply layer will
+    // slerp the lower arm back to its rest-extension relative to it.
+    if (wr.visibility < ARM_WRIST_VIS_GATE) {
+      this.clearBones(out, [lowerBone]);
+      return;
+    }
+
+    // LowerArm: elbow → wrist. Rest along the bone axis (±X per side).
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
     if (_armB.lengthSq() < 1e-8) {

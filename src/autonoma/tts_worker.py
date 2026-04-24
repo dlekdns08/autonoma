@@ -40,7 +40,16 @@ from autonoma.tts import BaseTTSClient, TTSError, create_tts_client, tts_config_
 logger = logging.getLogger(__name__)
 
 
-MAX_TEXT_CHARS = 500       # hard ceiling per utterance (safety rail)
+MAX_TEXT_CHARS = 2000      # hard ceiling per utterance (safety rail).
+                           # Raised from 500 after OmniVoice perf tuning
+                           # made long-form synthesis feasible — 500
+                           # silently truncated the tail of anything
+                           # longer than ~3-4 sentences. OmniVoice's
+                           # internal chunker (audio_chunk_duration)
+                           # handles long text natively; this ceiling
+                           # is here only to cap obviously-runaway
+                           # input (e.g. agent emitting an entire wiki
+                           # page).
 MAX_QUEUE_DEPTH = 64       # drop new jobs once the queue is this long
 SYNTH_CONCURRENCY = 2      # how many parallel synth HTTP calls allowed
 
@@ -144,6 +153,18 @@ class TTSWorker:
         if not text or not text.strip():
             return False
         if len(text) > MAX_TEXT_CHARS:
+            # Silent truncation used to strip the tail without any
+            # trace, producing the "일부 Speech로 안 되는" class of
+            # bug. Log it at WARN so the mismatch between the text
+            # the agent emitted and the audio the listener hears is
+            # surfaced in the API log for future diagnosis.
+            logger.warning(
+                "[tts] text truncated from %d to %d chars for %s — "
+                "raise MAX_TEXT_CHARS if this is legitimate input",
+                len(text),
+                MAX_TEXT_CHARS,
+                agent,
+            )
             text = text[:MAX_TEXT_CHARS]
         job = _SpeechJob(
             agent=agent,
@@ -195,6 +216,19 @@ class TTSWorker:
     async def _process(self, job: _SpeechJob) -> None:
         drop_reason = self._budget.try_consume(len(job.text))
         if drop_reason:
+            # Budget drops used to be DEBUG-silent, which is how
+            # sessions could burn through 800 chars and then every
+            # subsequent line came back silent with no user-visible
+            # cause. WARN makes this auditable from the API log.
+            logger.warning(
+                "[tts] dropping utterance for %s: reason=%s text_len=%d "
+                "round_chars=%d session_chars=%d",
+                job.agent,
+                drop_reason,
+                len(job.text),
+                self._budget.session_round_chars,
+                self._budget.session_total_chars,
+            )
             await bus.emit(
                 "agent.speech_audio_dropped",
                 agent=job.agent,

@@ -376,20 +376,30 @@ class OmniVoiceTTSClient(BaseTTSClient):
                     model._autonoma_skip_uncond = prev  # type: ignore[attr-defined]
             if not audio_list:
                 return b""
-            pcm = audio_list[0]
-            if not isinstance(pcm, np.ndarray):
-                pcm = np.asarray(pcm, dtype=np.float32)
-            if pcm.dtype != np.float32:
-                pcm = pcm.astype(np.float32)
+            # ``generate`` returns one ndarray per input text in the
+            # batch; internal chunking (``audio_chunk_duration``) is
+            # already cross-faded + concatenated inside each entry,
+            # so for a single-text call ``audio_list[0]`` is the
+            # complete utterance. Concatenating across the list is a
+            # no-op today (we always submit a single text) but keeps
+            # the code correct if a future caller submits a batch.
+            parts: list[np.ndarray] = []
+            for p in audio_list:
+                arr = p if isinstance(p, np.ndarray) else np.asarray(p)
+                if arr.dtype != np.float32:
+                    arr = arr.astype(np.float32)
+                parts.append(arr)
+            pcm = parts[0] if len(parts) == 1 else np.concatenate(parts)
             return _pcm_to_wav_bytes(pcm, OMNIVOICE_SAMPLE_RATE)
 
         wav = await asyncio.to_thread(_run)
         if not wav:
             return
         # Emit in 32 KB slices so the browser MediaElement can start
-        # decoding early. OmniVoice returns the whole utterance at
-        # once, so "streaming" here is just pipelined upload, not
-        # incremental synthesis — still a latency win on large lines.
+        # decoding early. OmniVoice returns the full utterance (all
+        # internal chunks concatenated) as a single buffer here, so
+        # "streaming" is pipelined upload, not incremental synthesis —
+        # still a latency win on large lines.
         SLICE = 32 * 1024
         for i in range(0, len(wav), SLICE):
             yield wav[i : i + SLICE]

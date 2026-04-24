@@ -76,8 +76,17 @@ class Settings(BaseSettings):
     tts_provider: Literal["omnivoice", "none"] = "none"
     # Budgets: soft caps per round / per session. When exceeded the
     # worker drops the line and emits ``agent.speech_audio_dropped``.
-    tts_char_budget_per_round: int = 800
-    tts_char_budget_per_session: int = 20000
+    #
+    # Historical note: ``per_round`` was 800 and only reset by the
+    # swarm's round tick (``SwarmRoom._tick``). Single-agent / direct
+    # typing paths NEVER reset it, turning per_round into a
+    # session-wide 800-char ceiling that silently dropped every
+    # utterance after the first ~2 paragraphs. This was the main
+    # driver of the "전체다 Speech로 안 되는" class of bug after the
+    # OmniVoice perf tuning encouraged longer utterances. Bumped to
+    # match MAX_TEXT_CHARS (2000) × a few utterances per round.
+    tts_char_budget_per_round: int = 8000
+    tts_char_budget_per_session: int = 200000
     # Rate limit: max TTS requests launched per minute, across the room.
     tts_rate_limit_per_minute: int = 40
     # When True, only the room owner hears TTS (server-side gate; viewer
