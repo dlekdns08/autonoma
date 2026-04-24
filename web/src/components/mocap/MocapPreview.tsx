@@ -47,6 +47,13 @@ import type { VrmBoneWorldPositions } from "@/lib/mocap/alignment";
 /** Finger-axis test — axis the caller wants to force. Null = no test. */
 export type FingerTestAxis = "x" | "y" | "z" | null;
 
+/** Limb-axis test — forces a fixed rotation on both upperArm + upperLeg
+ *  bones around the chosen local axis. Used to confirm which way the
+ *  normalized humanoid rotates this rig: +Z-test should lift the arms
+ *  on a standard VRM; if it drops them instead, the solver's assumed
+ *  bone axis convention is inverted. Null = no test. */
+export type LimbTestAxis = "x" | "y" | "z" | null;
+
 interface Props {
   vrmFile: string;
   sampleRef: RefObject<ClipSample>;
@@ -54,6 +61,10 @@ interface Props {
    *  axis (ignoring the sample) until ``testFingerUntil`` passes. */
   testFingerAxis?: FingerTestAxis;
   testFingerUntil?: number;
+  /** Same idea as ``testFingerAxis`` but for both upperArms + upperLegs.
+   *  Override clears after ``testLimbUntil``. */
+  testLimbAxis?: LimbTestAxis;
+  testLimbUntil?: number;
   /** VRM filename the sample was recorded against. When this differs
    *  from ``vrmFile``, finger-bone tracks are suppressed (cross-rig
    *  finger curl axes don't line up). Omit for live-capture previews
@@ -78,7 +89,21 @@ const FINGER_PROXIMALS: readonly MocapBone[] = [
   "rightLittleProximal",
 ];
 
+/** Bones driven by the limb-axis test. Both upperArms and both
+ *  upperLegs — any axis convention bug in the solver shows up on
+ *  both sides and the test is most informative when it hits every
+ *  affected bone at once. */
+const LIMB_TEST_BONES: readonly MocapBone[] = [
+  "leftUpperArm",
+  "rightUpperArm",
+  "leftUpperLeg",
+  "rightUpperLeg",
+];
+
 const TEST_ANGLE_RAD = -Math.PI / 3; // -60°; negative = "inward" guess
+const LIMB_TEST_ANGLE_RAD = Math.PI / 3; // +60°; positive sweep on the
+                                         // chosen axis. Operator eyeballs
+                                         // which direction each bone moves.
 
 // Scratch objects reused by the finger-axis test harness. Kept
 // module-scoped so the per-frame override stays allocation-free.
@@ -115,6 +140,8 @@ function PreviewVRM({
   sampleRef,
   testFingerAxis,
   testFingerUntil,
+  testLimbAxis,
+  testLimbUntil,
   skipFingers,
   bonePositionsRef,
 }: {
@@ -122,6 +149,8 @@ function PreviewVRM({
   sampleRef: RefObject<ClipSample>;
   testFingerAxis?: FingerTestAxis;
   testFingerUntil?: number;
+  testLimbAxis?: LimbTestAxis;
+  testLimbUntil?: number;
   /** When true, finger bones aren't written from the sample — used for
    *  cross-rig clip playback where finger curl axes may mismatch. */
   skipFingers: boolean;
@@ -206,6 +235,28 @@ function PreviewVRM({
         }
       }
     }
+    // Limb-axis diagnostic: override upperArms + upperLegs with a fixed
+    // +60° rotation around the chosen local axis. Lets the operator
+    // confirm the bone's rotation convention directly — if +Z doesn't
+    // raise the arms, the solver's assumed axis is wrong.
+    if (
+      testLimbAxis &&
+      testLimbUntil &&
+      performance.now() < testLimbUntil
+    ) {
+      _testEuler.set(
+        testLimbAxis === "x" ? LIMB_TEST_ANGLE_RAD : 0,
+        testLimbAxis === "y" ? LIMB_TEST_ANGLE_RAD : 0,
+        testLimbAxis === "z" ? LIMB_TEST_ANGLE_RAD : 0,
+        "XYZ",
+      );
+      _testQ.setFromEuler(_testEuler);
+      for (const name of LIMB_TEST_BONES) {
+        const bone = bonesRef.current[name];
+        if (!bone) continue;
+        bone.quaternion.copy(_testQ);
+      }
+    }
     vrm.update(delta);
 
     // Publish bone world positions for the alignment-score badge. We
@@ -247,6 +298,8 @@ export default function MocapPreview({
   sampleRef,
   testFingerAxis,
   testFingerUntil,
+  testLimbAxis,
+  testLimbUntil,
   sampleSourceVrm,
   bonePositionsRef,
 }: Props) {
@@ -275,6 +328,8 @@ export default function MocapPreview({
             sampleRef={sampleRef}
             testFingerAxis={testFingerAxis}
             testFingerUntil={testFingerUntil}
+            testLimbAxis={testLimbAxis}
+            testLimbUntil={testLimbUntil}
             skipFingers={skipFingers}
             bonePositionsRef={bonePositionsRef}
           />

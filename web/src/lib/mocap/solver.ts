@@ -226,6 +226,21 @@ const _lowerArmWorldInv = new THREE.Quaternion();
  *  the bone 180°. */
 const FOREARM_ROLL_CLAMP_RAD = (60 * Math.PI) / 180;
 
+/** Throttled diagnostic: when ``window.MOCAP_ARM_LOG === true`` is set
+ *  from devtools, emit one line per side every ~30 frames showing the
+ *  raw landmark pair, the post-``fixCoord`` arm vector, the parent-
+ *  local observation, and the final bone quaternion. Lets the operator
+ *  confirm which stage is responsible for an observed inversion /
+ *  crossing without having to re-compile. Counter is global (single
+ *  tick across both arms) so L/R lines land next to each other in the
+ *  log stream. */
+const ARM_LOG_EVERY = 30;
+let _armLogCounter = 0;
+function armLogEnabled(): boolean {
+  return typeof globalThis !== "undefined"
+    && (globalThis as { MOCAP_ARM_LOG?: boolean }).MOCAP_ARM_LOG === true;
+}
+
 /** Spine distribution — fixed lumbar-biased weights. Sum to 1.0. */
 const SPINE_WEIGHT = 0.45;
 const CHEST_WEIGHT = 0.35;
@@ -966,6 +981,24 @@ export class MocapSolver {
     _obsLocal.copy(_armA).applyQuaternion(_parentInv);
     _restDir.set(sideSign, 0, 0);
     _bqA.setFromUnitVectors(_restDir, _obsLocal);
+
+    if (armLogEnabled()) {
+      if (sideSign === 1) _armLogCounter++;
+      if (_armLogCounter % ARM_LOG_EVERY === 0) {
+        // Raw landmarks (pre-fixCoord) + derived vectors, so the
+        // operator can reason about what MediaPipe actually reported.
+        // Four numbers per vector keeps the line short; Y is the axis
+        // the user reports as inverted, so it goes first after x.
+        console.log(
+          `[mocap-arm] ${vrmSideLabel} side=${sideSign}`,
+          `sh=(${sh.x.toFixed(2)},${sh.y.toFixed(2)},${sh.z.toFixed(2)}) vis=${sh.visibility.toFixed(2)}`,
+          `el=(${el.x.toFixed(2)},${el.y.toFixed(2)},${el.z.toFixed(2)}) vis=${el.visibility.toFixed(2)}`,
+          `armA=(${_armA.x.toFixed(2)},${_armA.y.toFixed(2)},${_armA.z.toFixed(2)})`,
+          `obsLocal=(${_obsLocal.x.toFixed(2)},${_obsLocal.y.toFixed(2)},${_obsLocal.z.toFixed(2)})`,
+          `bqA=(${_bqA.x.toFixed(2)},${_bqA.y.toFixed(2)},${_bqA.z.toFixed(2)},${_bqA.w.toFixed(2)})`,
+        );
+      }
+    }
     this.writeBoneSmoothed(
       upperBone,
       [_bqA.x, _bqA.y, _bqA.z, _bqA.w],

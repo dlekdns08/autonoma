@@ -26,7 +26,10 @@ import { useMocapBindings } from "@/hooks/mocap/useMocapBindings";
 import CharacterPicker from "@/components/mocap/CharacterPicker";
 import WebcamPanel from "@/components/mocap/WebcamPanel";
 import SkeletonOverlay from "@/components/mocap/SkeletonOverlay";
-import MocapPreview, { type FingerTestAxis } from "@/components/mocap/MocapPreview";
+import MocapPreview, {
+  type FingerTestAxis,
+  type LimbTestAxis,
+} from "@/components/mocap/MocapPreview";
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import TimelineTrimmer from "@/components/mocap/TimelineTrimmer";
 import ClipLibrary from "@/components/mocap/ClipLibrary";
@@ -142,6 +145,26 @@ export default function MocapPage() {
     testTimerRef.current = window.setTimeout(() => {
       setTestFingerAxis(null);
       testTimerRef.current = null;
+    }, 3000);
+  }, []);
+
+  // Limb-axis bisection (upperArms + upperLegs). Same pattern as the
+  // finger test above — forces a +60° rotation around the chosen local
+  // axis for 3s so the operator can eyeball whether the rig's rotation
+  // convention matches what the solver assumes. If +Z doesn't lift the
+  // arms, the solver's rest-direction math is working in the wrong frame.
+  const [testLimbAxis, setTestLimbAxis] = useState<LimbTestAxis>(null);
+  const [testLimbUntil, setTestLimbUntil] = useState(0);
+  const testLimbTimerRef = useRef<number | null>(null);
+  const runLimbAxisTest = useCallback((axis: "x" | "y" | "z") => {
+    if (testLimbTimerRef.current !== null) {
+      window.clearTimeout(testLimbTimerRef.current);
+    }
+    setTestLimbAxis(axis);
+    setTestLimbUntil(performance.now() + 3000);
+    testLimbTimerRef.current = window.setTimeout(() => {
+      setTestLimbAxis(null);
+      testLimbTimerRef.current = null;
     }, 3000);
   }, []);
 
@@ -743,6 +766,22 @@ export default function MocapPage() {
                         {axis.toUpperCase()}축
                       </button>
                     ))}
+                    <span className="text-[10px] text-white/30">팔/다리 축:</span>
+                    {(["x", "y", "z"] as const).map((axis) => (
+                      <button
+                        key={`limb-${axis}`}
+                        onClick={() => runLimbAxisTest(axis)}
+                        title={`upperArm + upperLeg 모두를 ${axis.toUpperCase()}축 +60° 로 3초간 회전. 예상 방향 (Z+ = 팔 위로, Y+ = 앞으로)과 실제가 다르면 rig 축 규약이 반대.`}
+                        className={
+                          "rounded border px-2 py-1 " +
+                          (testLimbAxis === axis
+                            ? "border-fuchsia-400/60 bg-fuchsia-500/15 text-fuchsia-200"
+                            : "border-white/15 bg-slate-950/70 text-white/70 hover:border-white/35")
+                        }
+                      >
+                        팔{axis.toUpperCase()}
+                      </button>
+                    ))}
                   </>
                 )}
                 {mocap.status === "running" && !mocap.recording && stage !== "recorded" && (
@@ -817,6 +856,8 @@ export default function MocapPage() {
               sampleRef={previewSampleRef}
               testFingerAxis={testFingerAxis}
               testFingerUntil={testFingerUntil}
+              testLimbAxis={testLimbAxis}
+              testLimbUntil={testLimbUntil}
               bonePositionsRef={vrmBonesRef}
             />
           </section>
