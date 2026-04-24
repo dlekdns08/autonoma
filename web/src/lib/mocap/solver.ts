@@ -1033,13 +1033,18 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world. Under the crossed body mapping
-    // (``mirror=true``) applyPoseMirror already delivers the
-    // opposite-side landmarks, so ``fixCoord``'s Y negate is enough
-    // to put the observed arm direction in the right frame for
-    // ``setFromUnitVectors`` below.
+    // shoulder → elbow in world.
+    //
+    // Empirical arm-only Y-flip: on the current VRM 0.x rigs the
+    // vertical direction of arm motion consistently reads inverted
+    // against the user — raising drops, lowering raises — regardless
+    // of the ``mirror`` mode. Negating ``_armA.y`` after ``fixCoord``
+    // is the empirical correction. Legs don't need it (rest axis
+    // already aligns), and the same flip on the lowerArm below keeps
+    // the forearm consistent with the upper arm.
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
+    _armA.y = -_armA.y;
     if (_armA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -1092,8 +1097,12 @@ export class MocapSolver {
     }
 
     // LowerArm: elbow → wrist. Rest along the bone axis (±X per side).
+    // Same empirical Y-flip as the upper arm above — keeps the
+    // forearm in the same frame as the upper arm so the elbow bend
+    // reads the same direction as the user's motion.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
+    _armB.y = -_armB.y;
     if (_armB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone]);
       return;
