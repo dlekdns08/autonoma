@@ -95,12 +95,16 @@ class Settings(BaseSettings):
     # halves latency. Values below ~10 start to show artifacts.
     tts_num_step: int = 16
     # Classifier-free guidance. Upstream default 2.0 (CFG active) doubles
-    # the forward pass because the model runs cond + uncond in a 2B batch.
-    # 1.0 disables the CFG mixing math; combined with
-    # ``tts_skip_uncond_forward`` below we also skip the uncond forward
-    # pass for a ~2× additional speedup. 0.0 is the "raw cond only" path
-    # — slightly less expressive but much faster.
-    tts_guidance_scale: float = 1.0
+    # the forward pass because the model runs cond + uncond in a 2B
+    # batch. 0.0 disables CFG entirely — combined with
+    # ``tts_skip_uncond_forward`` below, the uncond half of the batch
+    # is also skipped on the forward pass for a real ~2× speedup
+    # (measured: 2.92s → 1.68s for a 6.5 s utterance on MPS).
+    # Trade-off: g=0 is slightly less expressive than g=2 for voice
+    # cloning. On ref-audio-driven profiles the difference is subtle,
+    # but if voice characterisation degrades set this to 1.0 (skip
+    # mixing math but still run CFG forward) or 2.0 (full CFG).
+    tts_guidance_scale: float = 0.0
     # When True AND guidance_scale == 0, patch _generate_iterative to run
     # the forward on the cond half only (B rows instead of 2B). Falsy
     # guidance_scale is required because any non-zero scale needs uncond
