@@ -37,6 +37,13 @@ tts = [
     "numpy>=2.0",
     "torch>=2.1",
     "torchaudio>=2.1",
+    # omnivoice imports librosa lazily via lazy_loader but doesn't
+    # declare it in its own Requires-Dist, so uv won't pull it in.
+    # Without it, the first /test call on a voice profile dies with
+    # ``ModuleNotFoundError: No module named 'librosa.core'`` deep
+    # inside the OmniVoice ref-audio loader.  Pin it explicitly here
+    # so every fresh workspace resolves it.
+    "librosa>=0.10",
 ]
 
 [project.scripts]
