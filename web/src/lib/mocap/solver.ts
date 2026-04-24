@@ -927,16 +927,10 @@ export class MocapSolver {
       return;
     }
 
-    // shoulder → elbow in world.
-    // Empirical Y-flip: on this rig + three-vrm normalized humanoid
-    // combination, the upperArm bone's response to setFromUnitVectors
-    // along +Y is inverted vs. what the torso/leg chain math produces,
-    // so raising the user's arm would drive the VRM arm downward
-    // without this. Apply it on both arm vectors (upper + lower) so
-    // the forearm doesn't re-invert the correction.
+    // shoulder → elbow in world (mirror-preprocessed landmarks → no
+    // per-vector flips needed).
     _armA.set(el.x - sh.x, el.y - sh.y, el.z - sh.z);
     fixCoord(_armA);
-    _armA.y = -_armA.y;
     if (_armA.lengthSq() < 1e-8) {
       this.clearBones(out, [upperBone, lowerBone]);
       this.resetArmDiag(diagSide);
@@ -960,10 +954,8 @@ export class MocapSolver {
     _upperArmWorld.copy(_upperChestWorld).multiply(_bqA);
 
     // LowerArm: elbow → wrist; rest along upperArm-local +Y.
-    // Same Y-flip as _armA so the upper and lower arm move together.
     _armB.set(wr.x - el.x, wr.y - el.y, wr.z - el.z);
     fixCoord(_armB);
-    _armB.y = -_armB.y;
     if (_armB.lengthSq() < 1e-8) {
       this.clearBones(out, [lowerBone]);
       return;
