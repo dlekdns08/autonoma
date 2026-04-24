@@ -412,14 +412,14 @@ export interface SolverOptions {
    *  with both appearing on the same screen side (the "real mirror"
    *  feel). Default true — turn off only for non-selfie sources. */
   mirror?: boolean;
-  /** Set when the avatar's scene root has a 180° Y rotation applied
-   *  (three-vrm's ``VRMUtils.rotateVRM0`` does this for VRM 0.x rigs so
-   *  they face +Z like VRM 1.0). With that rotation in the chain, bone
-   *  world-rest directions pick up a Y-axis flip on X and Z, and the
-   *  ``setFromUnitVectors`` math we do against the observed arm vector
-   *  needs to pre-compensate with the inverse flip. Default true
-   *  because every VRM in ``public/vrm`` is 0.x today; set false for a
-   *  native VRM 1.0 rig. */
+  /** Left-multiply the arm/leg chains' parent-world rotations
+   *  (``_upperChestWorld`` and ``_yawQuat``) by 180° around Y. The
+   *  theoretical motivation is ``VRMUtils.rotateVRM0``'s scene-root
+   *  flip for VRM 0.x, but in empirical testing against the current
+   *  set of rigs this compensation actually INVERTS the horizontal
+   *  (arms spread/close swap with it on), so we ship it disabled.
+   *  Left as a knob in case a future rig family needs the opposite
+   *  sign. */
   rigYawFlipped?: boolean;
   oneEuro?: OneEuroConfig;
 }
@@ -471,7 +471,7 @@ export class MocapSolver {
 
   constructor(opts: SolverOptions = {}) {
     this.mirror = opts.mirror ?? true;
-    this.rigYawFlipped = opts.rigYawFlipped ?? true;
+    this.rigYawFlipped = opts.rigYawFlipped ?? false;
     this.cfg = opts.oneEuro;
     this.effectiveCalibration = { ...CALIBRATION };
     for (let i = 0; i < 33; i++) {
