@@ -181,6 +181,7 @@ function median3(a: number, b: number, c: number): number {
 
 // ── Body IK scratch (zero-alloc steady state) ───────────────────────
 const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+const _unitX = new THREE.Vector3(1, 0, 0);
 const _unitY = new THREE.Vector3(0, 1, 0);
 const _bX = new THREE.Vector3();
 const _bY = new THREE.Vector3();
@@ -981,13 +982,25 @@ export class MocapSolver {
 
     _parentInv.copy(_upperArmWorld).invert();
     _obsLocal.copy(_armB).applyQuaternion(_parentInv);
-    _restDir.set(0, 1, 0);
+    // Rest direction is along the bone at T-pose expressed in the
+    // parent (upperArm) local frame. three-vrm's normalized humanoid
+    // bones at identity rotation have their LOCAL frame equal to the
+    // parent's local frame (no baked along-bone rotation — the mesh
+    // is baked to T-pose geometry separately). So the elbow→wrist
+    // direction at T-pose in upperArm-local is the same as in world:
+    // +X for the left arm, -X for the right. Using (0, +1, 0) here
+    // produced an identity bone write whenever the user's forearm
+    // actually pointed along +Y (raised), leaving the lowerArm
+    // locked in T-pose horizontal — symptom the user hit when the
+    // elbows-at-shoulder-level + forearm-up pose.
+    _restDir.set(sideSign, 0, 0);
     _bqB.setFromUnitVectors(_restDir, _obsLocal);
 
     // Forearm roll from the matching hand's palm-forward direction.
-    // ``vrmSideLabel`` is the post-mirror label we stored in
-    // ``_handVrmSide`` during ``applyHandMirror`` — this side's hand
-    // drives this arm's forearm roll regardless of mirror flag.
+    // Twist is around the bone's own axis (local ±X after the rest
+    // change above) applied in the bone's post-``_bqB`` frame via
+    // right-multiplication. Using ``sideSign`` keeps the rotation
+    // sense consistent per side.
     const handIdx = this.findHandIndex(vrmSideLabel);
     if (handIdx >= 0) {
       const hLm = this._handMirrored[handIdx];
@@ -1000,19 +1013,22 @@ export class MocapSolver {
         _lowerArmWorld.copy(_upperArmWorld).multiply(_bqB);
         _lowerArmWorldInv.copy(_lowerArmWorld).invert();
         _handDirLocal.copy(_handDir).applyQuaternion(_lowerArmWorldInv);
+        // Bone axis is local ±X; twist is measured in the YZ plane
+        // (perpendicular to the bone). atan2(z, y) gives the angle
+        // from +Y toward +Z, i.e. palm rotating forward/backward.
         let twistAngle =
-          Math.atan2(_handDirLocal.x, _handDirLocal.z) -
+          Math.atan2(_handDirLocal.z, _handDirLocal.y) -
           this.forearmRollRestRad;
         while (twistAngle > Math.PI) twistAngle -= 2 * Math.PI;
         while (twistAngle < -Math.PI) twistAngle += 2 * Math.PI;
-        twistAngle *= this.forearmRollGain;
+        twistAngle *= this.forearmRollGain * sideSign;
         if (this.forearmRollSignFlip) twistAngle = -twistAngle;
         if (twistAngle > FOREARM_ROLL_CLAMP_RAD) {
           twistAngle = FOREARM_ROLL_CLAMP_RAD;
         } else if (twistAngle < -FOREARM_ROLL_CLAMP_RAD) {
           twistAngle = -FOREARM_ROLL_CLAMP_RAD;
         }
-        _twistQuat.setFromAxisAngle(_unitY, twistAngle);
+        _twistQuat.setFromAxisAngle(_unitX, twistAngle);
         _bqB.multiply(_twistQuat);
       }
     }
