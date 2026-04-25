@@ -418,6 +418,13 @@ class AutonomousAgent:
             f"{a.emoji} {a.name} ({a.role})" for a in project.agents if a.name != self.name
         ]
 
+        # Phase 1-#6a: pull the agent's most relevant past diary entries
+        # for the current situation. We compose the query from the active
+        # task + project description + the most recent inbox subject so
+        # the LLM gets memory continuity ("last time I worked on auth I
+        # got stuck on X"). Never raises — RAG is best-effort.
+        relevant_diary_lines: list[str] = self._recall_relevant_diary(project)
+
         # World data
         bones = self.bones
         stats = self.stats
@@ -462,12 +469,51 @@ RECENT MESSAGES:
 {chr(10).join(f'  {m}' for m in recent_msgs) or '  None'}
 """
 
+        if relevant_diary_lines:
+            situation += (
+                "\nRELEVANT PAST DIARY (your own memories — use these to stay "
+                "in character and avoid repeating past mistakes):\n"
+                + "\n".join(f"  {line}" for line in relevant_diary_lines)
+                + "\n"
+            )
+
         # Inject critical reminder (dead-man's switch from harness)
         reminder = self.harness.get_critical_reminder()
         if reminder:
             situation += f"\n{reminder}"
 
         return situation
+
+    def _recall_relevant_diary(self, project: ProjectState) -> list[str]:
+        """Return up to 3 short diary-entry lines relevant to the current turn.
+
+        Compose the search query from the active task + project + most
+        recent inbox subject so the prompt builder can reference
+        ``self.name``'s own past entries. Best-effort: every failure
+        path returns an empty list so the situation report degrades
+        gracefully when the diary index isn't available.
+        """
+        try:
+            from autonoma.world.diary_search import diary_index
+
+            if len(diary_index) == 0:
+                return []
+            parts: list[str] = []
+            if self.current_task is not None:
+                parts.append(self.current_task.title)
+                parts.append(self.current_task.description[:140])
+            if project.description:
+                parts.append(project.description[:160])
+            if self.inbox:
+                parts.append(self.inbox[-1].content[:120])
+            query = " ".join(p for p in parts if p)
+            if not query.strip():
+                return []
+            return diary_index.search_text(
+                query, agent=self.persona.name, top_n=3
+            )
+        except Exception:
+            return []
 
     # Matches the start of the JSON "speech" value so we can begin emitting
     # typing tokens before the full response is assembled.
