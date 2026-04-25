@@ -21,6 +21,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentProfile, type AgentJournalEntry } from "@/hooks/useAgentProfile";
 import { StatusBox } from "@/components/StatusBox";
+import TradingCard from "@/components/TradingCard";
 
 const RARITY_COLOR: Record<string, string> = {
   legendary: "from-amber-400 to-rose-500",
@@ -259,6 +260,14 @@ export default function AgentProfilePage() {
             </div>
           </section>
         </div>
+
+        {/* ── Trading card export ─────────────────────────────── */}
+        <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+          <h2 className="mb-3 font-mono text-sm font-semibold text-white/80">
+            트레이딩 카드
+          </h2>
+          <TradingCard profile={profile} />
+        </section>
 
         {/* ── Relationships ───────────────────────────────────── */}
         <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
