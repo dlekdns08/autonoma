@@ -335,3 +335,137 @@ async def voice_delete_binding(
         removed=True,
     )
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
+
+
+# ── Phase 2-#4 — ASR transcribe + voice command ──────────────────────
+#
+# The browser captures push-to-talk audio with MediaRecorder, posts it
+# here as multipart audio, and we run it through the ASR provider
+# (CohereLabs/cohere-transcribe-03-2026 by default — see
+# ``src/autonoma/voice/asr.py``). Two endpoints:
+#
+#   POST /api/voice/transcribe — pure STT, returns the text.
+#   POST /api/voice/command    — STT + inject through the
+#                                 ``ExternalInputRouter`` so the swarm
+#                                 receives the utterance as a directed
+#                                 message. ``target`` is optional; when
+#                                 omitted the Director picks it up.
+
+# Soft cap on uploaded audio size to keep a malicious client from OOMing
+# the ASR worker. Raw 16 kHz mono PCM16 ≈ 32 kB/s, so 8 MB ≈ 4 minutes —
+# more than enough for a push-to-talk command.
+MAX_ASR_AUDIO_BYTES = 8 * 1024 * 1024
+
+
+def _asr_disabled_error() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={"code": "asr_disabled", "message": "ASR 비활성화됨"},
+    )
+
+
+@router.post("/api/voice/transcribe")
+async def voice_transcribe(
+    audio: UploadFile = File(...),
+    language: str = Form(default=""),
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Run ASR over an uploaded audio blob and return the transcribed text.
+
+    ``language`` is forwarded to the processor as a hint. When empty we
+    fall back to ``settings.voice_asr_default_language``.
+    """
+    from autonoma.config import settings as _settings
+    from autonoma.voice.asr import get_asr_provider
+
+    if getattr(_settings, "voice_asr_provider", "cohere") == "none":
+        raise _asr_disabled_error()
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "empty_audio", "message": "오디오가 비어 있습니다."},
+        )
+    if len(raw) > MAX_ASR_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "audio_too_large",
+                "message": f"오디오 크기가 한도({MAX_ASR_AUDIO_BYTES} 바이트)를 넘었습니다.",
+            },
+        )
+
+    lang = (language or _settings.voice_asr_default_language or "en").strip()
+    provider = get_asr_provider()
+    try:
+        # Heavy CPU/GPU work — push to a worker thread so the event loop
+        # keeps serving other requests while the model decodes.
+        import anyio
+
+        result = await anyio.to_thread.run_sync(
+            lambda: provider.transcribe(raw, language=lang)
+        )
+    except RuntimeError as exc:
+        # Most likely the ASR extras aren't installed.
+        logger.error(f"[voice] transcribe failed: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "asr_unavailable",
+                "message": str(exc),
+            },
+        ) from exc
+    except Exception as exc:
+        logger.exception(f"[voice] transcribe crashed: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "asr_error", "message": str(exc)},
+        ) from exc
+
+    logger.info(
+        f"[voice] transcribed user={user.id} bytes={len(raw)} "
+        f"text={result.text[:60]!r} ms={result.duration_ms}"
+    )
+    return {
+        "text": result.text,
+        "language": result.language,
+        "duration_ms": result.duration_ms,
+        "model": result.model,
+    }
+
+
+@router.post("/api/voice/command")
+async def voice_command(
+    audio: UploadFile = File(...),
+    target: str = Form(default=""),
+    language: str = Form(default=""),
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Transcribe → inject through the ExternalInputRouter.
+
+    Returns both the transcript and the routing result so the UI can
+    show "✓ delivered to Alice" toasts.
+    """
+    from autonoma.external_input import ExternalMessage, router as ext_router
+
+    transcript = await voice_transcribe(audio=audio, language=language, user=user)
+    text = (transcript.get("text") or "").strip()
+    if not text:
+        return {
+            "transcript": transcript,
+            "route": {"action": "dropped_invalid", "detail": "empty transcript"},
+        }
+
+    msg = ExternalMessage(
+        source="voice",
+        user=str(user.id),
+        text=text,
+        target=(target.strip() or None),
+        metadata={"language": transcript.get("language") or ""},
+    )
+    result = await ext_router.submit(msg)
+    return {
+        "transcript": transcript,
+        "route": {"action": result.action.value, "detail": result.detail},
+    }
