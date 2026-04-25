@@ -255,6 +255,14 @@ class AgentDiary:
         self.entries.append(entry)
         if len(self.entries) > self.MAX_ENTRIES:
             self.entries = self.entries[-self.MAX_ENTRIES:]
+        # Mirror the new entry into the searchable index. Imported lazily
+        # to avoid pulling the search module into world bootstrap, and
+        # never raises — diary writes must not be blocked by indexing.
+        try:
+            from autonoma.world.diary_search import diary_index
+            diary_index.add_diary_entry(self.agent_name, entry)
+        except Exception:  # pragma: no cover — best-effort
+            pass
         return entry
 
     def get_memoir(self) -> str:

@@ -18,6 +18,7 @@ import type {
 import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 import { useAgentVoice } from "@/hooks/useAgentVoice";
+import { useSfx } from "@/hooks/useSfx";
 
 const SESSION_KEY = "autonoma_auth";
 
@@ -245,6 +246,10 @@ export function useSwarm() {
   // navigation that wipes the URL (which is the right behavior).
   const pendingJoinCodeRef = useRef<string | null>(null);
   const voice = useAgentVoice();
+  const sfx = useSfx();
+  // Stable ref so handlers don't recreate when sfx identity changes.
+  const sfxRef = useRef(sfx);
+  sfxRef.current = sfx;
   // The voice object's reference changes whenever `speakingAgents` updates
   // (it's inside useMemo deps there — necessarily, since consumers read the
   // live Set through this reference). If `voice` sits directly in the deps
@@ -689,48 +694,78 @@ export function useSwarm() {
             const name = data.agent as string | undefined;
             if (!name) break;
             addToast("level_up", "LEVEL UP!", `${name} reached Lv${data.level}!`, "★");
+            sfxRef.current.play("level_up");
+            break;
+          }
+          case "achievement.earned": {
+            const name = data.agent as string | undefined;
+            const title = data.title as string | undefined;
+            if (!name || !title) break;
+            addToast("achievement", "ACHIEVEMENT UNLOCKED!", `${name}: ${title}`, "🏆");
+            sfxRef.current.play("achievement");
+            break;
+          }
+          case "achievement.tier_complete": {
+            const name = data.agent as string | undefined;
+            const tier = data.tier as string | undefined;
+            if (!name || !tier) break;
+            addToast(
+              "achievement",
+              `${tier.toUpperCase()} TIER COMPLETE!`,
+              `${name} cleared every ${tier}-tier achievement`,
+              "👑",
+            );
+            sfxRef.current.play("tier_complete");
             break;
           }
           case "boss.appeared": {
             const name = data.name as string | undefined;
             if (!name) break;
             addToast("boss", "BOSS APPEARED!", `${name} (Lv${data.level}) challenges the swarm!`, "☠");
+            sfxRef.current.play("boss_appear");
             break;
           }
           case "boss.defeated": {
             const name = data.name as string | undefined;
             if (!name) break;
             addToast("boss", "BOSS DEFEATED!", `${name} has been vanquished! +${data.xp_reward}XP`, "★");
+            sfxRef.current.play("boss_defeat");
             break;
           }
           case "guild.formed": {
             const name = data.name as string | undefined;
             if (!name) break;
             addToast("guild", "Guild Formed!", `${name}: ${(data.members as string[])?.join(", ")}`, "♥♥");
+            sfxRef.current.play("guild_form");
             break;
           }
           case "fortune.given": {
             const name = data.agent as string | undefined;
             if (!name) break;
             addToast("fortune", "Fortune Cookie!", `${name}: ${data.fortune}`, "🥠");
+            sfxRef.current.play("fortune");
             break;
           }
           case "fortune.pickup": {
             const name = data.agent as string | undefined;
             if (!name) break;
             addToast("fortune", "Fortune Opened!", `${name}: ${data.fortune}`, "🥠");
+            sfxRef.current.play("fortune");
             break;
           }
           case "ghost.appears":
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
+            sfxRef.current.play("ghost");
             break;
           case "project.completed":
             addToast("achievement", "PROJECT COMPLETE!", "The swarm has finished its work!", "★★★");
+            sfxRef.current.play("complete");
             break;
           case "agent.spawned": {
             const name = data.name as string | undefined;
             if (!name) break;
             addToast("info", "Agent Spawned", `${data.emoji} ${name} (${data.role})`, `${data.emoji}`);
+            sfxRef.current.play("spawn");
             break;
           }
           case "human.feedback":
@@ -1356,5 +1391,6 @@ export function useSwarm() {
     mocapTriggerFiredEvent,
     voiceBindingsRefreshToken,
     voiceBindingEvent,
+    sfx,
   };
 }
