@@ -3930,9 +3930,9 @@ async def _run_swarm_headless(
     overrides: dict[str, Any] | None = None
     if preset_id:
         try:
-            from autonoma.db.harness_policies import get_preset_by_id
+            from autonoma.db.harness_policies import get_policy_by_id
 
-            preset = await get_preset_by_id(preset_id)
+            preset = await get_policy_by_id(preset_id)
             if preset is not None:
                 policy = HarnessPolicyContent.model_validate(preset.content)
         except Exception as exc:
