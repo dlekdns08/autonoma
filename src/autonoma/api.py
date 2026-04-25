@@ -3877,13 +3877,135 @@ async def _start_scheduler_runner() -> None:
     from autonoma.scheduler import scheduler_runner
 
     scheduler_runner.start()
+    # Subscribe the headless swarm launcher to scheduler fires. We do
+    # this on startup (not at module load) so the bus has its handler
+    # list initialised in the same event loop the swarm runs on.
+    bus.on("schedule.fire_requested", _on_schedule_fire_requested)
 
 
 @app.on_event("shutdown")
 async def _stop_scheduler_runner() -> None:
     from autonoma.scheduler import scheduler_runner
 
+    bus.off("schedule.fire_requested", _on_schedule_fire_requested)
     await scheduler_runner.stop()
+
+
+# ── Headless swarm launcher ──────────────────────────────────────────
+
+
+async def _run_swarm_headless(
+    *,
+    goal: str,
+    owner_user_id: str,
+    preset_id: str = "",
+    max_rounds: int = 30,
+    label: str = "",
+) -> int:
+    """Run a swarm without a connected WebSocket session.
+
+    Used by the cron scheduler (and any future backend trigger) so
+    "rebuild the docs every night" doesn't require a tab to be open.
+    The run goes through the same ``_run_swarm`` loop as a foreground
+    job — checkpoints, run summary, replay data, and observability
+    rollups all populate the same tables as a normal run.
+
+    Returns the synthetic session id (always negative) so the caller
+    can correlate logs / replay URLs.
+    """
+    sid = _next_headless_session_id()
+    sess = SessionState(
+        ws=_HeadlessWebSocket(),  # type: ignore[arg-type]
+        session_id=sid,
+        owner_user_id=owner_user_id,
+        room_id=sid,
+    )
+    _sessions[sid] = sess
+
+    # Resolve the policy from the preset if one was named, otherwise
+    # leave it None so the swarm picks up the system default. The
+    # admin-only flag is False — scheduled runs don't get to flip
+    # admin-only knobs even if the operator marked the preset admin-y.
+    policy: HarnessPolicyContent | None = None
+    overrides: dict[str, Any] | None = None
+    if preset_id:
+        try:
+            from autonoma.db.harness_policies import get_preset_by_id
+
+            preset = await get_preset_by_id(preset_id)
+            if preset is not None:
+                policy = HarnessPolicyContent.model_validate(preset.content)
+        except Exception as exc:
+            logger.warning(
+                "[headless] preset %s lookup failed (%s) — using defaults",
+                preset_id,
+                exc,
+            )
+
+    # Use whatever provider config the operator has in settings.
+    llm_config = llm_config_from_settings()
+
+    logger.info(
+        "[headless] launching session=%s owner=%s preset=%s label=%s goal=%r",
+        sid,
+        owner_user_id,
+        preset_id or "default",
+        label or "-",
+        goal[:80],
+    )
+
+    # Tag the event loop's contextvar so bus emits originating in this
+    # run get routed to the right session — exactly mirroring the
+    # foreground ``start`` command's setup.
+    import contextvars as _cv
+
+    ctx = _cv.copy_context()
+    ctx.run(_current_session_id.set, sid)
+
+    async def _runner() -> None:
+        try:
+            await _run_swarm(
+                session_id=sid,
+                goal=goal,
+                max_rounds=max_rounds,
+                llm_config=llm_config,
+                policy=policy,
+                preset_id=preset_id or None,
+                overrides=overrides,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[headless:%s] unhandled error", sid)
+        finally:
+            _sessions.pop(sid, None)
+
+    asyncio.create_task(_runner(), context=ctx, name=f"headless-swarm-{sid}")
+    return sid
+
+
+async def _on_schedule_fire_requested(**data: Any) -> None:
+    """Bus handler: a schedule fired → kick off a headless swarm run."""
+    goal = str(data.get("goal") or "").strip()
+    owner = str(data.get("owner") or "").strip()
+    preset_id = str(data.get("preset_id") or "").strip()
+    if not goal or not owner:
+        logger.warning(
+            "[headless] dropping schedule.fire_requested with empty goal/owner"
+        )
+        return
+    sid = await _run_swarm_headless(
+        goal=goal,
+        owner_user_id=owner,
+        preset_id=preset_id,
+        label=f"schedule:{data.get('schedule_id')}",
+    )
+    await bus.emit(
+        "schedule.fire_dispatched",
+        schedule_id=data.get("schedule_id"),
+        session_id=sid,
+        owner=owner,
+    )
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)
