@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -75,8 +79,8 @@ class Cutscene(BaseModel):
     description: str = Field(default="", max_length=500)
     steps: list[CutsceneStep] = Field(default_factory=list)
     trigger: CutsceneTrigger = Field(default_factory=CutsceneTrigger)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_now_iso)
+    updated_at: str = Field(default_factory=_now_iso)
 
     @field_validator("steps")
     @classmethod
