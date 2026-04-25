@@ -54,10 +54,17 @@ class CutsceneStore:
         return self._root / safe
 
     def _path(self, owner: str, cutscene_id: str) -> Path:
-        safe_id = "".join(c for c in cutscene_id if c.isalnum() or c in "-_")
-        if not safe_id:
-            raise ValueError("cutscene_id contains no safe characters")
-        return self._user_dir(owner) / f"{safe_id}.json"
+        # Reject IDs that would need rewriting rather than silently
+        # rewriting them — silently coercing ``../etc/passwd`` to
+        # ``etcpasswd`` would be a footgun, since two distinct IDs
+        # could collide on the same filename.
+        if not cutscene_id or any(
+            not (c.isalnum() or c in "-_") for c in cutscene_id
+        ):
+            raise ValueError(
+                "cutscene_id must contain only alphanumeric, '-', or '_' characters"
+            )
+        return self._user_dir(owner) / f"{cutscene_id}.json"
 
     # ── Mutating ops ─────────────────────────────────────────────────
 
