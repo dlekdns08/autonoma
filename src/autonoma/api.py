@@ -196,6 +196,51 @@ def _resolve_session_owner(session_id: int) -> str | None:
 from autonoma.context import set_session_owner_resolver as _install_owner_resolver  # noqa: E402
 
 _install_owner_resolver(_resolve_session_owner)
+
+
+# ── Headless WebSocket stub ──────────────────────────────────────────
+#
+# Cron-triggered runs and other backend-only swarm spawns don't have a
+# browser on the other end. ``_run_swarm`` is heavily coupled to the
+# WebSocket-backed ``SessionState`` though, so the cheapest way to
+# reuse the existing run loop (with checkpoints, run-summary writes,
+# observability bookkeeping intact) is to feed it a stub that
+# satisfies the WebSocket protocol but drops every outbound message.
+#
+# IMPORTANT: this is a *write-only* sink. Any inbound-receive code that
+# tries to await ``receive_text`` on it will hang forever — but the
+# headless launcher never goes near the inbound loop, so that path is
+# never exercised.
+
+class _HeadlessWebSocket:
+    """Drop-everything WebSocket stub for backend-only runs."""
+
+    client_state: int = 1  # CONNECTED — keeps starlette guards happy
+
+    async def accept(self, *_a: Any, **_kw: Any) -> None:
+        return None
+
+    async def send_text(self, _msg: str) -> None:
+        return None
+
+    async def send_json(self, _payload: Any) -> None:
+        return None
+
+    async def close(self, *_a: Any, **_kw: Any) -> None:
+        return None
+
+
+# Synthetic session ids for headless runs come from a negative-ranged
+# counter so they can never collide with real ``id(WebSocket)`` values
+# (CPython ids are positive). Atomic int monotonic — single-process.
+_headless_session_counter: int = -1
+
+
+def _next_headless_session_id() -> int:
+    global _headless_session_counter
+    sid = _headless_session_counter
+    _headless_session_counter -= 1
+    return sid
 _rooms: dict[int, RoomState] = {}
 # Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
 # misreads when someone reads it aloud).
