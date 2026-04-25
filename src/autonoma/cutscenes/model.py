@@ -104,4 +104,4 @@ class Cutscene(BaseModel):
         return last.at_ms + max(0, extra)
 
     def touch(self) -> None:
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = _now_iso()
