@@ -569,6 +569,17 @@ async def _run_swarm(
     session.swarm = swarm
     session.project = project
 
+    # Bind the external input router to this swarm so any voice/live
+    # chat ingress can inject directly into the run. We rebind on every
+    # start (the singleton is module-level) and unbind on shutdown so a
+    # stale reference can't keep the swarm pinned in memory.
+    try:
+        from autonoma.external_input import router as _ext_router
+
+        _ext_router.bind_swarm(swarm)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(f"[Swarm:{session_id}] external_input bind failed: {exc}")
+
     # Seed per-run observability. ``policy`` is the effective content
     # after preset + overrides + validation, so recording it here gives
     # an accurate picture even when the user didn't supply either.
