@@ -3799,6 +3799,9 @@ from autonoma.routers import (  # noqa: E402
 )
 app.include_router(_agents_router.router)
 app.include_router(_bridges_router.router)
+from autonoma.routers import cutscenes as _cutscenes_router  # noqa: E402
+
+app.include_router(_cutscenes_router.router)
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)
