@@ -3802,6 +3802,29 @@ app.include_router(_bridges_router.router)
 from autonoma.routers import cutscenes as _cutscenes_router  # noqa: E402
 
 app.include_router(_cutscenes_router.router)
+from autonoma.routers import scheduler as _scheduler_router  # noqa: E402
+
+app.include_router(_scheduler_router.router)
+from autonoma.routers import translate as _translate_router  # noqa: E402
+
+app.include_router(_translate_router.router)
+
+
+# Boot the scheduler poll loop on app startup. Stopping it on shutdown
+# prevents test runners from leaving a stray task hanging across
+# repeated app instantiation.
+@app.on_event("startup")
+async def _start_scheduler_runner() -> None:
+    from autonoma.scheduler import scheduler_runner
+
+    scheduler_runner.start()
+
+
+@app.on_event("shutdown")
+async def _stop_scheduler_runner() -> None:
+    from autonoma.scheduler import scheduler_runner
+
+    await scheduler_runner.stop()
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)
