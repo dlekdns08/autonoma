@@ -3218,6 +3218,73 @@ async def resume_session(
     }
 
 
+@app.get("/api/session/{session_id}/replay")
+async def replay_session(
+    session_id: int,
+    _admin: User = Depends(require_admin),
+) -> dict[str, Any]:
+    """Phase 1-#1 — return every per-round checkpoint for a session.
+
+    The frontend ``ReplayPlayer`` UI walks this payload as a timeline:
+    each entry is a self-contained ``ProjectState`` snapshot at the end
+    of a round, so scrubbing back to round N is a single state swap.
+
+    Heavy by design — scaling concerns are deliberately punted: the
+    average run produces ~tens of checkpoints, each ~tens of KB. If a
+    run grows past that, paginate by ``round_number`` rather than
+    streaming partial states.
+    """
+    from sqlalchemy import select
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import session_checkpoint
+    from autonoma.models import ProjectState
+
+    engine = get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            select(session_checkpoint)
+            .where(session_checkpoint.c.session_id == session_id)
+            .order_by(session_checkpoint.c.round_number.asc())
+        )
+        rows = result.fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="no_checkpoints_for_session")
+
+    frames: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            state = ProjectState.from_json(row.state_json)
+            frames.append(
+                {
+                    "round_number": row.round_number,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "state": state.model_dump(mode="json"),
+                }
+            )
+        except Exception as exc:
+            # Skip a corrupt checkpoint rather than failing the whole
+            # replay — a single broken row shouldn't blackhole an
+            # otherwise viewable run.
+            logger.warning(
+                "[replay] dropped corrupt checkpoint round=%s: %s",
+                row.round_number,
+                exc,
+            )
+
+    if not frames:
+        raise HTTPException(status_code=422, detail="all_checkpoints_corrupt")
+
+    return {
+        "session_id": session_id,
+        "frame_count": len(frames),
+        "first_round": frames[0]["round_number"],
+        "last_round": frames[-1]["round_number"],
+        "frames": frames,
+    }
+
+
 @app.get("/api/health")
 async def health():
     active_swarms = sum(
