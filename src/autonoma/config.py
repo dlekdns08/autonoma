@@ -181,6 +181,18 @@ class Settings(BaseSettings):
     slack_signing_secret: str = ""     # Slack Events API verification
     discord_webhook_secret: str = ""   # shared secret for inbound Discord
 
+    # ── Voice ASR (Phase 2-#4) ──
+    # Server-side speech-to-text for voice commands. The default uses
+    # CohereLabs/cohere-transcribe-03-2026 via HuggingFace transformers
+    # — the model is gated, so the operator must accept its license and
+    # set HF_TOKEN before launch. Set provider="none" to disable voice
+    # commands entirely (e.g. on machines without GPU).
+    voice_asr_provider: Literal["cohere", "none"] = "cohere"
+    voice_asr_model: str = "CohereLabs/cohere-transcribe-03-2026"
+    # Language hint forwarded to the processor. The Cohere model is
+    # multilingual but performs best when the source language is given.
+    voice_asr_default_language: str = "ko"
+
     def model_post_init(self, __context: object) -> None:
         """Accept bare ANTHROPIC_API_KEY / OPENAI_API_KEY without the AUTONOMA_ prefix."""
         import os
