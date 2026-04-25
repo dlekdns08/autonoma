@@ -147,6 +147,13 @@ class AgentSwarm:
         self.quest_board = QuestBoard()
         self.trading_post = TradingPost()
         self.boss_arena = BossArena()
+        # Phase 4-C — guild raids run alongside the existing boss
+        # combat: the top-synergy guild starts a raid when a boss
+        # spawns, and we mirror each member's hit into the raid so the
+        # post-fight summary can split rewards by contribution.
+        from autonoma.world.raids import RaidArena
+
+        self.raid_arena = RaidArena()
         self.post_office = PostOffice()
         self.fortune_jar = FortuneCookieJar()
         self.ghost_realm = GhostRealm()
@@ -1513,6 +1520,8 @@ class AgentSwarm:
                     self._round, f"Boss {boss.name} escaped!",
                     "Boss got away", "We defeated the boss", "boss_defeated",
                 )
+                # Phase 4-C: a wipe is just a raid that didn't finish.
+                await self._finalize_raid(base_xp=0, defeated=False)
 
         # Try spawning a new boss
         if agent_names:
@@ -1535,6 +1544,8 @@ class AgentSwarm:
                     f"☠ BOSS APPEARED: {boss.name} the {boss.species}! ☠",
                     self._round, [], dramatic_weight=4,
                 )
+                # Phase 4-C: kick off a guild raid if any guild qualifies.
+                await self._maybe_start_raid(boss)
 
         # Agents attack current boss
         if self.boss_arena.current_boss and self.boss_arena.current_boss.phase.value == "fighting":
@@ -1556,6 +1567,12 @@ class AgentSwarm:
                             hp=boss.hp,
                             max_hp=boss.max_hp,
                         )
+                        # Mirror this hit into the active raid so the
+                        # contribution log + reward split reflect the
+                        # real fight. Non-guild members are simply not
+                        # part of any raid; their hits land on the
+                        # boss but don't move the raid HP bar.
+                        self._mirror_to_raid(name, damage)
 
             # Check if boss was defeated
             if self.boss_arena.current_boss.phase.value == "defeated":
@@ -1575,6 +1592,10 @@ class AgentSwarm:
                     xp_reward=xp_reward + bonus_xp,
                     rarity_boost=scaled_rewards.get("rarity_boost", 0.0),
                 )
+                # Phase 4-C: settle the raid and award guild bonus XP.
+                await self._finalize_raid(
+                    base_xp=xp_reward + bonus_xp, defeated=True,
+                )
                 self.multiverse.record_branch(
                     self._round, f"Defeated {boss.name}!",
                     "Team victory!", "Boss escaped", "boss_defeated",
@@ -1583,6 +1604,110 @@ class AgentSwarm:
                 if self.world_clock.weather.value == "stormy":
                     for name in agent_names:
                         self.quest_board.check_completion(name, "task_in_storm", self._round)
+
+    # ── Guild raids (Phase 4-C) ───────────────────────────────────────
+
+    async def _maybe_start_raid(self, boss) -> None:
+        """Pick the highest-synergy active guild and open a raid for it.
+
+        We require at least 2 members so the synergy bonus has any
+        meaning, and recompute synergy fresh against the current
+        relationship graph in case the cached value drifted since the
+        guild was formed.
+        """
+        if not self.guilds.guilds:
+            return
+        candidates = []
+        for name, guild in self.guilds.guilds.items():
+            if guild.size < 2:
+                continue
+            synergy = guild.calculate_synergy(self.relationships)
+            candidates.append((synergy, name, guild))
+        if not candidates:
+            return
+        candidates.sort(reverse=True)
+        synergy, guild_name, guild = candidates[0]
+
+        try:
+            raid = self.raid_arena.start(
+                guild_name=guild_name,
+                boss_name=boss.name,
+                boss_max_hp=boss.max_hp,
+                synergy_bonus=synergy,
+                current_round=self._round,
+            )
+        except RuntimeError:
+            # A raid is already active — don't double-start. Can happen
+            # if a previous boss escaped without us tearing down
+            # cleanly; the next boss will get its own raid on
+            # successful tick.
+            return
+        await bus.emit(
+            "raid.started",
+            raid_id=raid.raid_id,
+            guild=raid.guild_name,
+            boss=raid.boss_name,
+            boss_max_hp=raid.boss_max_hp,
+            synergy_bonus=raid.synergy_bonus,
+            members=list(guild.members.keys()),
+            deadline_round=raid.deadline_round,
+        )
+
+    def _mirror_to_raid(self, agent_name: str, damage: int) -> None:
+        """Record an attack into the active raid if the attacker is
+        in the raiding guild. Non-members are silently ignored — they
+        still hit the boss via ``boss_arena``, but their hits don't
+        feed the raid contribution log.
+        """
+        raid = self.raid_arena.active
+        if raid is None or damage <= 0:
+            return
+        guild = self.guilds.guilds.get(raid.guild_name)
+        if guild is None or agent_name not in guild.members:
+            return
+        # ``record`` (not ``attribute``) keeps the raid's HP bar in
+        # lockstep with the actual boss fight — the synergy bonus is
+        # awarded later as a separate XP pool in ``_finalize_raid``.
+        raid.record(agent_name, damage)
+
+    async def _finalize_raid(self, *, base_xp: int, defeated: bool) -> None:
+        """Settle the active raid: distribute bonus XP on victory,
+        emit a wipe event on a loss. Idempotent — calling without an
+        active raid is a no-op.
+        """
+        raid = self.raid_arena.active
+        if raid is None:
+            return
+        # Distribute a guild-only bonus on top of the per-agent reward
+        # everyone already received from boss_arena. The bonus scales
+        # with synergy so a tight guild gets meaningfully more than a
+        # loose one — exactly the Phase 4-C selling point.
+        if defeated and base_xp > 0 and raid.contributions:
+            bonus_pool = int(base_xp * raid.synergy_bonus)
+            split = raid.reward_split(bonus_pool) if bonus_pool > 0 else {}
+            for agent_name, bonus in split.items():
+                agent = self.agents.get(agent_name)
+                if agent is None or bonus <= 0:
+                    continue
+                agent.stats.add_xp(bonus)
+            await bus.emit(
+                "raid.victory",
+                raid_id=raid.raid_id,
+                guild=raid.guild_name,
+                bonus_pool=bonus_pool,
+                split=split,
+                contributions={c.agent: c.damage for c in raid.contributions},
+            )
+        elif not defeated:
+            await bus.emit(
+                "raid.wiped",
+                raid_id=raid.raid_id,
+                guild=raid.guild_name,
+                damage_dealt=raid.damage_taken,
+                damage_pct=raid.damage_pct,
+            )
+        # Drain the active slot so the next boss gets a fresh raid.
+        self.raid_arena.tick(self._round + 1)
 
     # ── Love Letters & Hate Mail ──────────────────────────────────────
 
