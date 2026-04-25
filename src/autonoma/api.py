@@ -182,6 +182,20 @@ class RoomState:
 
 
 _sessions: dict[int, SessionState] = {}
+
+
+# Expose ``session_id → owner_user_id`` to modules that can't import
+# ``api`` directly (cutscenes, scheduler). Registered once at module
+# load; the resolver closes over the live ``_sessions`` dict so it
+# always sees current state.
+def _resolve_session_owner(session_id: int) -> str | None:
+    sess = _sessions.get(session_id)
+    return sess.owner_user_id if sess is not None else None
+
+
+from autonoma.context import set_session_owner_resolver as _install_owner_resolver  # noqa: E402
+
+_install_owner_resolver(_resolve_session_owner)
 _rooms: dict[int, RoomState] = {}
 # Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
 # misreads when someone reads it aloud).
