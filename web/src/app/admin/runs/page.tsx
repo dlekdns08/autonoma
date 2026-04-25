@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 import { STRINGS } from "@/lib/strings";
@@ -196,6 +197,7 @@ export default function AdminRunsPage() {
                   <th className="px-3 py-2 text-center">Tasks</th>
                   <th className="px-3 py-2 text-center">Rounds</th>
                   <th className="px-3 py-2 text-center">Duration</th>
+                  <th className="px-3 py-2 text-center">Replay</th>
                 </tr>
               </thead>
               <tbody>
@@ -246,6 +248,15 @@ export default function AdminRunsPage() {
                       </td>
                       <td className="px-3 py-2 text-center text-white/50">
                         {formatDuration(run.duration_seconds)}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <Link
+                          href={`/admin/runs/${encodeURIComponent(run.id)}/replay`}
+                          className="rounded border border-fuchsia-400/40 bg-fuchsia-500/10 px-2 py-1 text-[11px] text-fuchsia-200 hover:bg-fuchsia-500/20"
+                          title="이 런을 라운드별로 재생"
+                        >
+                          ▶ replay
+                        </Link>
                       </td>
                     </tr>
                   );
