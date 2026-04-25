@@ -63,7 +63,14 @@ class CohereAsrProvider(AsrProvider):
     ``transcribe`` and reuse the same instance across calls. A lock
     serialises concurrent transcriptions because the underlying
     ``model.generate`` is not safe to share across threads on the same
-    CUDA stream without queuing.
+    accelerator stream without queuing.
+
+    Device selection is explicit: we run on Apple Metal (``mps``) when
+    available — the user runs Autonoma on Apple Silicon for development
+    so CUDA isn't an option. Fall back to CPU if MPS isn't built into
+    this PyTorch install (rare on recent macOS wheels). We DON'T use
+    ``device_map="auto"`` because HF's auto path can scatter layers
+    across CPU and MPS in surprising ways.
     """
 
     MODEL_ID: str = "CohereLabs/cohere-transcribe-03-2026"
@@ -74,11 +81,26 @@ class CohereAsrProvider(AsrProvider):
         self.model_id = model_id or self.MODEL_ID
         self._processor: Any = None
         self._model: Any = None
+        self._device: str = "cpu"
         self._lock = threading.Lock()
         self._load_error: Exception | None = None
 
     def is_ready(self) -> bool:
         return self._model is not None
+
+    @staticmethod
+    def _select_device() -> str:
+        try:
+            import torch  # type: ignore[import-not-found]
+        except ImportError:
+            return "cpu"
+        # Apple Silicon path: prefer MPS. ``is_available`` catches the
+        # "torch built without MPS" case; ``is_built`` distinguishes
+        # platform support from runtime availability.
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available() and mps.is_built():
+            return "mps"
+        return "cpu"
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -100,13 +122,26 @@ class CohereAsrProvider(AsrProvider):
             )
             raise self._load_error from exc
 
-        logger.info(f"[asr] loading {self.model_id} (this may take a while)…")
+        device = self._select_device()
+        self._device = device
+        logger.info(f"[asr] loading {self.model_id} on device={device}…")
         self._processor = AutoProcessor.from_pretrained(self.model_id)
-        self._model = CohereAsrForConditionalGeneration.from_pretrained(
-            self.model_id,
-            device_map="auto",
+        # Load on CPU first then move to the target device. Some HF
+        # weights aren't directly loadable on MPS due to dtype-init
+        # ordering, but ``.to("mps")`` after construction is reliable.
+        model = CohereAsrForConditionalGeneration.from_pretrained(self.model_id)
+        if device != "cpu":
+            try:
+                model = model.to(device)
+            except Exception as exc:  # pragma: no cover — runtime quirk
+                logger.warning(
+                    f"[asr] failed to move model to {device}, staying on CPU: {exc}"
+                )
+                self._device = "cpu"
+        self._model = model
+        logger.info(
+            f"[asr] {self.model_id} ready on {self._device} dtype={getattr(model, 'dtype', None)}"
         )
-        logger.info(f"[asr] {self.model_id} ready")
 
     def transcribe(
         self,
@@ -133,8 +168,13 @@ class CohereAsrProvider(AsrProvider):
                 return_tensors="pt",
                 language=language,
             )
+            # ``self._model.device`` is the canonical target after our
+            # explicit ``.to(device)`` move in ``_ensure_loaded``. The
+            # MPS path is happiest when input dtype matches the model.
             inputs = inputs.to(self._model.device, dtype=self._model.dtype)
-            outputs = self._model.generate(**inputs, max_new_tokens=self.DEFAULT_MAX_NEW_TOKENS)
+            outputs = self._model.generate(
+                **inputs, max_new_tokens=self.DEFAULT_MAX_NEW_TOKENS
+            )
             text = self._processor.decode(outputs, skip_special_tokens=True)
             duration_ms = int((time.perf_counter() - t0) * 1000)
 
