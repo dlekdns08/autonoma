@@ -199,7 +199,19 @@ async def _on_bus_event(event_name: str, data: dict[str, Any]) -> None:
         "boss.defeated",
     ):
         return
+
+    # Scope by session owner: only fire cutscenes that belong to the
+    # user whose swarm raised this event. Without this filter, two
+    # tenants running in parallel would each see the *other's* end-of-
+    # run cinematic — a privacy + UX regression.
+    from autonoma.context import current_session_id, lookup_session_owner
+
+    active_session = current_session_id.get()
+    active_owner = lookup_session_owner(active_session)
+
     for cutscene in cutscene_store.iter_all():
+        if active_owner is not None and cutscene.owner_user_id != active_owner:
+            continue
         if not _matches_trigger(cutscene, event_name, data):
             continue
         # Re-use the same fan-out as the manual play endpoint.
