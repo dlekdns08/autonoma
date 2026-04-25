@@ -60,7 +60,7 @@ async def test_swarm_emits_raid_victory_when_guild_clears_boss():
     class _FakeAgent:
         def __init__(self, name: str) -> None:
             self.name = name
-            self.bones = AgentBones.from_role(name, role="coder")
+            self.bones = AgentBones.from_role("coder", name=name)
             self.persona = type("P", (), {"name": name})()
 
             class _Stats:
