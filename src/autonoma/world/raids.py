@@ -70,12 +70,36 @@ class GuildRaid:
         return max(0, self.deadline_round - current_round)
 
     def attribute(self, agent: str, base_damage: int) -> int:
-        """Apply synergy and record an attack. Returns final damage dealt."""
+        """Apply synergy and record an attack. Returns final damage dealt.
+
+        Use this when the raid is the canonical fight (standalone
+        raids, future PvE arenas). When mirroring an external boss
+        fight, prefer :py:meth:`record` instead so the raid tally
+        stays in lockstep with the real boss HP.
+        """
         if self.phase != RaidPhase.FIGHTING:
             return 0
         boosted = int(base_damage * (1.0 + self.synergy_bonus))
         boosted = max(1, boosted)
         applied = min(boosted, self.boss_hp)
+        self.boss_hp -= applied
+        self.contributions.append(RaidContribution(agent=agent, damage=applied))
+        if self.boss_hp <= 0:
+            self.boss_hp = 0
+            self.phase = RaidPhase.VICTORY
+        return applied
+
+    def record(self, agent: str, damage: int) -> int:
+        """Log a contribution without amplifying it.
+
+        The swarm boss-fight path already computed actual damage
+        against the boss in ``BossArena``; we just want this raid's
+        contribution log + HP bar to mirror reality. Returns the
+        damage that was applied (capped at remaining HP).
+        """
+        if self.phase != RaidPhase.FIGHTING or damage <= 0:
+            return 0
+        applied = min(damage, self.boss_hp)
         self.boss_hp -= applied
         self.contributions.append(RaidContribution(agent=agent, damage=applied))
         if self.boss_hp <= 0:
