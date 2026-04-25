@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from autonoma.config import settings
+from autonoma.event_bus import bus
 
 if TYPE_CHECKING:
     from autonoma.llm import BaseLLMClient, LLMResponse
@@ -52,9 +53,12 @@ class RunRecorder:
         self.model = model
         self.started_at = datetime.now()
         self._llm_path = run_dir / "llm-calls.jsonl"
+        self._events_path = run_dir / "events.jsonl"
         self._meta_path = run_dir / "meta.json"
         self._lock = asyncio.Lock()
+        self._events_lock = asyncio.Lock()
         self._call_seq = 0
+        self._event_seq = 0
         self._checkpoints: list[int] = []
 
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +74,7 @@ class RunRecorder:
             "finished_at": finished_at.isoformat() if finished_at else None,
             "checkpoints": self._checkpoints,
             "llm_calls": self._call_seq,
+            "events": self._event_seq,
         }
         try:
             self._meta_path.write_text(json.dumps(meta, indent=2))
@@ -91,6 +96,52 @@ class RunRecorder:
             self._write_meta(finished_at=None)
         except Exception as e:
             logger.warning(f"[tracing] checkpoint round={round_num} failed: {e}")
+
+    # ── Event log ─────────────────────────────────────────────────────
+    #
+    # ``events.jsonl`` is the wire-level recording of every event the
+    # bus emits during a run: ``{seq, ts, event, data}`` per line. It is
+    # the substrate the Replay & A/B-comparison features read from. We
+    # keep it separate from ``llm-calls.jsonl`` because event payloads
+    # are tiny (a few KB max) and we want fast scanning by event name
+    # without skipping over multi-MB LLM blobs.
+    #
+    # Skip a few high-frequency / low-signal events so the file doesn't
+    # explode on long runs. Keep ``agent.speech`` because the Replay UI
+    # plays speech bubbles back; drop the per-tick mood/state spam.
+    _SKIP_EVENTS: frozenset[str] = frozenset(
+        {
+            "agent.state",
+            "agent.position",
+            "world.clock",
+        }
+    )
+
+    async def log_event(self, event: str, data: dict[str, Any]) -> None:
+        if event in self._SKIP_EVENTS:
+            return
+        async with self._events_lock:
+            self._event_seq += 1
+            record = {
+                "seq": self._event_seq,
+                "ts": datetime.now().isoformat(),
+                "event": event,
+                "data": data,
+            }
+            try:
+                line = json.dumps(record, default=str, ensure_ascii=False) + "\n"
+                payload = line.encode("utf-8")
+                fd = os.open(
+                    str(self._events_path),
+                    os.O_APPEND | os.O_WRONLY | os.O_CREAT,
+                    0o644,
+                )
+                try:
+                    os.write(fd, payload)
+                finally:
+                    os.close(fd)
+            except Exception as e:
+                logger.warning(f"[tracing] event log failed event={event}: {e}")
 
     # ── LLM call log ──────────────────────────────────────────────────
 
@@ -134,6 +185,19 @@ def set_active_recorder(recorder: RunRecorder | None) -> None:
     _active.set(recorder)
 
 
+# Tap handler registry: a single recorder may be the active subscriber
+# for the bus. We keep the bound method on the recorder object so
+# ``finish_run`` can untap exactly the handler that was registered.
+_RECORDER_TAP_ATTR = "_bus_tap_handler"
+
+
+def _make_tap_for(recorder: RunRecorder):
+    async def _tap(event_name: str, data: dict[str, Any]) -> None:
+        await recorder.log_event(event_name, data)
+
+    return _tap
+
+
 def start_run(goal: str, model: str) -> RunRecorder | None:
     """Create a new recorder and mark it active. Returns None if disabled."""
     if not settings.trace_enabled:
@@ -147,6 +211,11 @@ def start_run(goal: str, model: str) -> RunRecorder | None:
         logger.warning(f"[tracing] could not create run dir: {e}")
         return None
     set_active_recorder(recorder)
+    # Subscribe a bus tap so every emitted event is persisted to
+    # events.jsonl. Stored on the recorder so ``finish_run`` can untap.
+    tap = _make_tap_for(recorder)
+    setattr(recorder, _RECORDER_TAP_ATTR, tap)
+    bus.tap(tap)
     logger.info(f"[tracing] run started: {run_dir}")
     return recorder
 
@@ -154,6 +223,9 @@ def start_run(goal: str, model: str) -> RunRecorder | None:
 def finish_run(recorder: RunRecorder | None) -> None:
     if recorder is None:
         return
+    tap = getattr(recorder, _RECORDER_TAP_ATTR, None)
+    if tap is not None:
+        bus.untap(tap)
     recorder.finalize()
     if get_active_recorder() is recorder:
         set_active_recorder(None)
