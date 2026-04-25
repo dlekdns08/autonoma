@@ -56,7 +56,7 @@ export interface UseReplay {
 }
 
 const EMPTY_SWARM_STATE: SwarmState = {
-  status: "completed",
+  status: "finished",
   project_name: "",
   goal: "",
   round: 0,
@@ -64,16 +64,20 @@ const EMPTY_SWARM_STATE: SwarmState = {
   agents: [],
   tasks: [],
   files: [],
-  messages: [],
   // Stage / room state — replays default to a calm sky and no boss
   // because we're rendering historical data, not live combat.
   sky: "day",
-  weather: "",
+  events: [],
   boss: null,
   cookies: [],
+  epilogue: "",
+  leaderboard: "",
+  multiverse: "",
+  graveyard: "",
   relationships: [],
-  ghosts: [],
-  exit_reason: "",
+  final_answer: "",
+  completed: false,
+  incompleteReason: "",
 };
 
 function projectFrameToSwarmState(frame: ReplayFrame): SwarmState {
@@ -86,8 +90,8 @@ function projectFrameToSwarmState(frame: ReplayFrame): SwarmState {
     agents: (s.agents as SwarmState["agents"]) ?? [],
     tasks: (s.tasks as SwarmState["tasks"]) ?? [],
     files: (s.files as SwarmState["files"]) ?? [],
-    messages: (s.messages as SwarmState["messages"]) ?? [],
-    exit_reason: s.completed ? "project_complete" : "",
+    completed: !!s.completed,
+    final_answer: typeof s.final_answer === "string" ? s.final_answer : "",
   };
 }
 
