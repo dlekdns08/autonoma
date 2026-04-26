@@ -24,6 +24,11 @@ import {
   resetPoseToBaseline,
   snapshotPoseAsClip,
 } from "@/lib/poseEditor/poseClip";
+import {
+  FINGER_PRESETS,
+  applyFingerPreset,
+  type Hand,
+} from "@/lib/poseEditor/fingerPresets";
 import type { MocapBone } from "@/lib/mocap/clipFormat";
 import type { MocapBoneMap } from "@/lib/mocap/vrmShared";
 
@@ -90,6 +95,7 @@ export default function PoseEditorPanel() {
   const [stage, setStage] = useState<Stage>("idle");
   const [stageMessage, setStageMessage] = useState<string | null>(null);
   const [ikSyncToken, setIkSyncToken] = useState(0);
+  const [fingerHand, setFingerHand] = useState<Hand>("both");
   const bonesRef = useRef<MocapBoneMap>({});
 
   const { mocapClipEvent } = useSwarm();
@@ -224,6 +230,47 @@ export default function PoseEditorPanel() {
               >
                 초기화
               </button>
+            </div>
+
+            <div className="border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-wide text-white/40">
+                  손가락 프리셋
+                </div>
+                <div className="flex gap-1">
+                  {(["L", "R", "both"] as const).map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setFingerHand(h)}
+                      className={
+                        "rounded border px-2 py-0.5 text-[10px] " +
+                        (fingerHand === h
+                          ? "border-fuchsia-400/60 bg-fuchsia-500/15 text-fuchsia-100"
+                          : "border-white/15 bg-slate-900/60 text-white/60 hover:border-white/35")
+                      }
+                    >
+                      {h === "L" ? "왼손" : h === "R" ? "오른손" : "양손"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                {FINGER_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      if (!Object.keys(bonesRef.current).length) return;
+                      applyFingerPreset(bonesRef.current, p, fingerHand);
+                    }}
+                    className="flex items-center gap-1.5 rounded border border-white/15 bg-slate-900/60 px-2 py-1.5 text-left text-[11px] text-white/85 hover:border-white/35 hover:bg-slate-900/80"
+                  >
+                    <span className="text-base">{p.emoji}</span>
+                    <span className="truncate">{p.name}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="mt-2 border-t border-white/10 pt-3">
