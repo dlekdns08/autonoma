@@ -547,12 +547,20 @@ export default function MocapPage() {
               웹캠 → VRM · 녹화 후 전역 바인딩에 등록하면 대시보드가 즉시 반영합니다.
             </p>
           </div>
-          <button
-            onClick={() => router.push("/")}
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 font-mono text-xs text-white/60 hover:bg-white/10"
-          >
-            ← 대시보드
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => router.push("/pose-editor")}
+              className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 px-4 py-2 font-mono text-xs text-fuchsia-200 hover:bg-fuchsia-500/20"
+            >
+              포즈 에디터 →
+            </button>
+            <button
+              onClick={() => router.push("/")}
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 font-mono text-xs text-white/60 hover:bg-white/10"
+            >
+              ← 대시보드
+            </button>
+          </div>
         </header>
 
         <section className="flex flex-col gap-2">
