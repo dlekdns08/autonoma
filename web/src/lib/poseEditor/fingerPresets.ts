@@ -1,9 +1,16 @@
 /**
  * Finger pose presets — fist, V-sign, thumbs-up, etc.
  *
- * Each preset is a per-joint curl ratio in [0, 1]:
- *   0 → joint at the rig's resting (extended) position
- *   1 → joint at full curl (matches the solver's "fist" rotation)
+ * Each preset is a per-joint curl ratio in [-1, 1]:
+ *   0  → joint at the rig's resting (extended) position
+ *   1  → joint at full curl (matches the solver's "fist" rotation)
+ *  -1  → joint hyper-extended past rest (thumb metacarpal uses this
+ *        for "thumbs up" — abduct the thumb out away from the palm)
+ *
+ * Negative is mostly meaningful for the thumb metacarpal axis; on the
+ * finger flexion joints (axis=z) it would map to backward bending,
+ * which we generally don't want. Presets here only use negative on
+ * thumbMetacarpal.
  *
  * Applying a preset writes a curl quaternion onto each finger bone
  * using the same axis / sign convention the live mocap solver uses
@@ -84,17 +91,34 @@ export interface FingerPreset {
   curls: FingerCurls;
 }
 
-/** Shorthand factory — same curl on every joint of every finger. Used
- *  to build "fist" (1.0) and "open hand" (0.0) presets compactly. */
-function uniformCurls(c: number): FingerCurls {
+/** Shorthand factory — uniform curl on every NON-THUMB finger joint.
+ *  The thumb is excluded because it has different axes/anatomy and
+ *  gets per-preset values that match how the solver lands at real
+ *  hand poses (~half of outRangeRad even at full fist; matching with
+ *  curl=1 visibly overshoots — thumb plunges through the palm). */
+function fingerCurls(c: number): FingerCurls {
   return {
-    thumbProximal: c, thumbDistal: c, thumbMetacarpal: c,
     indexProximal: c, indexIntermediate: c, indexDistal: c,
     middleProximal: c, middleIntermediate: c, middleDistal: c,
     ringProximal: c, ringIntermediate: c, ringDistal: c,
     littleProximal: c, littleIntermediate: c, littleDistal: c,
   };
 }
+
+// Thumb tuning notes — values are roughly half of what the live solver
+// lands on at the joint's "fist" measurement, because the live path
+// rarely reaches norm=1 for the thumb (the measured angle saturates
+// well before fistRad). curl=1 here would visibly overshoot.
+//
+//   thumbMetacarpal: adduction toward palm (axis y)
+//                    +0.5 ≈ fist wrap, -0.5 ≈ thumbs-up abduction
+//   thumbProximal:   small flex at the joint (axis x, flipSign true)
+//                    keep ≤0.5 — full curl looks like a broken thumb
+//   thumbDistal:     same idea as proximal
+const THUMB_FIST = { thumbMetacarpal: 0.5, thumbProximal: 0.4, thumbDistal: 0.4 };
+const THUMB_TUCK = { thumbMetacarpal: 0.4, thumbProximal: 0.3, thumbDistal: 0.3 };
+const THUMB_REST = { thumbMetacarpal: 0,   thumbProximal: 0,   thumbDistal: 0   };
+const THUMB_OUT  = { thumbMetacarpal: -0.5, thumbProximal: 0,  thumbDistal: 0   };
 
 /** Built-in preset library. Add new entries here; the panel renders
  *  whatever is in this array. */
@@ -103,20 +127,20 @@ export const FINGER_PRESETS: readonly FingerPreset[] = [
     id: "open",
     name: "손 펴기",
     emoji: "🖐",
-    curls: uniformCurls(0),
+    curls: { ...fingerCurls(0), ...THUMB_REST },
   },
   {
     id: "fist",
     name: "주먹",
     emoji: "✊",
-    curls: { ...uniformCurls(1), thumbProximal: 0.7, thumbDistal: 0.7 },
+    curls: { ...fingerCurls(1), ...THUMB_FIST },
   },
   {
     id: "v",
     name: "V자",
     emoji: "✌️",
     curls: {
-      thumbProximal: 0.6, thumbDistal: 0.6, thumbMetacarpal: 0.4,
+      ...THUMB_TUCK,
       indexProximal: 0,   indexIntermediate: 0,   indexDistal: 0,
       middleProximal: 0,  middleIntermediate: 0,  middleDistal: 0,
       ringProximal: 1,    ringIntermediate: 1,    ringDistal: 1,
@@ -127,20 +151,14 @@ export const FINGER_PRESETS: readonly FingerPreset[] = [
     id: "thumbsup",
     name: "엄지척",
     emoji: "👍",
-    curls: {
-      thumbProximal: 0,   thumbDistal: 0,   thumbMetacarpal: 0,
-      indexProximal: 1,   indexIntermediate: 1,   indexDistal: 1,
-      middleProximal: 1,  middleIntermediate: 1,  middleDistal: 1,
-      ringProximal: 1,    ringIntermediate: 1,    ringDistal: 1,
-      littleProximal: 1,  littleIntermediate: 1,  littleDistal: 1,
-    },
+    curls: { ...fingerCurls(1), ...THUMB_OUT },
   },
   {
     id: "point",
     name: "검지 가리키기",
     emoji: "☝️",
     curls: {
-      thumbProximal: 0.6, thumbDistal: 0.6, thumbMetacarpal: 0.5,
+      ...THUMB_TUCK,
       indexProximal: 0,   indexIntermediate: 0,   indexDistal: 0,
       middleProximal: 1,  middleIntermediate: 1,  middleDistal: 1,
       ringProximal: 1,    ringIntermediate: 1,    ringDistal: 1,
@@ -152,7 +170,9 @@ export const FINGER_PRESETS: readonly FingerPreset[] = [
     name: "OK",
     emoji: "👌",
     curls: {
-      thumbProximal: 0.7, thumbDistal: 0.6, thumbMetacarpal: 0.6,
+      // OK requires thumb-tip ≈ index-tip — needs both flexed enough
+      // to meet. Slightly stronger than THUMB_TUCK on proximal/distal.
+      thumbMetacarpal: 0.5, thumbProximal: 0.5, thumbDistal: 0.5,
       indexProximal: 0.7, indexIntermediate: 0.7, indexDistal: 0.5,
       middleProximal: 0.1, middleIntermediate: 0, middleDistal: 0,
       ringProximal: 0.1,   ringIntermediate: 0,  ringDistal: 0,
@@ -164,7 +184,7 @@ export const FINGER_PRESETS: readonly FingerPreset[] = [
     name: "락 🤘",
     emoji: "🤘",
     curls: {
-      thumbProximal: 0.7, thumbDistal: 0.7, thumbMetacarpal: 0.5,
+      ...THUMB_TUCK,
       indexProximal: 0,   indexIntermediate: 0,   indexDistal: 0,
       middleProximal: 1,  middleIntermediate: 1,  middleDistal: 1,
       ringProximal: 1,    ringIntermediate: 1,    ringDistal: 1,
@@ -176,7 +196,7 @@ export const FINGER_PRESETS: readonly FingerPreset[] = [
     name: "자연스러운 손",
     emoji: "🤚",
     curls: {
-      thumbProximal: 0.15, thumbDistal: 0.15, thumbMetacarpal: 0.1,
+      thumbMetacarpal: 0.05, thumbProximal: 0.1, thumbDistal: 0.1,
       indexProximal: 0.25, indexIntermediate: 0.25, indexDistal: 0.2,
       middleProximal: 0.3, middleIntermediate: 0.3, middleDistal: 0.25,
       ringProximal: 0.35,  ringIntermediate: 0.35, ringDistal: 0.3,
@@ -220,7 +240,10 @@ function applyOneSide(
   for (const key of Object.keys(curls) as (keyof FingerCurls)[]) {
     const raw = curls[key];
     if (raw === undefined) continue;
-    const norm = Math.max(0, Math.min(1, raw));
+    // Allow [-1, 1] — negative is meaningful for the thumb metacarpal
+    // (abduction past rest, e.g. "thumbs up"). For finger flexion
+    // joints presets here only use non-negative values.
+    const norm = Math.max(-1, Math.min(1, raw));
 
     const cal = CALIBRATION[jointTypeOf(key)];
     const sign = (cal.flipSign ? -1 : 1) * handSign;
