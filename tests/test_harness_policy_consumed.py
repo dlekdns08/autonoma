@@ -44,8 +44,6 @@ SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "autonoma"
 # As each section is wired, remove its entry from this set; the test
 # will then prevent regressions.
 KNOWN_UNWIRED_SECTIONS: set[str] = {
-    "system.prompt_variant",   # Phase 3 wiring pending — see harness/system_strategies.py
-    "cache.provider_cache",    # Phase 3 wiring pending — see harness/cache_strategies.py
     "budget.enforcement",      # Phase 3 wiring pending — needs token accumulator
 }
 
