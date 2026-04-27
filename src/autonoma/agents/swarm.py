@@ -829,6 +829,10 @@ class AgentSwarm:
                 name, agent.bones.species, role, agent.bones.rarity, self._round,
             )
 
+        logger.info(
+            "[Swarm] spawned agent name=%s role=%s skills=%d (total=%d)",
+            name, role, len(persona.skills), len(self.agents),
+        )
         return agent
 
     # ── World Event Application ────────────────────────────────────────
@@ -1204,7 +1208,10 @@ class AgentSwarm:
                     requester=requester,
                 )
             except Exception:  # pragma: no cover — last-ditch
-                pass
+                logger.exception(
+                    "[Swarm] failed to emit agent.spawn_failed for name=%s requester=%s",
+                    name, requester,
+                )
 
     async def _on_recovery_needed(
         self,
