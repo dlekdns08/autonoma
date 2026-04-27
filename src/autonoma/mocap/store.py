@@ -128,7 +128,10 @@ async def create_clip(
                 select(mocap_clips).where(mocap_clips.c.id == clip_id)
             )
         ).first()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(
+            f"create_clip: failed to read back inserted clip id={clip_id}"
+        )
     return _row_to_summary(row)
 
 
@@ -444,7 +447,11 @@ async def upsert_binding(
                 )
             )
         ).first()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(
+            f"upsert_binding: failed to read back binding "
+            f"vrm_file={vrm_file} kind={trigger_kind} value={trigger_value}"
+        )
     return _row_to_binding(row)
 
 
