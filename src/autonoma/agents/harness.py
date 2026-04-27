@@ -117,8 +117,19 @@ class AgentHarness:
         allowed, _reason = self.check_action(action)
         return allowed
 
-    def build_system_prompt(self, agent_name: str, skills: list[str]) -> str:
-        """Build the full system prompt with failure mode inoculation and constraints."""
+    def build_system_prompt(
+        self,
+        agent_name: str,
+        skills: list[str],
+        *,
+        prompt_suffix: str = "",
+    ) -> str:
+        """Build the full system prompt with failure mode inoculation and constraints.
+
+        ``prompt_suffix`` is appended verbatim at the end of the assembled
+        prompt; callers resolve it from ``system.prompt_variant`` via the
+        strategy registry so policy changes are observable at the model.
+        """
         parts: list[str] = []
 
         # Role header
@@ -180,7 +191,10 @@ class AgentHarness:
             parts.append(self.output_format)
             parts.append("")
 
-        return "\n".join(parts)
+        rendered = "\n".join(parts)
+        # The suffix already starts with its own newline (see
+        # autonoma.harness.system_strategies), so append directly.
+        return rendered + prompt_suffix
 
     def get_critical_reminder(self) -> str:
         """Get the critical reminder injected every turn (dead-man's switch)."""
