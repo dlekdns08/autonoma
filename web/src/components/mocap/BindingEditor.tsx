@@ -158,7 +158,10 @@ export default function BindingEditor({ vrmFile, clips, bindings, isAdmin }: Pro
         body: JSON.stringify({ vrm_file: vrmFile, value: slug }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
+        const body = (await res.json().catch((err) => {
+          console.warn("Failed to parse mocap-trigger error response", err);
+          return {};
+        })) as {
           detail?: string;
         };
         setError(`발사 실패: ${body?.detail ?? res.status}`);
