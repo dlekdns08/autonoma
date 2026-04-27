@@ -9,15 +9,24 @@ Design:
 - To keep drift impossible, the registry is *auto-seeded* from the
   Pydantic model at import time: we introspect every Literal annotation
   across the sub-policies and plant a ``NotImplementedError``-raising
-  stub for each value.
-- Phase 3 replaces the stubs with real implementations using
-  ``@register(section, value)`` — calls that still land on a stub throw
-  a clear "fill me in" error instead of silently no-op'ing.
+  placeholder for each value. The placeholder is a safety net; every
+  slot ships replaced by a real implementation registered via
+  ``@register(section, value)`` from one of the ``*_strategies.py``
+  modules. ``is_stub`` and ``all_stubs`` exist to surface any slot that
+  ever falls back to the placeholder.
+
+Two invariants are enforced by tests:
+
+1. ``tests/test_harness_*.py`` — for each section, every Literal value
+   has a registered (non-stub) implementation.
+2. ``tests/test_harness_policy_consumed.py`` — every section is read at
+   runtime via ``lookup()`` somewhere under ``src/autonoma``. This
+   prevents "dead policy" drift: a knob the user can change in the UI
+   but the runtime never consults.
 
 The callable signature is intentionally loose (``Callable[..., Any]``)
-because the correct shape depends on the call site, which only becomes
-concrete during the Phase 3 runtime refactor. The registry's job here is
-*completeness*, not shape.
+because the correct shape varies per section — see each ``*_strategies.py``
+module for its concrete signature.
 """
 
 from __future__ import annotations
@@ -57,13 +66,17 @@ def _enum_slots_from_model() -> list[SlotKey]:
 
 
 def _stub(section: str, value: str) -> StrategyFn:
-    """Build a placeholder that fails loudly if called before Phase 3
-    plugs a real implementation in."""
+    """Build a placeholder that fails loudly if no ``@register`` ever
+    replaces it. All shipped slots are registered; this exists only as
+    a safety net so a missing import (e.g. forgetting to add a new
+    ``*_strategies.py`` to ``harness/__init__.py``) raises at the call
+    site instead of silently no-op'ing."""
 
     def impl(*args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
-            f"harness strategy '{section}.{value}' has no implementation yet "
-            "(Phase 2 stub — fill in during Phase 3 runtime refactor)"
+            f"harness strategy '{section}.{value}' has no implementation. "
+            "Either add an @register(...) for it, or import the module "
+            "that does in autonoma.harness.__init__."
         )
 
     impl.__name__ = f"stub__{section.replace('.', '_')}__{value}"
@@ -112,7 +125,7 @@ def lookup(section: str, value: str) -> StrategyFn:
 
 
 def is_stub(section: str, value: str) -> bool:
-    """True iff the registered entry is still the Phase 2 placeholder."""
+    """True iff the registered entry is still the unimplemented placeholder."""
     fn = _REGISTRY.get((section, value))
     if fn is None:
         return False
@@ -125,6 +138,8 @@ def all_slots() -> list[SlotKey]:
 
 
 def all_stubs() -> list[SlotKey]:
-    """Slots that still use a Phase 2 stub. Phase 3 PRs should shrink
-    this list to zero."""
+    """Slots that still resolve to the unimplemented placeholder.
+    Should be empty in shipped builds — non-empty means a strategy
+    module is missing from ``harness/__init__.py`` or a new policy
+    value was added without an implementation."""
     return [key for key in _REGISTRY if is_stub(*key)]
