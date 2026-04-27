@@ -105,6 +105,10 @@ def _infer_duration_from_wav(data: bytes) -> float:
             rate = wf.getframerate()
             return frames / float(rate) if rate else 0.0
     except Exception:
+        logger.warning(
+            "WAV duration parse failed (%d bytes); returning 0.0",
+            len(data), exc_info=True,
+        )
         return 0.0
 
 
