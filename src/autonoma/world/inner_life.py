@@ -7,11 +7,14 @@ clean slice to pull out of the monolith.
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from autonoma.world.personality import Mood
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from autonoma.world import MemoryEntry
@@ -262,7 +265,10 @@ class AgentDiary:
             from autonoma.world.diary_search import diary_index
             diary_index.add_diary_entry(self.agent_name, entry)
         except Exception:  # pragma: no cover — best-effort
-            pass
+            logger.debug(
+                "diary_index.add_diary_entry failed for agent=%s (best-effort)",
+                self.agent_name, exc_info=True,
+            )
         return entry
 
     def get_memoir(self) -> str:
