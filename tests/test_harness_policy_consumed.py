@@ -43,9 +43,7 @@ SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "autonoma"
 # any runtime call site. Each entry is a known gap with a tracking note.
 # As each section is wired, remove its entry from this set; the test
 # will then prevent regressions.
-KNOWN_UNWIRED_SECTIONS: set[str] = {
-    "budget.enforcement",      # Phase 3 wiring pending — needs token accumulator
-}
+KNOWN_UNWIRED_SECTIONS: set[str] = set()
 
 
 def _declared_literal_sections() -> set[str]:
