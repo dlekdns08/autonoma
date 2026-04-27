@@ -128,6 +128,10 @@ class CutsceneStore:
                 try:
                     yield Cutscene.model_validate_json(entry.read_text())
                 except Exception:
+                    logger.warning(
+                        "[cutscenes] failed to load %s during iter_all", entry,
+                        exc_info=True,
+                    )
                     continue
 
 
