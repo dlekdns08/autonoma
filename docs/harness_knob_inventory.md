@@ -9,6 +9,35 @@
 > in [`src/autonoma/harness/policy.py`](../src/autonoma/harness/policy.py);
 > this file is preserved for historical context and section-count rationale.
 
+## Phase 3 status (2026-04-27)
+
+All 17 algorithmic-branch sections in `HarnessPolicyContent` now resolve
+to a registered strategy *and* are consulted by at least one runtime
+call site. The mapping is enforced by
+[`tests/test_harness_policy_consumed.py`](../tests/test_harness_policy_consumed.py),
+which fails CI if a new Literal field is added without a matching
+`lookup(...)` call.
+
+| Section path                       | Consumer (runtime call site)                                    |
+|------------------------------------|-----------------------------------------------------------------|
+| `loop.exit_condition`              | `agents/swarm.py` (round-loop exit check)                       |
+| `loop.stall_policy`                | `agents/base.py` (stall handler dispatch)                       |
+| `action.json_extraction`           | `agents/base.py` (`_extract_json`)                              |
+| `action.llm_error_handling`        | `agents/base.py` (LLM exception handler)                        |
+| `action.harness_enforcement`       | `agents/base.py` (action gate)                                  |
+| `decision.on_parse_failure`        | `agents/base.py` (parse-fallback handler)                       |
+| `decision.message_priority`        | `agents/base.py` (inbox ordering)                               |
+| `memory.summarization`             | `agents/base.py` (memory summary formatter)                     |
+| `spawn.approval_mode`              | `agents/swarm.py` (spawn-approval gate)                         |
+| `routing.strategy`                 | `agents/swarm.py` (turn dispatch)                               |
+| `safety.code_execution`            | `agents/base.py` (sandbox gate)                                 |
+| `safety.enforcement_level`         | `agents/base.py` (capability enforcement)                       |
+| `mood.transition_strategy`         | `agents/base.py` (mood update)                                  |
+| `system.prompt_variant`            | `agents/base.py` (`_decide` system prompt assembly)             |
+| `cache.provider_cache`             | `agents/base.py` → `llm.AnthropicLLMClient` (cache_control)     |
+| `budget.enforcement`               | `agents/swarm.py` (round-loop budget gate)                      |
+| `checkpoint.include_full_state`    | `api.py` (`_start_checkpoint_task`)                             |
+
 ## Summary by section
 
 | Section     | Cat A (numeric/bool) | Cat B (algorithmic/enum) | Total |
