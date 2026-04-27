@@ -68,6 +68,7 @@ from autonoma.config import settings
 from autonoma.context import current_session_id as _current_session_id
 from autonoma.db.users import (
     User,
+    UserStatus,
     create_user,
     get_user_by_id,
     get_user_by_username,
@@ -96,9 +97,8 @@ class SessionState:
     ``room_id``. ``llm_config`` is per-viewer because providers/keys are
     a viewer-level concern (each viewer may bring their own).
 
-    The ``swarm`` / ``project`` / ``task`` attributes below are kept for
-    backwards-compat with code that still references them; they're
-    proxied to the room when one exists.
+    The ``swarm`` / ``project`` / ``task`` attributes are read-through
+    properties that proxy to the session's room when one exists.
     """
     ws: WebSocket
     session_id: int
@@ -350,6 +350,9 @@ class ConnectionManager:
             )
             return True
         except Exception:
+            logger.exception(
+                "[ws] send_to_ws failed for event=%s", event_type
+            )
             return False
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
@@ -361,7 +364,12 @@ class ConnectionManager:
         for ws in list(self.connections):
             try:
                 await ws.send_text(message)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "[ws] broadcast send failed for event=%s; dropping client: %s",
+                    event_type,
+                    exc,
+                )
                 disconnected.append(ws)
         for ws in disconnected:
             if ws in self.connections:
@@ -497,7 +505,14 @@ def _make_handler(event_type: str):
         for viewer in _viewers_in_room(room_id):
             try:
                 await viewer.ws.send_text(message)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "[ws] dropping viewer sid=%s in room=%s on event=%s: %s",
+                    viewer.session_id,
+                    room_id,
+                    event_type,
+                    exc,
+                )
                 dead.append(viewer.session_id)
         for vsid in dead:
             _sessions.pop(vsid, None)
@@ -713,8 +728,12 @@ async def _run_swarm(
                     current_round = getattr(sess.swarm, "_round", 0) if sess.swarm else 0
                     state_json = sess.project.to_json()
                     await _upsert_checkpoint(session_id, current_round, state_json)
-                except Exception:
-                    pass
+                except Exception as cp_exc:
+                    logger.warning(
+                        "[checkpoint:%s] final shutdown checkpoint failed: %s",
+                        session_id,
+                        cp_exc,
+                    )
             raise
 
     state_checkpoint_task = asyncio.create_task(_checkpoint_loop())
@@ -1137,6 +1156,8 @@ def _resolve_cors_origins() -> list[str]:
     """
     origins: list[str] = []
     if settings.environment == "development":
+        # Dev origins; production origins should come from env via settings
+        # (AUTONOMA_CORS_ALLOW_ORIGINS), never hardcoded here.
         origins.extend([
             "http://localhost:3000", "http://127.0.0.1:3000",
             "http://localhost:3478", "http://127.0.0.1:3478",
@@ -1331,7 +1352,7 @@ async def _transition_user(
     user_id: str,
     *,
     required_status: set[str] | None,
-    new_status: str,
+    new_status: UserStatus,
 ) -> None:
     """Apply a status transition, 404 if missing, 409 if current status
     isn't in ``required_status`` (when specified)."""
@@ -1346,7 +1367,7 @@ async def _transition_user(
             status_code=http_status.HTTP_409_CONFLICT,
             detail="invalid_state_transition",
         )
-    await update_user_status(user_id, new_status)  # type: ignore[arg-type]
+    await update_user_status(user_id, new_status)
 
 
 @app.post(
@@ -3674,7 +3695,14 @@ async def mocap_rename_clip(
             status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name"
         )
     updated = await mocap_store.rename_clip(clip_id, new_name)
-    assert updated is not None
+    if updated is None:
+        # The summary lookup above already proved the clip exists, so a
+        # None here means the row vanished mid-request (concurrent delete)
+        # rather than a 404 we should return cleanly.
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="rename_failed",
+        )
     await bus.emit("mocap.clips.updated", clip_id=clip_id, action="renamed")
     return {"clip": updated.to_dict()}
 
@@ -3976,7 +4004,14 @@ async def _run_swarm_headless(
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("[headless:%s] unhandled error", sid)
+            logger.exception(
+                "[headless:%s] unhandled error during _run_swarm "
+                "(preset=%s, max_rounds=%s, goal=%r)",
+                sid,
+                preset_id or None,
+                max_rounds,
+                (goal[:80] + "...") if len(goal) > 80 else goal,
+            )
         finally:
             _sessions.pop(sid, None)
 
