@@ -100,6 +100,10 @@ class ScheduleStore:
                 try:
                     out.append(Schedule.model_validate_json(entry.read_text()))
                 except Exception:
+                    logger.warning(
+                        "[scheduler] failed to load %s during iter_all", entry,
+                        exc_info=True,
+                    )
                     continue
         return out
 
