@@ -195,6 +195,22 @@ sections; the merged policy is validated before the swarm boots.
   enum options / numeric bounds. Add a new `Literal` value to the
   Pydantic model and the frontend form picks it up with no TS change.
 
+### Policy model and strategy registry
+
+The typed shape of every knob lives in
+[`src/autonoma/harness/policy.py`](./src/autonoma/harness/policy.py) —
+`HarnessPolicyContent` plus nine Pydantic sub-policies, with `ge`/`le`
+bounds on numeric fields and `Literal[...]` enums on every algorithmic
+branch. Validation runs in three layers: (1) Pydantic field-level
+constraints, (2) cross-field combination checks in
+[`harness/validation.py`](./src/autonoma/harness/validation.py), and
+(3) the strategy registry in
+[`src/autonoma/harness/strategies.py`](./src/autonoma/harness/strategies.py),
+which auto-seeds itself by introspecting every `Literal` value in the
+policy model and ensures each enum slot resolves to a registered
+callable — drift between the schema and runtime dispatch is a startup
+error, not a silent no-op.
+
 ### Deployment notes
 
 - Migrations are version-gated and apply automatically on startup

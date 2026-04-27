@@ -1,5 +1,7 @@
 # Harness Knob Inventory — Phase 0 Scan (historical)
 
+> 이 인벤토리는 `src/autonoma/harness/policy.py`의 Pydantic 모델에서 파생됩니다. 모델 변경 시 이 문서도 업데이트하세요.
+
 > Source: read-only audit of `src/autonoma/agents/{base,director,swarm}.py` plus supporting modules.
 > **Total: 68 behavioral knobs** (44 numeric/boolean, 24 algorithmic/branch).
 > This document was the input to Phase 1 (`HarnessPolicyContent` model

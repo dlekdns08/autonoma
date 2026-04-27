@@ -194,6 +194,22 @@ VRM 메타데이터는 JSON 한 파일에 모여 있습니다. 엔트리 추가 
   enum 옵션 / 숫자 범위를 반환합니다. Pydantic 모델에 `Literal`
   값을 추가하면 프론트엔드 폼이 TS 변경 없이 자동으로 반영합니다.
 
+### 정책 모델과 전략 레지스트리
+
+모든 노브의 타입 정의는
+[`src/autonoma/harness/policy.py`](./src/autonoma/harness/policy.py)에
+있습니다 — `HarnessPolicyContent`와 9개의 Pydantic 서브 정책으로
+구성되며, 숫자 필드에는 `ge`/`le` 범위가, 모든 알고리즘적 분기에는
+`Literal[...]` enum이 붙어 있습니다. 검증은 세 계층으로 동작합니다:
+(1) Pydantic 필드 수준 제약, (2)
+[`harness/validation.py`](./src/autonoma/harness/validation.py)의
+교차 필드 조합 검사, (3)
+[`src/autonoma/harness/strategies.py`](./src/autonoma/harness/strategies.py)의
+전략 레지스트리 — 정책 모델의 모든 `Literal` 값을 내부 조사해
+자동 시드하고, 각 enum 슬롯이 등록된 콜러블로 해석되는지 보장합니다.
+스키마와 런타임 디스패치 간의 드리프트는 조용한 no-op이 아니라
+기동 시점 에러로 드러납니다.
+
 ### 배포 관련 주의
 
 - 마이그레이션은 버전 게이트가 있어 기동 시 자동 적용됩니다

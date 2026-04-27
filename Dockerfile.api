@@ -3,8 +3,10 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install uv for fast dependency resolution
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv for fast dependency resolution.
+# Pinned to a specific tag — ``:latest`` makes builds non-reproducible
+# and has bitten us before when uv changed CLI flags between releases.
+COPY --from=ghcr.io/astral-sh/uv:0.5.18 /uv /usr/local/bin/uv
 
 # Copy dependency files first for better caching
 COPY pyproject.toml uv.lock ./
