@@ -155,7 +155,10 @@ async def create_profile(
     except Exception:
         voice_fs.delete_ref_audio(basename)
         raise
-    assert row is not None
+    if row is None:
+        raise RuntimeError(
+            f"create_profile: failed to read back inserted profile id={profile_id}"
+        )
     return _row_to_summary(row)
 
 
@@ -346,7 +349,10 @@ async def upsert_binding(
                 )
             )
         ).first()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(
+            f"upsert_binding: failed to read back voice binding vrm_file={vrm_file}"
+        )
     return _row_to_binding(row)
 
 
