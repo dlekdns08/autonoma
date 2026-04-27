@@ -152,7 +152,10 @@ export default function LiveChatPollPanel({
         }),
       });
       if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
+        const detail = await res.json().catch((err) => {
+          console.warn("Failed to parse poll/open error response", err);
+          return {};
+        });
         const msg =
           (detail?.detail?.message as string | undefined) ??
           `HTTP ${res.status}`;
