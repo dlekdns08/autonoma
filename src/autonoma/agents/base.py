@@ -657,6 +657,16 @@ Rules:
 
         try:
             full_text = await self._stream_decide(system, situation)
+            # Rough token estimate for budget enforcement. We can't get
+            # exact counts from the streaming SDK without a second round
+            # trip, and the budget cap is a soft cap anyway — a 30%
+            # estimation error doesn't break the contract. ~3.5 chars per
+            # token is the long-run average for English + code; Korean
+            # is denser (~2.0) but the cap is forgiving so we use the
+            # higher ratio to avoid clipping legitimate runs.
+            self._total_tokens += int(
+                (len(system) + len(situation) + len(full_text)) / 3.5
+            )
             return _extract_json(full_text, strategy=self.policy.action.json_extraction)
 
         except (LLMConnectionError, LLMRateLimitError) as e:
