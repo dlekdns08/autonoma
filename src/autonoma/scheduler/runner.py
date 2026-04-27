@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from autonoma.event_bus import bus
@@ -70,6 +71,10 @@ class SchedulerRunner:
         try:
             schedule = schedule_store.get(owner, sched_id)
         except Exception:
+            logger.warning(
+                "[scheduler] fire_now failed to load schedule owner=%s sched_id=%s",
+                owner, sched_id, exc_info=True,
+            )
             return False
         if not schedule.enabled:
             return False
@@ -101,6 +106,7 @@ class SchedulerRunner:
             await self._fire(schedule, when=now, reason="cron")
 
     async def _fire(self, schedule, when: datetime, reason: str) -> None:
+        started = time.monotonic()
         logger.info(
             f"[scheduler] firing schedule={schedule.id} owner={schedule.owner_user_id} "
             f"reason={reason} goal={schedule.goal[:60]!r}"
@@ -123,6 +129,11 @@ class SchedulerRunner:
             preset_id=schedule.preset_id,
             name=schedule.name,
             reason=reason,
+        )
+        elapsed = time.monotonic() - started
+        logger.info(
+            "[scheduler] fired schedule=%s reason=%s in %.3fs",
+            schedule.id, reason, elapsed,
         )
 
 
