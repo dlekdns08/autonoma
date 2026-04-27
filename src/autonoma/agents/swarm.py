@@ -391,6 +391,41 @@ class AgentSwarm:
         while self._running and self._round < max_rounds:
             self._round += 1
 
+            # Budget enforcement: consult the policy strategy before
+            # spending another round's worth of LLM calls. ``soft_warn``
+            # emits an event and continues; ``hard_stop`` ends the run
+            # cleanly so partial work is still committed; ``off`` skips
+            # the check entirely. Token totals come from each agent's
+            # rough char-based estimator (see BaseAgent._decide).
+            total_tokens = sum(a.total_tokens for a in self.agents.values())
+            budget_fn = _strategy_lookup(
+                "budget.enforcement", self.policy.budget.enforcement
+            )
+            verdict = budget_fn(total_tokens, self.policy.budget.tokens_per_run)
+            if verdict == "warn":
+                await bus.emit(
+                    "swarm.budget_warn",
+                    round=self._round,
+                    tokens_used=total_tokens,
+                    cap=self.policy.budget.tokens_per_run,
+                )
+            elif verdict == "stop":
+                logger.info(
+                    "[Swarm] budget cap reached at round %d "
+                    "(used=%d cap=%d) — stopping",
+                    self._round, total_tokens,
+                    self.policy.budget.tokens_per_run,
+                )
+                await bus.emit(
+                    "swarm.budget_stop",
+                    round=self._round,
+                    tokens_used=total_tokens,
+                    cap=self.policy.budget.tokens_per_run,
+                )
+                exit_reason = "budget_exceeded"
+                self._round -= 1  # this round didn't actually run
+                break
+
             # Update round number on all agents
             for agent in self.agents.values():
                 agent._round_number = self._round
