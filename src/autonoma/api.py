@@ -1137,10 +1137,22 @@ async def lifespan(app: FastAPI):
     warmup_task: asyncio.Task[None] | None = None
     if settings.tts_provider == "omnivoice":
         warmup_task = asyncio.create_task(_warmup_omnivoice())
-    yield
-    if warmup_task is not None:
-        warmup_task.cancel()
-    _unregister_event_bridge()
+    # Boot the scheduler poll loop. Stopping it on shutdown prevents test
+    # runners from leaving a stray task hanging across repeated app
+    # instantiation. Subscribe the headless swarm launcher to scheduler
+    # fires here (not at module load) so the bus has its handler list
+    # initialised in the same event loop the swarm runs on.
+    from autonoma.scheduler import scheduler_runner
+    scheduler_runner.start()
+    bus.on("schedule.fire_requested", _on_schedule_fire_requested)
+    try:
+        yield
+    finally:
+        bus.off("schedule.fire_requested", _on_schedule_fire_requested)
+        await scheduler_runner.stop()
+        if warmup_task is not None:
+            warmup_task.cancel()
+        _unregister_event_bridge()
 
 
 app = FastAPI(title="Autonoma API", version="0.1.0", lifespan=lifespan)
@@ -3895,28 +3907,6 @@ app.include_router(_scheduler_router.router)
 from autonoma.routers import translate as _translate_router  # noqa: E402
 
 app.include_router(_translate_router.router)
-
-
-# Boot the scheduler poll loop on app startup. Stopping it on shutdown
-# prevents test runners from leaving a stray task hanging across
-# repeated app instantiation.
-@app.on_event("startup")
-async def _start_scheduler_runner() -> None:
-    from autonoma.scheduler import scheduler_runner
-
-    scheduler_runner.start()
-    # Subscribe the headless swarm launcher to scheduler fires. We do
-    # this on startup (not at module load) so the bus has its handler
-    # list initialised in the same event loop the swarm runs on.
-    bus.on("schedule.fire_requested", _on_schedule_fire_requested)
-
-
-@app.on_event("shutdown")
-async def _stop_scheduler_runner() -> None:
-    from autonoma.scheduler import scheduler_runner
-
-    bus.off("schedule.fire_requested", _on_schedule_fire_requested)
-    await scheduler_runner.stop()
 
 
 # ── Headless swarm launcher ──────────────────────────────────────────
