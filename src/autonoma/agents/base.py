@@ -537,12 +537,18 @@ RECENT MESSAGES:
         state: str = "SCAN"   # SCAN | EMIT | DONE
         speech_buf: list[str] = []
 
+        cache_enabled = bool(
+            _strategy_lookup(
+                "cache.provider_cache", self.policy.cache.provider_cache
+            )()
+        )
         async for chunk in self.client.stream(
             model=self._model,
             max_tokens=4096,
             temperature=self._temperature,
             system=system,
             messages=[{"role": "user", "content": situation}],
+            cache_system_prompt=cache_enabled,
         ):
             chunks.append(chunk)
 
@@ -589,8 +595,17 @@ RECENT MESSAGES:
     async def _decide(self, situation: str) -> dict[str, Any]:
         """Ask LLM to decide the next action, using harness-aware system prompt."""
 
-        # Build system prompt from harness (includes failure mode inoculation)
-        system = self.harness.build_system_prompt(self.persona.name, self.persona.skills)
+        # Build system prompt from harness (includes failure mode inoculation).
+        # The prompt suffix comes from system.prompt_variant strategy so the
+        # operator-facing knob actually shifts the model's response style.
+        prompt_suffix = _strategy_lookup(
+            "system.prompt_variant", self.policy.system.prompt_variant
+        )()
+        system = self.harness.build_system_prompt(
+            self.persona.name,
+            self.persona.skills,
+            prompt_suffix=prompt_suffix,
+        )
 
         # Build action list filtered to what this harness actually allows.
         # Use get_effective_capabilities() directly (no side-effect logging)
