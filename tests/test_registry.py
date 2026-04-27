@@ -20,10 +20,16 @@ def _isolated_db(tmp_path, monkeypatch):
     """Point the DB at a throwaway directory for every test."""
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "db_filename", "test.db")
-    # engine is cached in module state; dispose between tests
-    asyncio.get_event_loop().run_until_complete(dispose_engine())
-    yield
-    asyncio.get_event_loop().run_until_complete(dispose_engine())
+    # engine is cached in module state; dispose between tests.
+    # Use a fresh loop each time so we don't depend on whatever loop
+    # state earlier tests in the suite may have left behind.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(dispose_engine())
+        yield
+        loop.run_until_complete(dispose_engine())
+    finally:
+        loop.close()
 
 
 COMMON_BONES = dict(
