@@ -122,7 +122,11 @@ async def create_persona(
             )
         )
         row = (await conn.execute(select(personas).where(personas.c.id == pid))).first()
-    assert row is not None
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "persona_not_found", "message": "방금 생성된 페르소나를 다시 읽지 못했습니다."},
+        )
     return {"persona": _row_to_bundle(row._mapping)}
 
 
