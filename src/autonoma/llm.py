@@ -189,8 +189,14 @@ class BaseLLMClient(ABC):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,
     ) -> LLMResponse:
-        """Send a completion request and return a normalized response."""
+        """Send a completion request and return a normalized response.
+
+        ``cache_system_prompt`` requests provider-side caching of the
+        system prompt. Anthropic implements this via ``cache_control``
+        blocks; other providers ignore the flag.
+        """
         ...
 
     async def stream(
@@ -201,6 +207,7 @@ class BaseLLMClient(ABC):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,
     ) -> AsyncIterator[str]:
         """Yield text delta chunks as they arrive from the provider.
 
@@ -214,6 +221,7 @@ class BaseLLMClient(ABC):
             temperature=temperature,
             system=system,
             messages=messages,
+            cache_system_prompt=cache_system_prompt,
         )
         yield response.text
 
@@ -251,6 +259,7 @@ class AnthropicLLMClient(BaseLLMClient):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,
     ) -> LLMResponse:
         import anthropic
 
@@ -258,11 +267,26 @@ class AnthropicLLMClient(BaseLLMClient):
         # temperature, skip it up front so we don't burn a 400 every call.
         send_temperature = model not in _ANTHROPIC_MODELS_NO_TEMPERATURE
 
+        # When provider caching is on, send the system prompt as a single
+        # ephemeral cache_control block so repeated requests with the same
+        # preamble hit Anthropic's cache instead of re-billing every token.
+        system_field: Any
+        if cache_system_prompt and system:
+            system_field = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            system_field = system
+
         async def _call(include_temperature: bool):
             kwargs: dict[str, Any] = {
                 "model": model,
                 "max_tokens": max_tokens,
-                "system": system,
+                "system": system_field,
                 "messages": messages,
             }
             if include_temperature:
@@ -323,14 +347,26 @@ class AnthropicLLMClient(BaseLLMClient):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,
     ) -> AsyncIterator[str]:
         import anthropic
 
         send_temperature = model not in _ANTHROPIC_MODELS_NO_TEMPERATURE
+        system_field: Any
+        if cache_system_prompt and system:
+            system_field = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            system_field = system
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": system_field,
             "messages": messages,
         }
         if send_temperature:
@@ -411,6 +447,7 @@ class OpenAILLMClient(BaseLLMClient):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,  # noqa: ARG002 — accepted for API parity; OpenAI/vLLM don't expose cache_control
     ) -> LLMResponse:
         from openai import APIConnectionError, RateLimitError, AuthenticationError
 
