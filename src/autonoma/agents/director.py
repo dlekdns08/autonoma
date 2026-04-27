@@ -521,7 +521,11 @@ Rules:
                         debate.votes[opponent] = "opponent"
                         winner = opponent
                 except Exception:
-                    pass
+                    logger.warning(
+                        "[Director] trust-based debate resolution failed; "
+                        "falling back to random (proposer=%s opponent=%s)",
+                        proposer, opponent, exc_info=True,
+                    )
 
             if winner is None:
                 import random as _random
