@@ -6,7 +6,10 @@ agent code can all import it without creating circular dependencies.
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 # Carries the current *room* (session) id down through every awaitable
 # that runs inside a swarm task.  Bus handlers and TTS workers read this
@@ -56,4 +59,7 @@ def lookup_session_owner(session_id: int | None) -> str | None:
     try:
         return _owner_resolver(session_id)
     except Exception:
+        logger.warning(
+            "Session owner resolver raised for session_id=%s", session_id, exc_info=True
+        )
         return None
