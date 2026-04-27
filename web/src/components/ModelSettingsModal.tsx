@@ -27,6 +27,11 @@ const OPENAI_MODELS: ModelOpt[] = [
   { value: "o1-mini", label: "o1-mini" },
 ];
 
+// Dev default for self-hosted vLLM (OpenAI-compatible). Operators can
+// override via NEXT_PUBLIC_VLLM_BASE_URL when the server lives elsewhere.
+const DEFAULT_VLLM_BASE_URL =
+  process.env.NEXT_PUBLIC_VLLM_BASE_URL ?? "http://localhost:8080/v1";
+
 export default function ModelSettingsModal({
   authState,
   onAuthenticate,
@@ -45,7 +50,7 @@ export default function ModelSettingsModal({
       ? authState.model
       : "",
   );
-  const [baseUrl, setBaseUrl] = useState("http://localhost:8080/v1");
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_VLLM_BASE_URL);
   const [isCustomModel, setIsCustomModel] = useState(false);
 
   const [dynamicModels, setDynamicModels] = useState<ModelOpt[] | null>(null);
