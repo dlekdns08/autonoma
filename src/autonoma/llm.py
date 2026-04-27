@@ -508,6 +508,7 @@ class OpenAILLMClient(BaseLLMClient):
         temperature: float,
         system: str,
         messages: list[dict[str, Any]],
+        cache_system_prompt: bool = False,  # noqa: ARG002 — accepted for API parity; OpenAI/vLLM don't expose cache_control
     ) -> AsyncIterator[str]:
         full_messages = [{"role": "system", "content": system}] + list(messages)
         create_kwargs: dict[str, Any] = {
