@@ -97,7 +97,8 @@ async def _call_with_retry(
             break
         delay = LLM_RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.3)
         await asyncio.sleep(delay)
-    assert last_exc is not None
+    if last_exc is None:
+        raise RuntimeError("LLM retry exhausted without exception captured")
     raise last_exc
 
 
