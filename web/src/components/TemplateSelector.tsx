@@ -31,8 +31,10 @@ export default function TemplateSelector({ selectedId, onSelect, disabled }: Pro
           setTemplates(data.templates ?? []);
         }
       })
-      .catch(() => {
-        // silently ignore — templates are optional
+      .catch((err) => {
+        // Templates are optional, but log so a misconfigured backend
+        // doesn't fail invisibly.
+        console.warn("Failed to load templates", err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
