@@ -425,7 +425,10 @@ class OmniVoiceTTSClient(BaseTTSClient):
             except OSError:
                 pass
         except Exception:  # pragma: no cover — shutdown path
-            pass
+            logger.debug(
+                "[tts] OmniVoice cleanup raised on shutdown (best-effort)",
+                exc_info=True,
+            )
 
 
 # ── Process-wide singleton ────────────────────────────────────────────
