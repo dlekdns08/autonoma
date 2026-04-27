@@ -215,7 +215,10 @@ export function useHarnessPresets(options?: {
           setPresets((prev) => [...prev, preset]);
           return { ok: true, preset };
         }
-        const detail = await res.json().catch(() => undefined);
+        const detail = await res.json().catch((err) => {
+          console.warn("Failed to parse createPreset error response", err);
+          return undefined;
+        });
         return { ok: false, reason: statusToReason(res.status), detail };
       } catch {
         return { ok: false, reason: "network" };
@@ -246,7 +249,10 @@ export function useHarnessPresets(options?: {
           );
           return { ok: true, preset };
         }
-        const detail = await res.json().catch(() => undefined);
+        const detail = await res.json().catch((err) => {
+          console.warn("Failed to parse updatePreset error response", err);
+          return undefined;
+        });
         return { ok: false, reason: statusToReason(res.status), detail };
       } catch {
         return { ok: false, reason: "network" };
@@ -266,7 +272,10 @@ export function useHarnessPresets(options?: {
           setPresets((prev) => prev.filter((p) => p.id !== id));
           return { ok: true };
         }
-        const detail = await res.json().catch(() => undefined);
+        const detail = await res.json().catch((err) => {
+          console.warn("Failed to parse deletePreset error response", err);
+          return undefined;
+        });
         return { ok: false, reason: statusToReason(res.status), detail };
       } catch {
         return { ok: false, reason: "network" };
