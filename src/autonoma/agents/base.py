@@ -513,6 +513,10 @@ RECENT MESSAGES:
                 query, agent=self.persona.name, top_n=3
             )
         except Exception:
+            logger.debug(
+                "_recall_relevant_diary failed for agent=%s (best-effort)",
+                self.persona.name, exc_info=True,
+            )
             return []
 
     # Matches the start of the JSON "speech" value so we can begin emitting
