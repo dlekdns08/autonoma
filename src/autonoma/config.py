@@ -200,6 +200,12 @@ class Settings(BaseSettings):
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not self.openai_api_key:
             self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        # Resolve workspace paths to absolute so they don't drift with CWD
+        # changes (uvicorn --reload, scheduled tasks, tests using chdir).
+        self.output_dir = self.output_dir.expanduser().resolve()
+        self.data_dir = self.data_dir.expanduser().resolve()
+        self.trace_dir = self.trace_dir.expanduser().resolve()
+        self.standup_output_dir = self.standup_output_dir.expanduser().resolve()
 
 
 settings = Settings()
