@@ -25,9 +25,10 @@ import hmac
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi import status as http_status
 
+from autonoma.auth import User, require_active_user
 from autonoma.config import settings
 from autonoma.event_bus import bus
 
@@ -53,6 +54,35 @@ def _verify_secret(signature: str | None) -> None:
         )
 
 
+# ── Moderation helpers ───────────────────────────────────────────────
+
+
+def _split_csv(raw: str) -> list[str]:
+    """Parse a CSV setting into a list of lowercased, trimmed entries."""
+    if not raw:
+        return []
+    return [s.strip().lower() for s in raw.split(",") if s.strip()]
+
+
+def _is_moderated(username: str, text: str) -> str | None:
+    """Return a reason string if the message should be dropped, else None.
+
+    We split the two filter sources so logs make it obvious whether a
+    message was nuked for word match or a user mute. Substring match on
+    the lowercased payload is intentionally simple — operators who want
+    regex/Bayes can run a separate moderation bot in front.
+    """
+    text_lc = text.lower()
+    for word in _split_csv(settings.live_chat_word_filter):
+        if word and word in text_lc:
+            return f"word_filter:{word}"
+    name_lc = username.lower()
+    for muted in _split_csv(settings.live_chat_user_mutes):
+        if muted and muted == name_lc:
+            return f"user_mute:{muted}"
+    return None
+
+
 # ── #1a Chat bridge ──────────────────────────────────────────────────
 
 
@@ -75,6 +105,11 @@ async def live_chat_bridge(
 
     Fires ``human.feedback`` on the bus so the director/swarm can react.
     Superchats route through to the donation handler below.
+
+    Moderation: if the message hits the configured word filter or the
+    sender is muted, we return ``200 OK status="dropped"`` instead of
+    propagating to the bus. Returning OK avoids leaking the filter
+    list to a probing client.
     """
     _verify_secret(x_autonoma_signature)
     source = str(payload.get("source") or "unknown")
@@ -82,6 +117,14 @@ async def live_chat_bridge(
     text = str(payload.get("text") or "").strip()
     if not text:
         raise HTTPException(400, detail={"code": "empty_text", "message": "text required"})
+
+    drop_reason = _is_moderated(username, text)
+    if drop_reason is not None:
+        logger.info(
+            f"[live/chat] dropped source={source} user={username[:32]!r} "
+            f"reason={drop_reason}"
+        )
+        return {"status": "dropped"}
 
     await bus.emit(
         "human.feedback",
@@ -234,3 +277,85 @@ async def live_schedule(
         note=note,
     )
     return {"status": "ok", "on_air": str(on_air).lower()}
+
+
+# ── Viewer reactions (lightweight emoji burst) ───────────────────────
+#
+# Distinct from ``/api/live/chat`` (which carries text and is webhook-
+# auth gated) — reactions are a one-tap engagement signal for *logged-in*
+# viewers, so we use cookie auth instead of a shared secret. They emit
+# ``live.reaction`` on the bus so the dashboard can paint a floating
+# emoji on the stage and (optionally) influence agent moods.
+
+# Allow-list of emoji we accept. Restricting to a known set keeps
+# rendering predictable on the 3D/pixel stages and prevents abuse via
+# unicode joiners / arbitrary text.
+ALLOWED_REACTIONS: tuple[str, ...] = (
+    "👍", "❤️", "🔥", "😂", "😮", "🎉", "👏", "💯", "🤔", "🙏",
+)
+# Per-user rate limit: ``REACTION_RATE_LIMIT`` reactions per
+# ``REACTION_RATE_WINDOW_S`` seconds. Stored in-process — fine for a
+# single API node and reset on restart, which matches the ephemerality
+# of the underlying reaction itself.
+REACTION_RATE_LIMIT: int = 30
+REACTION_RATE_WINDOW_S: float = 10.0
+_reaction_buckets: dict[str, list[float]] = {}
+
+
+def _check_reaction_rate(user_id: str) -> bool:
+    """Sliding-window rate check; True means allowed."""
+    import time as _time
+
+    now = _time.time()
+    bucket = _reaction_buckets.setdefault(user_id, [])
+    cutoff = now - REACTION_RATE_WINDOW_S
+    # Drop expired entries in place rather than rebuilding so steady-
+    # state cost is O(1).
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    if len(bucket) >= REACTION_RATE_LIMIT:
+        return False
+    bucket.append(now)
+    return True
+
+
+@router.post("/api/live/reaction")
+async def live_reaction(
+    payload: dict[str, Any],
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Record a one-tap viewer reaction and broadcast it.
+
+    Shape::
+
+        { "emoji": "🔥", "room_id": 1234 }   (room_id optional)
+
+    Cookie-based auth via ``require_active_user`` — these come from
+    logged-in browser viewers, not external bridges, so the same
+    session cookie that gates ``/api/voice/*`` gates this too.
+    """
+    emoji = str(payload.get("emoji") or "").strip()
+    if emoji not in ALLOWED_REACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "bad_emoji", "message": "허용되지 않은 이모지입니다."},
+        )
+    if not _check_reaction_rate(str(user.id)):
+        raise HTTPException(
+            status_code=429,
+            detail={"code": "rate_limited", "message": "잠시 후 다시 시도하세요."},
+        )
+
+    room_id_raw = payload.get("room_id")
+    try:
+        room_id = int(room_id_raw) if room_id_raw is not None else None
+    except (TypeError, ValueError):
+        room_id = None
+
+    await bus.emit(
+        "live.reaction",
+        username=user.username,
+        emoji=emoji,
+        room_id=room_id,
+    )
+    return {"status": "ok", "emoji": emoji}
