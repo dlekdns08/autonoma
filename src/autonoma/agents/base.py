@@ -321,6 +321,8 @@ class AutonomousAgent:
                 result = await self._action_run_code(decision, project)
             elif action_type == "open_pr":
                 result = await self._action_open_pr(decision, project)
+            elif action_type == "fetch_url":
+                result = await self._action_fetch_url(decision, project)
             elif action_type == "celebrate":
                 await self._set_state(AgentState.CELEBRATING)
                 await self._say("All done!", style="bold green")
@@ -1165,6 +1167,74 @@ Rules:
             "ok": False,
             "reason": reason,
             "branch": branch,
+        }
+
+    async def _action_fetch_url(self, decision: dict, project: ProjectState) -> dict[str, Any]:
+        """Fetch a URL and return a text excerpt to the agent's memory.
+
+        Decision shape::
+
+            {
+                "action": "fetch_url",
+                "url": "https://...",
+                "max_chars": 4000  // optional
+            }
+
+        Result is folded into the agent's diary so the next ``_decide``
+        round sees it through ``_recall_relevant_diary``. We don't
+        return the full body to the LLM directly — that would blow the
+        context window on first hit.
+        """
+        url = str(decision.get("url") or "").strip()
+        try:
+            requested = decision.get("max_chars")
+            max_chars = int(requested) if requested is not None else 4000
+        except (TypeError, ValueError):
+            max_chars = 4000
+
+        if not url:
+            await self._say("fetch_url needs a url.", style="italic yellow")
+            return {"agent": self.name, "action": "fetch_url", "ok": False, "reason": "missing_url"}
+
+        from autonoma.agents.tools import fetch_url
+        import asyncio as _asyncio
+
+        result = await _asyncio.to_thread(fetch_url, url, max_chars=max_chars)
+
+        if result.ok:
+            # Stash a *short* preview in the diary; the full text is
+            # discarded after this turn (re-fetch if needed). Keeps the
+            # SQLite memory bounded.
+            preview = result.text[:600]
+            self.memory.remember(
+                f"Fetched {result.url} ({result.status}): {preview}",
+                "fetch_url",
+                self._round_number,
+            )
+            await self._say(f"Read {result.url[:50]}", style="dim cyan")
+            return {
+                "agent": self.name,
+                "action": "fetch_url",
+                "ok": True,
+                "url": result.url,
+                "status": result.status,
+                "content_type": result.content_type,
+                "text": result.text,
+                "truncated": result.truncated,
+            }
+
+        await self._say(f"fetch failed: {result.reason[:30]}", style="italic red")
+        self.memory.remember(
+            f"fetch_url failed for {url}: {result.reason}",
+            "failure",
+            self._round_number,
+        )
+        return {
+            "agent": self.name,
+            "action": "fetch_url",
+            "ok": False,
+            "url": url,
+            "reason": result.reason,
         }
 
     _round_number: int = 0  # Updated by swarm each round
