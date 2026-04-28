@@ -4,17 +4,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 
 /**
- * Phase 2-#4 — push-to-talk recorder backed by the server-side Cohere
- * ASR endpoint. The browser captures a WebM/Opus blob via MediaRecorder,
- * uploads it to ``/api/voice/command``, and the backend chains
- * transcribe → ExternalInputRouter so the Director (or a named target)
- * receives the utterance as a human-feedback message.
+ * Push-to-talk recorder backed by the server-side Cohere ASR endpoint.
  *
- * Why server-side ASR even though the platform has Web Speech API?
- *   1. The user explicitly chose ``CohereLabs/cohere-transcribe-03-2026``
- *      (multilingual, robust to noise; far better than what Safari ships).
- *   2. Server-side STT also works on devices without SpeechRecognition,
- *      so a phone viewer can drive the swarm hands-free.
+ * Two modes:
+ *   - ``batch`` (default, original): MediaRecorder → blob → POST
+ *     ``/api/voice/command`` once on stop. Simple, one round-trip.
+ *   - ``stream``: open WS to ``/api/voice/stream``, push audio chunks
+ *     every 500ms, receive ``partial`` transcripts every ~1.5s while
+ *     the user holds the button, and a ``final`` event on stop. The
+ *     partials are surfaced via ``onPartial`` so the UI can show a
+ *     live-caption bubble — perceived latency drops from
+ *     "blocked until release" to "see your words appear as you speak".
+ *
+ * Cohere is encoder-decoder + ``model.generate``: there is no token
+ * stream. The "streaming" here is rolling chunk transcription — every
+ * tick the server re-transcribes the cumulative audio buffer.
  */
 
 export interface PushToTalkResult {
@@ -25,7 +29,11 @@ export interface PushToTalkResult {
   rawAudioBytes: number;
 }
 
+export type PushToTalkMode = "batch" | "stream";
+
 export interface UsePushToTalkOptions {
+  /** Capture pipeline. Default ``batch`` keeps the original behaviour. */
+  mode?: PushToTalkMode;
   /** Optional per-call agent target. Empty/undefined → routed to Director. */
   target?: string;
   /** Language hint passed to the ASR processor. Empty → server default. */
@@ -34,6 +42,9 @@ export interface UsePushToTalkOptions {
   onResult?: (result: PushToTalkResult) => void;
   /** Notified whenever an error happens at any stage. */
   onError?: (err: string) => void;
+  /** Stream mode only — fires every time the server pushes a partial
+   *  transcript. Ignored in batch mode. */
+  onPartial?: (text: string) => void;
 }
 
 export interface UsePushToTalk {
@@ -41,6 +52,9 @@ export interface UsePushToTalk {
   uploading: boolean;
   error: string | null;
   lastResult: PushToTalkResult | null;
+  /** Latest partial transcript emitted while the user is recording. Empty
+   *  string when not recording. Only populated in stream mode. */
+  partialText: string;
   /** Begin capturing audio. Resolves when the recorder is actually live. */
   start: () => Promise<void>;
   /** Stop capturing and post the blob. The promise resolves with the
@@ -69,11 +83,25 @@ function pickMimeType(): string | undefined {
   return undefined;
 }
 
+// Derive the WS URL for /api/voice/stream from API_BASE_URL. We can't
+// reuse useSwarm's getWsUrl() because that returns the swarm WS path;
+// here we want the same host/scheme but the streaming voice path.
+function getVoiceStreamUrl(): string {
+  // API_BASE_URL is "" (same-origin), "http(s)://host", or unset on SSR.
+  if (typeof window === "undefined") return "";
+  let base = API_BASE_URL;
+  if (!base) base = window.location.origin;
+  // http → ws, https → wss
+  const wsBase = base.replace(/^http/i, "ws");
+  return `${wsBase}/api/voice/stream`;
+}
+
 export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk {
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<PushToTalkResult | null>(null);
+  const [partialText, setPartialText] = useState("");
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -82,12 +110,19 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
   const optsRef = useRef(options);
   optsRef.current = options;
 
+  // Stream-mode WS state. Held in refs so callbacks see the live socket
+  // without re-running the start callback every time identity flips.
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReadyRef = useRef(false);
+  const finalResolverRef = useRef<((r: PushToTalkResult | null) => void) | null>(null);
+  const audioByteCountRef = useRef(0);
+
   const supported =
     typeof window !== "undefined" &&
     typeof MediaRecorder !== "undefined" &&
     !!window.navigator?.mediaDevices?.getUserMedia;
 
-  // Tear down the active stream + recorder. Idempotent.
+  // Tear down the active stream + recorder + WS. Idempotent.
   const cleanup = useCallback(() => {
     const rec = recorderRef.current;
     if (rec && rec.state !== "inactive") {
@@ -104,18 +139,23 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
     }
     streamRef.current = null;
     chunksRef.current = [];
+    const ws = wsRef.current;
+    if (ws && ws.readyState !== WebSocket.CLOSED) {
+      try {
+        ws.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    wsRef.current = null;
+    wsReadyRef.current = false;
+    audioByteCountRef.current = 0;
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);
 
-  const start = useCallback(async () => {
-    if (!supported) {
-      const msg = "이 브라우저는 마이크 캡처를 지원하지 않습니다.";
-      setError(msg);
-      optsRef.current.onError?.(msg);
-      return;
-    }
-    if (recorderRef.current) return; // already recording
+  // ── Batch mode ────────────────────────────────────────────────────
+  const startBatch = useCallback(async () => {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -133,8 +173,6 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
           type: mime || "audio/webm",
         });
         chunksRef.current = [];
-        // Stop also releases the mic so the browser tab indicator turns
-        // off — release immediately rather than on next user gesture.
         const stream = streamRef.current;
         streamRef.current = null;
         if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -152,9 +190,9 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
       cleanup();
       setRecording(false);
     }
-  }, [supported, cleanup]);
+  }, [cleanup]);
 
-  const stop = useCallback(async (): Promise<PushToTalkResult | null> => {
+  const stopBatch = useCallback(async (): Promise<PushToTalkResult | null> => {
     const rec = recorderRef.current;
     if (!rec || rec.state === "inactive") {
       setRecording(false);
@@ -163,15 +201,11 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
     setRecording(false);
     setUploading(true);
 
-    // Race the recorder's onstop. We resolve with the blob once stop()
-    // has flushed the encoder.
     const blob = await new Promise<Blob>((resolve) => {
       stopResolverRef.current = resolve;
       try {
         rec.stop();
       } catch {
-        // If stop throws there will be no onstop — fall back to whatever
-        // chunks we accumulated so the upload still happens.
         resolve(new Blob(chunksRef.current, { type: "audio/webm" }));
       }
     });
@@ -229,5 +263,204 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
     }
   }, []);
 
-  return { recording, uploading, error, lastResult, start, stop, supported };
+  // ── Stream mode ───────────────────────────────────────────────────
+  const startStream = useCallback(async () => {
+    setError(null);
+    setPartialText("");
+    audioByteCountRef.current = 0;
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      optsRef.current.onError?.(msg);
+      return;
+    }
+    streamRef.current = stream;
+
+    const wsUrl = getVoiceStreamUrl();
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      optsRef.current.onError?.(msg);
+      cleanup();
+      return;
+    }
+    ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
+
+    const mime = pickMimeType();
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: "start",
+          language: optsRef.current.language ?? "",
+          target: optsRef.current.target ?? "",
+        }),
+      );
+    };
+
+    ws.onmessage = (ev) => {
+      // We only ever receive text frames from the server.
+      if (typeof ev.data !== "string") return;
+      let frame: { type?: string; text?: string; code?: string; message?: string;
+        language?: string | null; duration_ms?: number;
+        route?: { action: string; detail: string } };
+      try {
+        frame = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (frame.type === "ready") {
+        wsReadyRef.current = true;
+        // Start the recorder NOW — before "ready" the server isn't
+        // listening for binary frames yet.
+        const rec = mime
+          ? new MediaRecorder(stream, { mimeType: mime })
+          : new MediaRecorder(stream);
+        recorderRef.current = rec;
+        rec.ondataavailable = (e) => {
+          if (e.data.size <= 0) return;
+          audioByteCountRef.current += e.data.size;
+          // Forward the chunk as binary. ``e.data`` is a Blob; the WS
+          // accepts Blob directly so we don't pay an arrayBuffer hop.
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data);
+          }
+        };
+        rec.onstop = () => {
+          // Tell the server we're done — it'll flush a final transcribe
+          // and respond with {type:"final"}.
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: "stop" }));
+            } catch {
+              /* socket already closing */
+            }
+          }
+        };
+        // 500ms timeslice gives the server ~3 chunks per partial pass.
+        rec.start(500);
+        setRecording(true);
+      } else if (frame.type === "partial") {
+        const t = (frame.text || "").trim();
+        if (t) {
+          setPartialText(t);
+          optsRef.current.onPartial?.(t);
+        }
+      } else if (frame.type === "final") {
+        const result: PushToTalkResult = {
+          text: frame.text || "",
+          language: frame.language ?? null,
+          durationMs: frame.duration_ms ?? 0,
+          route: frame.route ?? { action: "unknown", detail: "" },
+          rawAudioBytes: audioByteCountRef.current,
+        };
+        setLastResult(result);
+        optsRef.current.onResult?.(result);
+        const resolver = finalResolverRef.current;
+        finalResolverRef.current = null;
+        resolver?.(result);
+      } else if (frame.type === "error") {
+        const msg = frame.message || frame.code || "voice stream error";
+        setError(msg);
+        optsRef.current.onError?.(msg);
+        const resolver = finalResolverRef.current;
+        finalResolverRef.current = null;
+        resolver?.(null);
+      }
+    };
+
+    ws.onerror = () => {
+      const msg = "음성 스트림 연결에 실패했습니다.";
+      setError(msg);
+      optsRef.current.onError?.(msg);
+      const resolver = finalResolverRef.current;
+      finalResolverRef.current = null;
+      resolver?.(null);
+    };
+
+    ws.onclose = () => {
+      wsReadyRef.current = false;
+      // If stop() is awaiting a final and the socket closed without one,
+      // unblock the caller so the UI doesn't hang.
+      const resolver = finalResolverRef.current;
+      if (resolver) {
+        finalResolverRef.current = null;
+        resolver(null);
+      }
+      setRecording(false);
+      setUploading(false);
+      const s = streamRef.current;
+      streamRef.current = null;
+      if (s) s.getTracks().forEach((t) => t.stop());
+      recorderRef.current = null;
+      wsRef.current = null;
+      // Don't clear partialText here — the button uses it to render the
+      // last-seen caption briefly after release.
+    };
+  }, [cleanup]);
+
+  const stopStream = useCallback(async (): Promise<PushToTalkResult | null> => {
+    const rec = recorderRef.current;
+    if (!rec || rec.state === "inactive") {
+      setRecording(false);
+      return null;
+    }
+    setRecording(false);
+    setUploading(true);
+
+    const final = await new Promise<PushToTalkResult | null>((resolve) => {
+      finalResolverRef.current = resolve;
+      try {
+        rec.stop();
+      } catch {
+        resolve(null);
+      }
+    });
+
+    setUploading(false);
+    setPartialText("");
+    return final;
+  }, []);
+
+  // ── Public wrappers ───────────────────────────────────────────────
+  const start = useCallback(async () => {
+    if (!supported) {
+      const msg = "이 브라우저는 마이크 캡처를 지원하지 않습니다.";
+      setError(msg);
+      optsRef.current.onError?.(msg);
+      return;
+    }
+    if (recorderRef.current) return; // already recording
+    if (optsRef.current.mode === "stream") {
+      await startStream();
+    } else {
+      await startBatch();
+    }
+  }, [supported, startBatch, startStream]);
+
+  const stop = useCallback(async (): Promise<PushToTalkResult | null> => {
+    if (optsRef.current.mode === "stream") {
+      return await stopStream();
+    }
+    return await stopBatch();
+  }, [stopBatch, stopStream]);
+
+  return {
+    recording,
+    uploading,
+    error,
+    lastResult,
+    partialText,
+    start,
+    stop,
+    supported,
+  };
 }
