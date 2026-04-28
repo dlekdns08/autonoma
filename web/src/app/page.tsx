@@ -20,6 +20,7 @@ import AgentModal from "@/components/AgentModal";
 import RelationshipWeb from "@/components/RelationshipWeb";
 import ChatInput from "@/components/ChatInput";
 import ChatPanel from "@/components/ChatPanel";
+import PushToTalkButton from "@/components/PushToTalkButton";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
@@ -589,8 +590,21 @@ function Dashboard() {
         </div>
       </main>
 
-      {/* Chat Input */}
-      <ChatInput onSend={sendMessage} connected={connected} />
+      {/* Chat Input + push-to-talk row.
+          The mic button sits in a thin row immediately above the chat
+          composer so the live-caption bubble it raises overlaps the
+          stage area instead of the keyboard / input itself. */}
+      <div className="relative">
+        <div
+          className="flex items-center justify-end gap-2 px-3 py-1 border-t border-white/5 bg-slate-950/60 backdrop-blur-sm"
+        >
+          <PushToTalkButton
+            mode="stream"
+            language="ko"
+          />
+        </div>
+        <ChatInput onSend={sendMessage} connected={connected} />
+      </div>
 
       {/* Status bar */}
       <footer
