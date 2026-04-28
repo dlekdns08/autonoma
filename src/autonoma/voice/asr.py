@@ -192,11 +192,16 @@ class CohereAsrProvider(AsrProvider):
             outputs = self._model.generate(
                 **inputs, max_new_tokens=self.DEFAULT_MAX_NEW_TOKENS
             )
-            text = self._processor.decode(outputs, skip_special_tokens=True)
+            # ``model.generate`` returns a 2D tensor ``(batch, seq_len)``.
+            # Newer transformers return a list from ``processor.decode``
+            # when given a batch tensor — use ``batch_decode`` so the
+            # contract is explicit, then pull the single utterance.
+            decoded = self._processor.batch_decode(outputs, skip_special_tokens=True)
+            text = decoded[0] if decoded else ""
             duration_ms = int((time.perf_counter() - t0) * 1000)
 
         return TranscriptionResult(
-            text=text.strip(),
+            text=text.strip() if isinstance(text, str) else "",
             language=language,
             duration_ms=duration_ms,
             model=self.model_id,
