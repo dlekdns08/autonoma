@@ -45,6 +45,10 @@ export interface UsePushToTalkOptions {
   /** Stream mode only — fires every time the server pushes a partial
    *  transcript. Ignored in batch mode. */
   onPartial?: (text: string) => void;
+  /** Stream mode only — when ``false``, the server skips the
+   *  ExternalInputRouter step and just returns the transcript. Default
+   *  true to preserve existing behaviour for the dashboard mic. */
+  route?: boolean;
 }
 
 export interface UsePushToTalk {
@@ -302,6 +306,8 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
           type: "start",
           language: optsRef.current.language ?? "",
           target: optsRef.current.target ?? "",
+          // Pass through unless explicitly set to false.
+          route: optsRef.current.route !== false,
         }),
       );
     };
