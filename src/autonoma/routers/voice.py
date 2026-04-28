@@ -418,8 +418,10 @@ async def voice_transcribe(
             },
         )
 
-    lang = (language or _settings.voice_asr_default_language or "en").strip()
+    lang = (language or _settings.voice_asr_default_language or "").strip()
     provider = get_asr_provider()
+    from autonoma.voice import metrics as _asr_metrics
+
     try:
         # Heavy CPU/GPU work — push to a worker thread so the event loop
         # keeps serving other requests while the model decodes.
@@ -431,6 +433,7 @@ async def voice_transcribe(
     except RuntimeError as exc:
         # Most likely the ASR extras aren't installed.
         logger.error(f"[voice] transcribe failed: {exc}")
+        _asr_metrics.record_transcribe(stage="batch", ok=False, duration_ms=0, error=str(exc))
         raise HTTPException(
             status_code=503,
             detail={
@@ -440,10 +443,13 @@ async def voice_transcribe(
         ) from exc
     except Exception as exc:
         logger.exception(f"[voice] transcribe crashed: {exc}")
+        _asr_metrics.record_transcribe(stage="batch", ok=False, duration_ms=0, error=str(exc))
         raise HTTPException(
             status_code=500,
             detail={"code": "asr_error", "message": str(exc)},
         ) from exc
+
+    _asr_metrics.record_transcribe(stage="batch", ok=True, duration_ms=result.duration_ms)
 
     logger.info(
         f"[voice] transcribed user={user.id} bytes={len(raw)} "
@@ -616,6 +622,8 @@ async def voice_stream(ws: WebSocket) -> None:
             lambda: provider.transcribe(snapshot, language=language)
         )
 
+    from autonoma.voice import metrics as _asr_metrics
+
     async def _maybe_partial() -> None:
         nonlocal transcribe_busy, last_partial_text, closed
         if closed or transcribe_busy or not buffer:
@@ -624,12 +632,18 @@ async def voice_stream(ws: WebSocket) -> None:
         snapshot = bytes(buffer)
         try:
             result = await _transcribe_snapshot(snapshot)
+            _asr_metrics.record_transcribe(
+                stage="partial", ok=True, duration_ms=result.duration_ms
+            )
             text = (result.text or "").strip()
             if text and text != last_partial_text and not closed:
                 last_partial_text = text
                 await ws.send_json({"type": "partial", "text": text})
         except Exception as exc:
             logger.warning(f"[voice/stream] partial transcribe failed: {exc}")
+            _asr_metrics.record_transcribe(
+                stage="partial", ok=False, duration_ms=0, error=str(exc)
+            )
         finally:
             transcribe_busy = False
 
@@ -734,8 +748,14 @@ async def voice_stream(ws: WebSocket) -> None:
     try:
         final_result = await _transcribe_snapshot(bytes(buffer))
         final_text = (final_result.text or "").strip()
+        _asr_metrics.record_transcribe(
+            stage="final", ok=True, duration_ms=final_result.duration_ms
+        )
     except Exception as exc:
         logger.exception(f"[voice/stream] final transcribe failed: {exc}")
+        _asr_metrics.record_transcribe(
+            stage="final", ok=False, duration_ms=0, error=str(exc)
+        )
         try:
             await ws.send_json(
                 {"type": "error", "code": "asr_error", "message": str(exc)}
@@ -785,3 +805,30 @@ async def voice_stream(ws: WebSocket) -> None:
             await ws.close()
         except Exception:
             pass
+
+
+# ── Voice metrics — feature #8 ───────────────────────────────────────
+
+
+@router.get("/api/voice/metrics")
+async def voice_metrics(
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return a snapshot of in-process ASR counters.
+
+    Cookie-gated to logged-in users — these aren't admin-only because
+    operators routinely want to glance at "is the mic working" from a
+    user account, but unauthenticated scraping isn't useful and gives
+    away that the model is loaded.
+    """
+    from autonoma.voice import metrics as _asr_metrics
+
+    snap = _asr_metrics.snapshot()
+    # Operator hint surfaced inline so the dashboard can show a banner
+    # when the provider is disabled (otherwise an empty metrics page is
+    # confusing).
+    from autonoma.config import settings as _settings
+
+    snap["provider"] = getattr(_settings, "voice_asr_provider", "cohere")
+    snap["model"] = getattr(_settings, "voice_asr_model", "")
+    return snap
