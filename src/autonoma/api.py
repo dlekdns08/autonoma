@@ -1125,6 +1125,24 @@ async def _warmup_omnivoice() -> None:
     await warmup_shared_client()
 
 
+async def _warmup_asr() -> None:
+    """Kick off Cohere ASR model load in the background at startup.
+
+    Same rationale as ``_warmup_omnivoice``: the first push-to-talk
+    otherwise pays HuggingFace download (multi-GB on a cold cache) and
+    model load — together easily over a minute. Gated on
+    ``settings.voice_asr_provider`` so ASR-disabled deploys skip both
+    the bandwidth and resident memory cost.
+    """
+    if getattr(settings, "voice_asr_provider", "cohere") == "none":
+        return
+    try:
+        from autonoma.voice.asr import warmup_asr_provider
+    except ImportError:
+        return
+    await warmup_asr_provider()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _register_event_bridge()
@@ -1137,6 +1155,9 @@ async def lifespan(app: FastAPI):
     warmup_task: asyncio.Task[None] | None = None
     if settings.tts_provider == "omnivoice":
         warmup_task = asyncio.create_task(_warmup_omnivoice())
+    asr_warmup_task: asyncio.Task[None] | None = None
+    if getattr(settings, "voice_asr_provider", "cohere") != "none":
+        asr_warmup_task = asyncio.create_task(_warmup_asr())
     # Boot the scheduler poll loop. Stopping it on shutdown prevents test
     # runners from leaving a stray task hanging across repeated app
     # instantiation. Subscribe the headless swarm launcher to scheduler
@@ -1152,6 +1173,8 @@ async def lifespan(app: FastAPI):
         await scheduler_runner.stop()
         if warmup_task is not None:
             warmup_task.cancel()
+        if asr_warmup_task is not None:
+            asr_warmup_task.cancel()
         _unregister_event_bridge()
 
 
