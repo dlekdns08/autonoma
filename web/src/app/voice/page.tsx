@@ -29,6 +29,7 @@ import {
 import { useVoiceBindings } from "@/hooks/voice/useVoiceBindings";
 import { VRM_FILES, VRM_CREDITS } from "@/components/vtuber/vrmCredits";
 import { StatusBox } from "@/components/StatusBox";
+import PushToTalkButton from "@/components/PushToTalkButton";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -79,6 +80,10 @@ export default function VoicePage() {
   const [testElapsed, setTestElapsed] = useState(0);
   const testAbortRef = useRef<AbortController | null>(null);
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
+  // When on, releasing the mic immediately fires the synth with the
+  // transcribed text — full mic→text→speech round-trip in one gesture.
+  const [autoSynth, setAutoSynth] = useState(true);
+  const [micError, setMicError] = useState<string | null>(null);
 
   const testProfileId = useMemo(() => {
     if (selectedTestProfileId) {
@@ -208,15 +213,17 @@ export default function VoicePage() {
     }
   };
 
-  const onTest = async () => {
+  // Synthesize an arbitrary string via the currently-selected profile.
+  // ``onTest`` (the button handler) reads ``testText``; the mic result
+  // handler bypasses state so it doesn't have to wait for the React
+  // commit before kicking off synthesis.
+  const synthesize = async (text: string) => {
     if (!testProfileId) return;
-    if (testBusy) return; // button should already be disabled; defense in depth
-    if (!testText.trim()) {
-      setTestError("테스트 문장을 입력하세요.");
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setTestError("합성할 문장이 없습니다.");
       return;
     }
-    // Abort any previous request (shouldn't exist since button is locked,
-    // but clean up anyway so we never leak an orphan request).
     testAbortRef.current?.abort();
     const ctrl = new AbortController();
     testAbortRef.current = ctrl;
@@ -224,7 +231,7 @@ export default function VoicePage() {
     setTestError(null);
     const res = await testVoiceProfile({
       id: testProfileId,
-      text: testText.trim(),
+      text: trimmed,
       signal: ctrl.signal,
     });
     setTestBusy(false);
@@ -238,12 +245,40 @@ export default function VoicePage() {
       if (prev) URL.revokeObjectURL(prev);
       return url;
     });
-    // Autoplay next frame so the <audio> src update has landed.
     requestAnimationFrame(() => {
       testAudioRef.current?.play().catch(() => {
         /* user-gesture policy — ignore */
       });
     });
+  };
+
+  const onTest = async () => {
+    if (testBusy) return; // defense-in-depth; button is also disabled
+    if (!testText.trim()) {
+      setTestError("테스트 문장을 입력하세요.");
+      return;
+    }
+    await synthesize(testText);
+  };
+
+  // Mic round-trip: transcript lands in the textarea (so the user can
+  // see + edit it), and if autoSynth is on we also kick off synthesis
+  // with the fresh transcript directly — without waiting for the
+  // setTestText commit to settle.
+  const onMicResult = (r: { text: string; route: { action: string; detail: string } }) => {
+    setMicError(null);
+    if (!r.text || !r.text.trim()) {
+      setMicError("전사된 텍스트가 없습니다. 다시 시도하세요.");
+      return;
+    }
+    setTestText(r.text);
+    if (autoSynth) {
+      if (!testProfileId) {
+        setMicError("프로파일을 먼저 선택하세요.");
+        return;
+      }
+      void synthesize(r.text);
+    }
   };
 
   if (authLoading) {
@@ -428,9 +463,13 @@ export default function VoicePage() {
 
         {/* ── Test bench ───────────────────────────────────────────── */}
         <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-          <h2 className="mb-3 font-mono text-sm font-semibold text-white/80">
+          <h2 className="mb-1 font-mono text-sm font-semibold text-white/80">
             테스트 벤치
           </h2>
+          <p className="mb-3 font-mono text-[10px] text-white/40">
+            마이크로 말하면 한국어로 전사 → 선택한 프로파일 목소리로 합성 →
+            자동 재생됩니다. 텍스트를 직접 입력해서 시험해도 됩니다.
+          </p>
           <div className="flex flex-col gap-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1 text-xs text-white/60">
@@ -477,6 +516,30 @@ export default function VoicePage() {
                 )}
               </div>
             </div>
+
+            {/* ── Mic round-trip: speech → text → speech ─────────────── */}
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/5 px-3 py-2">
+              <PushToTalkButton
+                mode="stream"
+                language="ko"
+                route={false}
+                onResult={onMicResult}
+                onError={(m) => setMicError(m)}
+              />
+              <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
+                <input
+                  type="checkbox"
+                  checked={autoSynth}
+                  onChange={(e) => setAutoSynth(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-fuchsia-500"
+                />
+                녹음 끝나면 자동으로 합성·재생
+              </label>
+              <span className="font-mono text-[10px] text-white/35">
+                Space 키도 길게 누르면 됩니다.
+              </span>
+            </div>
+
             <label className="flex flex-col gap-1 text-xs text-white/60">
               <span>테스트 문장 (1-500자)</span>
               <textarea
@@ -487,6 +550,11 @@ export default function VoicePage() {
                 className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 font-mono text-sm text-white outline-none focus:border-cyan-500/60"
               />
             </label>
+            {micError && (
+              <StatusBox tone="error" title="음성 입력 오류">
+                {micError}
+              </StatusBox>
+            )}
             {testError && (
               <StatusBox tone="error" title="합성 실패">
                 {testError}
