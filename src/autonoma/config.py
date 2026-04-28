@@ -193,6 +193,17 @@ class Settings(BaseSettings):
     slack_signing_secret: str = ""     # Slack Events API verification
     discord_webhook_secret: str = ""   # shared secret for inbound Discord
 
+    # ── Live chat moderation ──
+    # Comma-separated list of substrings (case-insensitive). Any
+    # incoming chat message whose lowercased text contains one of these
+    # is dropped silently with a 200 OK so spammers don't learn the
+    # filter. Empty disables the filter (default — keeps current
+    # behaviour).
+    live_chat_word_filter: str = ""
+    # Comma-separated list of usernames (case-insensitive) whose
+    # messages are dropped. Quick mute without an external bot.
+    live_chat_user_mutes: str = ""
+
     # ── Voice ASR (Phase 2-#4) ──
     # Server-side speech-to-text for voice commands. The default uses
     # CohereLabs/cohere-transcribe-03-2026 via HuggingFace transformers
