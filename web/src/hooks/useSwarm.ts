@@ -757,6 +757,41 @@ export function useSwarm() {
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
             sfxRef.current.play("ghost");
             break;
+          case "live.reaction": {
+            // One-tap viewer reaction. We surface it via a transient
+            // toast AND publish to a ref ring buffer so the Stage can
+            // render a floating-emoji burst without re-running the
+            // dispatcher on every frame.
+            const emoji = data.emoji as string | undefined;
+            const username = data.username as string | undefined;
+            if (!emoji) break;
+            addToast(
+              "info",
+              `${username ?? "viewer"}`,
+              emoji,
+              emoji,
+            );
+            // Best-effort: an animation hook can subscribe to
+            // ``window.__autonoma_reactions`` and consume the queue.
+            // Keeping it on a window-scoped ref avoids threading a
+            // new state through every parent of <Stage>.
+            try {
+              const w = window as unknown as {
+                __autonoma_reactions?: Array<{ emoji: string; ts: number }>;
+              };
+              if (!Array.isArray(w.__autonoma_reactions)) {
+                w.__autonoma_reactions = [];
+              }
+              w.__autonoma_reactions.push({ emoji, ts: Date.now() });
+              // Cap the buffer so a heavy raid doesn't eat memory.
+              if (w.__autonoma_reactions.length > 100) {
+                w.__autonoma_reactions.splice(0, w.__autonoma_reactions.length - 100);
+              }
+            } catch {
+              /* SSR or sandboxed iframe — ignore */
+            }
+            break;
+          }
           case "project.completed":
             addToast("achievement", "PROJECT COMPLETE!", "The swarm has finished its work!", "★★★");
             sfxRef.current.play("complete");
