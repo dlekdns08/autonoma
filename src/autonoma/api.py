@@ -475,6 +475,10 @@ FORWARDED_EVENTS = [
     "mocap.clips.updated",
     # Voice — global character voice-binding changes (broadcast site-wide).
     "voice.bindings.updated",
+    # Live viewer reactions (one-tap emoji bursts). Broadcast to every
+    # viewer in the originating room so the floating-emoji animation
+    # plays for everyone, not just the sender.
+    "live.reaction",
 ]
 
 
