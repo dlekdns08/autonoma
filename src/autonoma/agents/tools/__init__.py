@@ -6,6 +6,12 @@ action handler can invoke. Tools that talk to external services
 stays focused on "run untrusted code safely".
 """
 
+from autonoma.agents.tools.fetch_url import FetchResult, fetch_url
 from autonoma.agents.tools.git_pr import GitPRResult, open_pull_request
 
-__all__ = ["GitPRResult", "open_pull_request"]
+__all__ = [
+    "FetchResult",
+    "GitPRResult",
+    "fetch_url",
+    "open_pull_request",
+]
