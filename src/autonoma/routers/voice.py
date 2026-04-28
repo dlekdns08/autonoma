@@ -11,17 +11,35 @@ so every connected viewer re-resolves the character's voice.
 
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 import logging
 import wave
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import status as http_status
 from fastapi.responses import Response as FastAPIResponse
 
 from autonoma import voice as voice_service
-from autonoma.auth import User, require_active_user
+from autonoma.auth import (
+    SESSION_COOKIE_NAME,
+    User,
+    get_user_by_id,
+    read_session_token,
+    require_active_user,
+)
 from autonoma.event_bus import bus
 from autonoma.mocap import is_known_vrm
 from autonoma.voice.store import IntegrityError as _VoiceIntegrityError
@@ -473,3 +491,289 @@ async def voice_command(
         "transcript": transcript,
         "route": {"action": result.action.value, "detail": result.detail},
     }
+
+
+# ── Streaming ASR over WebSocket ─────────────────────────────────────
+#
+# Cohere transcribe-03-2026 is encoder-decoder + ``model.generate`` so
+# we can't stream tokens. Instead we do "rolling chunk transcription":
+# the browser streams audio chunks (MediaRecorder timeslice=500ms) over
+# this WS, and a background task transcribes the *accumulated* buffer
+# every ``PARTIAL_INTERVAL_S`` seconds, pushing a ``partial`` event
+# back to the client. On ``stop`` we run one last transcription over
+# the full audio and route the final text through ``ExternalInputRouter``
+# — same destination as ``POST /api/voice/command``.
+#
+# Why re-transcribe the full buffer each tick rather than the tail?
+# Cohere ASR's quality on short isolated clips is poor (it hallucinates
+# fillers and clips off the start of words). Feeding the cumulative
+# buffer keeps the model's context anchored so the partial converges
+# toward the same answer the final pass will produce.
+
+# Browser timeslice is 500ms so even chatty captures land well below
+# this. The cap is anti-OOM, not a feature limit.
+MAX_STREAM_AUDIO_BYTES = 16 * 1024 * 1024
+# How often the partial transcribe loop fires. Cohere on MPS takes
+# 0.5–1.0s per pass over a few seconds of audio, so 1.5s gives the
+# previous pass time to finish before the next tick.
+PARTIAL_INTERVAL_S = 1.5
+# Hard cap on WS lifetime — push-to-talk should be seconds, not minutes.
+MAX_STREAM_DURATION_S = 120.0
+
+
+@router.websocket("/api/voice/stream")
+async def voice_stream(ws: WebSocket) -> None:
+    """Streaming ASR for push-to-talk.
+
+    Protocol (text frames are JSON, audio frames are binary):
+
+      C → S  ``{"type":"start","language":"ko","target":"alice"}``
+      S → C  ``{"type":"ready"}``  *or*  ``{"type":"error",...}``
+      C → S  binary WebM/Opus chunks (cumulative — server appends)
+      S → C  ``{"type":"partial","text":"..."}`` (every ~1.5s while audio)
+      C → S  ``{"type":"stop"}``  *or*  socket close
+      S → C  ``{"type":"final","text":"...","route":{...}}``
+
+    Auth: same cookie-based session as HTTP. We accept the WS first so
+    we can return a structured error frame (browsers can't see custom
+    close codes reliably), then hard-close.
+    """
+    await ws.accept()
+
+    # ── Cookie-based session auth ─────────────────────────────────
+    cookie_token = ws.cookies.get(SESSION_COOKIE_NAME)
+    user_id = read_session_token(cookie_token or "")
+    user = await get_user_by_id(user_id) if user_id else None
+    if user is None or user.status != "active":
+        try:
+            await ws.send_json(
+                {"type": "error", "code": "unauthorized", "message": "로그인이 필요합니다."}
+            )
+        finally:
+            await ws.close(code=4401)
+        return
+
+    # ── ASR provider readiness ────────────────────────────────────
+    from autonoma.config import settings as _settings
+    from autonoma.voice.asr import get_asr_provider
+
+    if getattr(_settings, "voice_asr_provider", "cohere") == "none":
+        try:
+            await ws.send_json(
+                {"type": "error", "code": "asr_disabled", "message": "ASR 비활성화됨"}
+            )
+        finally:
+            await ws.close(code=4400)
+        return
+
+    # ── Wait for the start frame (language + target) ──────────────
+    try:
+        first_text = await asyncio.wait_for(ws.receive_text(), timeout=10.0)
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        await ws.close(code=4400)
+        return
+    try:
+        first = json.loads(first_text)
+    except json.JSONDecodeError:
+        first = None
+    if not isinstance(first, dict) or first.get("type") != "start":
+        try:
+            await ws.send_json(
+                {"type": "error", "code": "protocol", "message": "start frame required"}
+            )
+        finally:
+            await ws.close(code=4400)
+        return
+
+    language = (
+        str(first.get("language") or "").strip()
+        or _settings.voice_asr_default_language
+        or "en"
+    )
+    target_raw = str(first.get("target") or "").strip()
+    target = target_raw or None
+
+    await ws.send_json({"type": "ready"})
+
+    provider = get_asr_provider()
+    buffer = bytearray()
+    transcribe_busy = False
+    last_partial_text = ""
+    closed = False
+
+    async def _transcribe_snapshot(snapshot: bytes) -> Any:
+        # Cohere is sync + thread-unsafe internally; the provider's own
+        # lock serialises, so a background ``run_sync`` keeps the event
+        # loop responsive without us reaching into provider internals.
+        import anyio
+
+        return await anyio.to_thread.run_sync(
+            lambda: provider.transcribe(snapshot, language=language)
+        )
+
+    async def _maybe_partial() -> None:
+        nonlocal transcribe_busy, last_partial_text, closed
+        if closed or transcribe_busy or not buffer:
+            return
+        transcribe_busy = True
+        snapshot = bytes(buffer)
+        try:
+            result = await _transcribe_snapshot(snapshot)
+            text = (result.text or "").strip()
+            if text and text != last_partial_text and not closed:
+                last_partial_text = text
+                await ws.send_json({"type": "partial", "text": text})
+        except Exception as exc:
+            logger.warning(f"[voice/stream] partial transcribe failed: {exc}")
+        finally:
+            transcribe_busy = False
+
+    async def _partial_loop() -> None:
+        try:
+            while not closed:
+                await asyncio.sleep(PARTIAL_INTERVAL_S)
+                await _maybe_partial()
+        except asyncio.CancelledError:
+            pass
+
+    pl_task = asyncio.create_task(_partial_loop())
+    deadline = asyncio.get_event_loop().time() + MAX_STREAM_DURATION_S
+
+    final_result: Any = None
+    final_text = ""
+    error_payload: dict[str, Any] | None = None
+
+    try:
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                error_payload = {
+                    "type": "error",
+                    "code": "stream_timeout",
+                    "message": f"녹음 한도({int(MAX_STREAM_DURATION_S)}s)를 초과했습니다.",
+                }
+                break
+            try:
+                msg = await asyncio.wait_for(ws.receive(), timeout=remaining)
+            except asyncio.TimeoutError:
+                error_payload = {
+                    "type": "error",
+                    "code": "stream_timeout",
+                    "message": "녹음 한도를 초과했습니다.",
+                }
+                break
+
+            mtype = msg.get("type")
+            if mtype == "websocket.disconnect":
+                # Treat as implicit stop — caller dropped the socket.
+                break
+            payload_bytes = msg.get("bytes")
+            payload_text = msg.get("text")
+            if payload_bytes:
+                if len(buffer) + len(payload_bytes) > MAX_STREAM_AUDIO_BYTES:
+                    error_payload = {
+                        "type": "error",
+                        "code": "audio_too_large",
+                        "message": (
+                            f"오디오 크기가 한도({MAX_STREAM_AUDIO_BYTES} 바이트)를 넘었습니다."
+                        ),
+                    }
+                    break
+                buffer.extend(payload_bytes)
+            elif payload_text:
+                try:
+                    frame = json.loads(payload_text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(frame, dict) and frame.get("type") == "stop":
+                    break
+                # Unknown text frames are ignored (forward-compat).
+    except WebSocketDisconnect:
+        pass
+    finally:
+        closed = True
+        pl_task.cancel()
+        try:
+            await pl_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    if error_payload is not None:
+        try:
+            await ws.send_json(error_payload)
+        except Exception:
+            pass
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        return
+
+    # ── Final pass: transcribe full buffer, route through ext input ─
+    if not buffer:
+        try:
+            await ws.send_json(
+                {
+                    "type": "final",
+                    "text": "",
+                    "language": language,
+                    "duration_ms": 0,
+                    "model": "",
+                    "route": {"action": "dropped_invalid", "detail": "empty audio"},
+                }
+            )
+        finally:
+            await ws.close()
+        return
+
+    try:
+        final_result = await _transcribe_snapshot(bytes(buffer))
+        final_text = (final_result.text or "").strip()
+    except Exception as exc:
+        logger.exception(f"[voice/stream] final transcribe failed: {exc}")
+        try:
+            await ws.send_json(
+                {"type": "error", "code": "asr_error", "message": str(exc)}
+            )
+        finally:
+            await ws.close()
+        return
+
+    route_payload: dict[str, Any] = {
+        "action": "dropped_invalid",
+        "detail": "empty transcript",
+    }
+    if final_text:
+        from autonoma.external_input import ExternalMessage, router as ext_router
+
+        ext_msg = ExternalMessage(
+            source="voice",
+            user=str(user.id),
+            text=final_text,
+            target=target,
+            metadata={"language": language},
+        )
+        ext_result = await ext_router.submit(ext_msg)
+        route_payload = {"action": ext_result.action.value, "detail": ext_result.detail}
+
+    logger.info(
+        f"[voice/stream] user={user.id} bytes={len(buffer)} "
+        f"final={final_text[:60]!r} ms={getattr(final_result, 'duration_ms', 0)}"
+    )
+
+    try:
+        await ws.send_json(
+            {
+                "type": "final",
+                "text": final_text,
+                "language": language,
+                "duration_ms": getattr(final_result, "duration_ms", 0),
+                "model": getattr(final_result, "model", ""),
+                "route": route_payload,
+            }
+        )
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
