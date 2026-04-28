@@ -147,8 +147,17 @@ class CohereAsrProvider(AsrProvider):
         self,
         audio_bytes: bytes,
         *,
-        language: str = "en",
+        language: str = "",
     ) -> TranscriptionResult:
+        """Run ASR on ``audio_bytes`` and return the transcript.
+
+        ``language`` is a hint passed to the processor. Pass an empty
+        string to ask the model to auto-detect — Cohere's processor
+        accepts ``language=None`` (or absence) for unspecified-language
+        decoding. With the hint set, the model biases its output
+        toward that language; without it, accuracy is slightly lower
+        on ambiguous utterances but multilingual input works.
+        """
         import os
         import tempfile
         import time
@@ -179,12 +188,17 @@ class CohereAsrProvider(AsrProvider):
 
         with self._lock:
             t0 = time.perf_counter()
-            inputs = self._processor(
-                audio,
-                sampling_rate=self.DEFAULT_SAMPLING_RATE,
-                return_tensors="pt",
-                language=language,
-            )
+            # Empty/whitespace language → omit the kwarg entirely so
+            # the processor uses its built-in language detection. We
+            # don't pass ``language=None`` because some processor
+            # versions interpret None as "english" rather than auto.
+            processor_kwargs: dict[str, Any] = {
+                "sampling_rate": self.DEFAULT_SAMPLING_RATE,
+                "return_tensors": "pt",
+            }
+            if language and language.strip():
+                processor_kwargs["language"] = language
+            inputs = self._processor(audio, **processor_kwargs)
             # ``self._model.device`` is the canonical target after our
             # explicit ``.to(device)`` move in ``_ensure_loaded``. The
             # MPS path is happiest when input dtype matches the model.
