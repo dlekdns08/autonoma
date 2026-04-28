@@ -149,6 +149,8 @@ class CohereAsrProvider(AsrProvider):
         *,
         language: str = "en",
     ) -> TranscriptionResult:
+        import os
+        import tempfile
         import time
 
         self._ensure_loaded()
@@ -156,9 +158,24 @@ class CohereAsrProvider(AsrProvider):
         # caller actually transcribes something.
         from transformers.audio_utils import load_audio  # type: ignore[import-not-found]
 
-        # ``load_audio`` accepts a file-like object; wrap raw bytes so
-        # callers don't need to spill to disk just to transcribe.
-        audio = load_audio(io.BytesIO(audio_bytes), sampling_rate=self.DEFAULT_SAMPLING_RATE)
+        # Newer transformers ``load_audio`` rejects file-like objects
+        # ("Should be an url, a local path, or numpy array"). Spill the
+        # raw bytes to a temp file and hand it the path. The suffix
+        # doesn't matter for content sniffing — ffmpeg/librosa probe
+        # the actual container — but ``.bin`` keeps things explicit.
+        # ``delete=False`` so we control cleanup in ``finally`` (the
+        # default-delete contextmanager closes-and-deletes on exit,
+        # which races load_audio reopening it on some platforms).
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+            tf.write(audio_bytes)
+            tmp_path = tf.name
+        try:
+            audio = load_audio(tmp_path, sampling_rate=self.DEFAULT_SAMPLING_RATE)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
         with self._lock:
             t0 = time.perf_counter()
@@ -214,3 +231,36 @@ def set_asr_provider_for_tests(provider: AsrProvider | None) -> None:
     global _provider
     with _provider_lock:
         _provider = provider
+
+
+async def warmup_asr_provider() -> None:
+    """Load the ASR model into memory at startup.
+
+    Cohere's transcribe model is multi-GB, so the first call pays
+    HuggingFace download (often 30–120s on a cold cache) plus model
+    load (5–15s on MPS/CPU). Triggering ``_ensure_loaded`` in the
+    startup hook means the user's first push-to-talk only pays the
+    transcription cost itself, not the warm-up.
+    Mirrors ``warmup_shared_client`` in ``tts_omnivoice``.
+    """
+    import anyio
+
+    from autonoma.config import settings
+
+    if getattr(settings, "voice_asr_provider", "cohere") == "none":
+        return
+    provider = get_asr_provider()
+    # Only the Cohere backend has a heavy lazy-load step worth warming.
+    # ``NoopAsrProvider`` short-circuits in ``is_ready``.
+    if not isinstance(provider, CohereAsrProvider):
+        return
+    try:
+        # Heavy IO + model construction — push to a worker thread so
+        # the FastAPI startup hook stays responsive (other startup
+        # tasks like the TTS warmup run alongside).
+        await anyio.to_thread.run_sync(provider._ensure_loaded)
+        logger.info(
+            f"[asr] {provider.model_id} warm-load complete (device={provider._device})"
+        )
+    except Exception:  # pragma: no cover — startup path
+        logger.exception("[asr] warm-load failed; falling back to first-call lazy load")
