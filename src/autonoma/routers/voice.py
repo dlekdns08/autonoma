@@ -592,6 +592,11 @@ async def voice_stream(ws: WebSocket) -> None:
     )
     target_raw = str(first.get("target") or "").strip()
     target = target_raw or None
+    # ``route`` defaults true for backward compat. The /voice studio page
+    # sets it false because it only wants the transcript — feeding the
+    # text into ExternalInputRouter from a non-running swarm would just
+    # produce noisy ``dropped_invalid`` log lines.
+    route_enabled = bool(first.get("route", True))
 
     await ws.send_json({"type": "ready"})
 
@@ -743,7 +748,7 @@ async def voice_stream(ws: WebSocket) -> None:
         "action": "dropped_invalid",
         "detail": "empty transcript",
     }
-    if final_text:
+    if final_text and route_enabled:
         from autonoma.external_input import ExternalMessage, router as ext_router
 
         ext_msg = ExternalMessage(
@@ -755,6 +760,9 @@ async def voice_stream(ws: WebSocket) -> None:
         )
         ext_result = await ext_router.submit(ext_msg)
         route_payload = {"action": ext_result.action.value, "detail": ext_result.detail}
+    elif final_text and not route_enabled:
+        # Studio page (/voice) — caller wants the transcript only.
+        route_payload = {"action": "skipped", "detail": "route=false"}
 
     logger.info(
         f"[voice/stream] user={user.id} bytes={len(buffer)} "
