@@ -50,6 +50,18 @@ jobs:
           # and sends the launchd agent into a KeepAlive crash-loop.
           AUTONOMA_TTS_ENABLED: 'true'
           AUTONOMA_TTS_PROVIDER: 'omnivoice'
+          # HF_TOKEN gates the Cohere ASR model used by /api/voice/*.
+          # transformers/huggingface_hub auto-detect both names so we
+          # set both for safety. Empty when the secret isn't configured
+          # — the ASR provider then errors with a clear 401 the first
+          # time someone holds push-to-talk, leaving everything else
+          # (TTS, dashboard) functional.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # ASR knobs are non-secret — hardcoded here so flipping them
+          # is a deploy.yml diff (visible in PRs) rather than a silent
+          # GitHub secret edit. Override at the .env layer if needed.
+          AUTONOMA_VOICE_ASR_PROVIDER: 'cohere'
+          AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE: 'ko'
         run: |
           printf 'AUTONOMA_ADMIN_PASSWORD=%s\n'      "$AUTONOMA_ADMIN_PASSWORD"      >> .env
           printf 'AUTONOMA_SESSION_SECRET=%s\n'      "$AUTONOMA_SESSION_SECRET"      >> .env
@@ -62,6 +74,10 @@ jobs:
           printf 'AUTONOMA_VLLM_API_KEY=%s\n'        "$AUTONOMA_VLLM_API_KEY"        >> .env
           printf 'AUTONOMA_TTS_ENABLED=%s\n'         "$AUTONOMA_TTS_ENABLED"         >> .env
           printf 'AUTONOMA_TTS_PROVIDER=%s\n'        "$AUTONOMA_TTS_PROVIDER"        >> .env
+          printf 'HF_TOKEN=%s\n'                     "$HF_TOKEN"                     >> .env
+          printf 'HUGGING_FACE_HUB_TOKEN=%s\n'       "$HF_TOKEN"                     >> .env
+          printf 'AUTONOMA_VOICE_ASR_PROVIDER=%s\n'  "$AUTONOMA_VOICE_ASR_PROVIDER"  >> .env
+          printf 'AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE=%s\n' "$AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE" >> .env
 
       # ── Native-mac API (MPS) ─────────────────────────────────────
       # Runs uvicorn on the host so PyTorch can target Metal; Docker
