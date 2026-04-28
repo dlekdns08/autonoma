@@ -9,7 +9,19 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "AUTONOMA_", "env_file": ".env"}
+    # ``extra="ignore"`` — pydantic-settings 2.x defaults to ``forbid``,
+    # which is too strict for our deploy. The shared ``.env`` file
+    # carries variables consumed by other libraries (HF_TOKEN for
+    # huggingface_hub, ANTHROPIC_API_KEY for anthropic SDK, etc.) that
+    # are intentionally NOT mirrored as Settings fields — those SDKs
+    # read straight from the OS environment. Without ``ignore`` every
+    # such variable raises ``ValidationError: extra_forbidden`` and
+    # crashes the launchd worker on startup.
+    model_config = {
+        "env_prefix": "AUTONOMA_",
+        "env_file": ".env",
+        "extra": "ignore",
+    }
 
     # ── Deployment environment ──
     # ``development`` expands the default CORS allow-list to include
