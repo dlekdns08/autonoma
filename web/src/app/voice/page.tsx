@@ -84,6 +84,8 @@ export default function VoicePage() {
   // transcribed text — full mic→text→speech round-trip in one gesture.
   const [autoSynth, setAutoSynth] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
+  // Empty string → server falls back to auto-detect via Cohere.
+  const [micLanguage, setMicLanguage] = useState<string>("ko");
 
   const testProfileId = useMemo(() => {
     if (selectedTestProfileId) {
@@ -521,11 +523,26 @@ export default function VoicePage() {
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/5 px-3 py-2">
               <PushToTalkButton
                 mode="stream"
-                language="ko"
+                language={micLanguage}
                 route={false}
                 onResult={onMicResult}
                 onError={(m) => setMicError(m)}
               />
+              <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
+                <span>언어</span>
+                <select
+                  value={micLanguage}
+                  onChange={(e) => setMicLanguage(e.target.value)}
+                  className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-500/60"
+                >
+                  <option value="">자동 감지</option>
+                  <option value="ko">한국어</option>
+                  <option value="en">영어</option>
+                  <option value="ja">日本語</option>
+                  <option value="zh">中文</option>
+                  <option value="es">Español</option>
+                </select>
+              </label>
               <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
                 <input
                   type="checkbox"
