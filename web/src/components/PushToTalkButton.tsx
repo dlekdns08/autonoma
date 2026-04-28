@@ -28,6 +28,12 @@ export interface PushToTalkButtonProps {
   /** Optional toast hook. */
   onResult?: (result: PushToTalkResult) => void;
   onError?: (msg: string) => void;
+  /** Stream mode only — fires on each partial transcript. */
+  onPartial?: (text: string) => void;
+  /** Stream mode only — set false to skip the ExternalInputRouter step
+   *  on the server. Useful on the /voice studio page where there is no
+   *  swarm to route into. */
+  route?: boolean;
   /** Hold-to-talk also fires on Spacebar. Set false to disable hotkey. */
   spaceHotkey?: boolean;
   /** Override the default top-right placement for callers that want to
@@ -43,10 +49,20 @@ export default function PushToTalkButton({
   language,
   onResult,
   onError,
+  onPartial,
+  route,
   spaceHotkey = true,
   className = "",
 }: PushToTalkButtonProps) {
-  const ptt = usePushToTalk({ mode, target, language, onResult, onError });
+  const ptt = usePushToTalk({
+    mode,
+    target,
+    language,
+    onResult,
+    onError,
+    onPartial,
+    route,
+  });
 
   const beginPress = useCallback(() => {
     if (!ptt.supported || ptt.recording || ptt.uploading) return;
