@@ -1,3 +1,7 @@
+# syntax=docker/dockerfile:1.6
+# ``# syntax`` directive enables BuildKit features used below
+# (``RUN --mount=type=secret`` for the HuggingFace token).
+
 # ── Stage 1: Build ──────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
@@ -42,6 +46,54 @@ total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
 if total < 100 * 1024 * 1024:  # expect >100 MB for any real model
     sys.exit(f"HF snapshot for {os.environ['AUTONOMA_OMNIVOICE_MODEL_ID']} is suspiciously small ({total} bytes)")
 print(f"[build] pre-downloaded {total // (1024 * 1024)} MB of weights to {path}")
+PY
+
+# Pre-download the gated Cohere ASR model. Pass ``HF_TOKEN`` as a build
+# secret — never as a build ARG/ENV, which would persist the token in
+# the image layers:
+#
+#   docker build --secret id=hf_token,src=$HOME/.hf_token \
+#                -f Dockerfile.api -t autonoma-api .
+#
+# To skip ASR entirely (e.g. ``AUTONOMA_VOICE_ASR_PROVIDER=none`` at
+# runtime), build with ``--build-arg ASR_MODEL_ID=''`` so this layer
+# becomes a no-op and you don't need the token.
+ARG ASR_MODEL_ID=CohereLabs/cohere-transcribe-03-2026
+ENV AUTONOMA_VOICE_ASR_MODEL=${ASR_MODEL_ID}
+RUN --mount=type=secret,id=hf_token,required=false \
+    /app/.venv/bin/python - <<'PY'
+import os, pathlib, sys
+
+model_id = os.environ.get("AUTONOMA_VOICE_ASR_MODEL", "").strip()
+if not model_id:
+    print("[build] AUTONOMA_VOICE_ASR_MODEL is empty — skipping ASR pre-download")
+    sys.exit(0)
+
+token_path = "/run/secrets/hf_token"
+if os.path.exists(token_path):
+    with open(token_path) as f:
+        tok = f.read().strip()
+    if tok:
+        # Both names are honoured by huggingface_hub; set both so any
+        # future call path picks the same token.
+        os.environ["HF_TOKEN"] = tok
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
+
+if not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")):
+    sys.exit(
+        f"\n[build] ERROR: {model_id} is a gated repo and no HF token was provided.\n"
+        f"  • Pass a build secret:  docker build --secret id=hf_token,src=$HOME/.hf_token ...\n"
+        f"  • Or skip ASR:          docker build --build-arg ASR_MODEL_ID='' ...\n"
+        f"  • Accept the model card first at https://huggingface.co/{model_id}\n"
+    )
+
+from huggingface_hub import snapshot_download
+path = snapshot_download(model_id)
+root = pathlib.Path(path)
+total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+if total < 100 * 1024 * 1024:
+    sys.exit(f"[build] HF snapshot for {model_id} is suspiciously small ({total} bytes)")
+print(f"[build] pre-downloaded {total // (1024 * 1024)} MB of ASR weights to {path}")
 PY
 
 # Copy README (required by hatchling build)
@@ -100,9 +152,11 @@ COPY --from=builder /app/pyproject.toml /app/
 # ``AUTONOMA_OMNIVOICE_MODEL_ID`` is propagated so the Python client
 # reads the same ID the builder snapshotted (single source of truth).
 ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
+ARG ASR_MODEL_ID=CohereLabs/cohere-transcribe-03-2026
 COPY --from=builder /opt/hf-cache /opt/hf-cache
 ENV HF_HOME=/opt/hf-cache
 ENV AUTONOMA_OMNIVOICE_MODEL_ID=${OMNIVOICE_MODEL_ID}
+ENV AUTONOMA_VOICE_ASR_MODEL=${ASR_MODEL_ID}
 
 # Add .venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
