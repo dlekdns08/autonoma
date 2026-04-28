@@ -12,6 +12,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      # Build args let the operator pin or skip the ASR model without
+      # editing the Dockerfile (e.g. ``ASR_MODEL_ID=''`` to skip the
+      # gated download entirely).
+      args:
+        ASR_MODEL_ID: ${ASR_MODEL_ID-CohereLabs/cohere-transcribe-03-2026}
+        OMNIVOICE_MODEL_ID: ${OMNIVOICE_MODEL_ID-k2-fsa/OmniVoice}
+      # Build secret wired into the ASR pre-download step. The token is
+      # never written into an image layer — BuildKit mounts it as a
+      # tmpfs file under ``/run/secrets/hf_token`` for the duration of
+      # the RUN step only. See the top-level ``secrets:`` block below.
+      secrets:
+        - hf_token
     ports:
       - "3479:8000"
     environment:
@@ -30,6 +42,15 @@ services:
       # latency otherwise spikes to 30–60s on CPU.
       - AUTONOMA_TTS_ENABLED=${AUTONOMA_TTS_ENABLED:-true}
       - AUTONOMA_TTS_PROVIDER=${AUTONOMA_TTS_PROVIDER:-omnivoice}
+      # ASR (Cohere): when the model was pre-downloaded at build time
+      # the cache under HF_HOME satisfies all reads and HF_TOKEN is not
+      # needed at runtime. We still forward it so any unrelated HF call
+      # (e.g. swapping to a different ASR model post-deploy) still
+      # authenticates.
+      - AUTONOMA_VOICE_ASR_PROVIDER=${AUTONOMA_VOICE_ASR_PROVIDER:-cohere}
+      - AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE=${AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE:-ko}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
     volumes:
       # Named volume (not a bind mount) so agent-generated files never land
       # in the GitHub Actions runner workspace. A bind mount here causes
@@ -70,3 +91,24 @@ services:
 volumes:
   autonoma_output:
   autonoma_db:
+
+# BuildKit secrets used by the api stage.
+#
+# Two ways to provide the token, pick whichever fits your workflow:
+#
+#  1. File on disk (recommended for local builds):
+#       echo "hf_xxx" > .secrets/hf_token
+#       export HF_TOKEN_FILE=$(pwd)/.secrets/hf_token
+#       docker compose --profile container build api
+#
+#  2. From the HF_TOKEN env var (CI / one-off):
+#       export HF_TOKEN=hf_xxx
+#       printf "%s" "$HF_TOKEN" > /tmp/hf_token
+#       export HF_TOKEN_FILE=/tmp/hf_token
+#       docker compose --profile container build api
+#
+# Skip ASR download instead of providing a token:
+#       ASR_MODEL_ID="" docker compose --profile container build api
+secrets:
+  hf_token:
+    file: ${HF_TOKEN_FILE:-/dev/null}
