@@ -37,7 +37,7 @@ class TTSConfig:
     """Subset of settings the factory cares about. Kept tiny so tests can
     construct a client without loading the full Settings."""
 
-    provider: Literal["omnivoice", "none"] = "none"
+    provider: Literal["omnivoice", "vibevoice", "none"] = "none"
 
 
 # ── Stub / dev provider ───────────────────────────────────────────────
@@ -71,20 +71,31 @@ class StubTTSClient(BaseTTSClient):
 
 def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
     """Instantiate the right TTS client. Falls back to stub on bad config
-    or missing optional deps (OmniVoice package not installed)."""
+    or missing optional deps (provider package not installed)."""
     if cfg.provider == "omnivoice":
         try:
             from autonoma.tts_omnivoice import get_shared_client
             return get_shared_client()
         except ImportError as exc:
-            # Loud warning: silent fallback to stub means agents speak
-            # nothing and the /voice test endpoint returns empty audio.
-            # Surface the real reason (usually: numpy / torch / omnivoice
-            # not installed in this container).
             logger.error(
                 "omnivoice client import failed (%s). Falling back to "
                 "StubTTSClient — all synthesis will return empty audio. "
                 "Install with: pip install omnivoice torch numpy soundfile",
+                exc,
+            )
+            return StubTTSClient()
+    if cfg.provider == "vibevoice":
+        # Same fallback discipline as omnivoice — surface the real
+        # ImportError loudly so an operator can tell apart "bad config"
+        # from "transformers/torch missing".
+        try:
+            from autonoma.tts_vibevoice import get_shared_client as get_vv_client
+            return get_vv_client()
+        except ImportError as exc:
+            logger.error(
+                "vibevoice client import failed (%s). Falling back to "
+                "StubTTSClient — synthesis will return empty audio. "
+                "Install with: uv sync --extra tts",
                 exc,
             )
             return StubTTSClient()
