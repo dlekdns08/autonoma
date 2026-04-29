@@ -7,8 +7,47 @@ heavy dep we want lazy). The factory lives in ``autonoma.tts``.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import AsyncIterator
+
+logger = logging.getLogger(__name__)
+
+
+def trim_ref_cache(cache_dir: Path, keep: int = 10) -> None:
+    """Keep only the ``keep`` most-recently-modified files in the cache.
+
+    Voice profiles are typically a small fixed set (one file per
+    profile_id × MIME extension), so the cache rarely outgrows the cap
+    in steady state. But profile deletes and MIME changes leave stale
+    entries behind; without a trim, a long-lived process slowly
+    accumulates them. Both TTS backends call this on every ref-audio
+    write so cleanup is amortised across normal usage — no background
+    task needed.
+
+    Errors are logged but never propagated: a failed unlink during
+    cleanup must not bubble up into the synthesis path.
+    """
+    try:
+        files = sorted(
+            (p for p in cache_dir.iterdir() if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.warning("[tts] ref cache scan failed at %s: %s", cache_dir, exc)
+        return
+    for stale in files[keep:]:
+        try:
+            stale.unlink()
+        except OSError as exc:
+            logger.warning("[tts] ref cache unlink failed for %s: %s", stale, exc)
+
+
+__all__ = ["BaseTTSClient", "TTSError", "trim_ref_cache"]
 
 
 class TTSError(Exception):
