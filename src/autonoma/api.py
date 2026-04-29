@@ -3526,12 +3526,16 @@ async def health(request: Request):
 
 
 @app.get("/api/models/{provider}")
-async def list_models_server(provider: str):
+async def list_models_server(
+    provider: str,
+    _admin: User = Depends(require_admin),
+):
     """Return models available via the server-configured admin key.
 
-    Used by the Admin tab to show what the server-side key can actually reach.
-    Unauthenticated from the network's perspective, but only exposes the
-    server's own key indirectly (we only return model IDs, never the key).
+    Used by the Admin tab to show what the server-side key can actually
+    reach. Admin-gated: even though we never return the key bytes, the
+    presence/absence of model IDs leaks whether a credential is
+    configured at all — useful info for an attacker probing the server.
     """
     from autonoma.model_catalog import list_models
 
