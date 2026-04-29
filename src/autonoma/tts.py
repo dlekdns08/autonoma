@@ -37,7 +37,7 @@ class TTSConfig:
     """Subset of settings the factory cares about. Kept tiny so tests can
     construct a client without loading the full Settings."""
 
-    provider: Literal["omnivoice", "vibevoice", "none"] = "none"
+    provider: Literal["omnivoice", "omnivoice-mlx", "vibevoice", "none"] = "none"
 
 
 # ── Stub / dev provider ───────────────────────────────────────────────
@@ -81,6 +81,24 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
                 "omnivoice client import failed (%s). Falling back to "
                 "StubTTSClient — all synthesis will return empty audio. "
                 "Install with: pip install omnivoice torch numpy soundfile",
+                exc,
+            )
+            return StubTTSClient()
+    if cfg.provider == "omnivoice-mlx":
+        # MLX-backed OmniVoice (Apple Silicon native). Same fallback
+        # discipline as the PyTorch path — surface ImportError loudly
+        # so an operator can tell apart "bad config" from "mlx_audio
+        # not installed".
+        try:
+            from autonoma.tts_omnivoice_mlx import (
+                get_shared_client as get_mlx_client,
+            )
+            return get_mlx_client()
+        except ImportError as exc:
+            logger.error(
+                "omnivoice-mlx client import failed (%s). Falling back to "
+                "StubTTSClient — install with: "
+                "uv pip install --python .venv/bin/python mlx mlx-lm mlx-audio",
                 exc,
             )
             return StubTTSClient()
