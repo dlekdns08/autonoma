@@ -72,6 +72,23 @@ fi
 # platform-specific wheels that weren't in the original lock entry.
 uv sync --no-dev --extra tts
 
+# VibeVoice ships from a git repo that we deliberately keep out of
+# pyproject's optional-dependencies (uv's lock resolver can't keep
+# the source stable across our requires-python matrix). The sync
+# above therefore strips it on every startup. Restore here only when
+# the venv is missing it — first boot pays the git-clone cost (a few
+# seconds), every subsequent boot is a no-op import check. Fail open
+# so a transient git/network outage doesn't block the API entirely
+# (TTS factory falls back to StubTTSClient).
+if [ "${AUTONOMA_TTS_PROVIDER:-}" = "vibevoice" ]; then
+  if ! .venv/bin/python -c "import vibevoice" 2>/dev/null; then
+    echo "[run_api_native] vibevoice missing — installing from git…"
+    uv pip install --python .venv/bin/python --quiet \
+      'vibevoice[streamingtts] @ git+https://github.com/microsoft/VibeVoice.git@main' || \
+      echo "[run_api_native] WARN: vibevoice install failed; TTS will fall back" >&2
+  fi
+fi
+
 HOST="${AUTONOMA_API_HOST:-127.0.0.1}"
 PORT="${AUTONOMA_API_PORT:-3479}"
 
