@@ -350,6 +350,64 @@ class AgentMemory:
                 return self.private[-10:]
             return [e for e in self.private if keyword.lower() in e.text.lower()][-5:]
 
+    def recall_semantic(self, query: str, k: int = 5) -> list[MemoryEntry]:
+        """Embedding-based recall — feature #5.
+
+        Falls back to ``recall(query)`` when ``sentence-transformers``
+        isn't installed OR the on-the-fly encoding fails. The fallback
+        is silent so callers can use this method unconditionally —
+        deployments without RAG see the historical keyword behaviour.
+
+        Embeddings are recomputed each call. AgentMemory is bounded
+        (``MAX_PRIVATE_MEMORIES = 20``) so re-encoding ~20 short
+        strings is cheap on the multilingual MiniLM model
+        (~5–20 ms after warm-up). Caching them keyed by
+        ``_memory_version`` is a future optimisation.
+        """
+        if not query:
+            return self.recall("")
+        # Take a snapshot under the lock so we don't observe partial
+        # writes from a concurrent ``remember`` call.
+        with self._private_lock:
+            entries = list(self.private)
+        if not entries:
+            return []
+
+        # Lazy import — keeps the world module's top-level imports free
+        # of the heavy embedding stack.
+        try:
+            from autonoma.memory.embeddings import encode_texts, score_against
+        except Exception:
+            return self.recall(query)
+
+        texts = [e.text for e in entries]
+        vecs = encode_texts(texts + [query])
+        if vecs is None or len(vecs) != len(texts) + 1:
+            # Backend missing or encode failed → fall back gracefully.
+            return self.recall(query)
+        candidate_vecs = vecs[:-1]
+        query_vec = vecs[-1]
+        scores = score_against(query_vec, candidate_vecs)
+
+        # Pair entries with scores, sort by similarity desc, return top-k.
+        # We tolerate a low-ish similarity floor (0.15) because diary
+        # entries are short and the model occasionally lands a relevant
+        # match below 0.3 cosine. A stricter floor here trades recall
+        # for precision; tune via testing.
+        ranked = sorted(zip(entries, scores), key=lambda p: p[1], reverse=True)
+        top: list[MemoryEntry] = []
+        for entry, sim in ranked:
+            if len(top) >= k:
+                break
+            if sim < 0.15:
+                continue
+            top.append(entry)
+        # If the floor wiped everything (e.g. an off-topic query), fall
+        # back to plain recall so the agent isn't memory-blind.
+        if not top:
+            return self.recall(query)
+        return top
+
     def get_summary(self, private_formatter=None, private_limit: int = 6) -> str:
         """Format both layers for injection into situation report.
 
