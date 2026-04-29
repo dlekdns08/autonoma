@@ -569,17 +569,9 @@ export default function VoicePage() {
                 route={false}
                 onResult={onMicResult}
                 onError={(m) => setMicError(m)}
-                onInterrupt={() => {
-                  // Pause the OmniVoice playback if it's running so
-                  // the user's mic doesn't fight the speaker. Cheap
-                  // and idempotent — pause() on an ended/empty audio
-                  // is a no-op.
-                  try {
-                    testAudioRef.current?.pause();
-                  } catch {
-                    /* element may not exist yet */
-                  }
-                }}
+                // ``onInterrupt`` removed: pausing testAudio every
+                // time the mic opened was cutting OmniVoice playback
+                // mid-sentence when always-on mode VAD-tripped.
               />
               <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
                 <span>언어</span>
@@ -618,13 +610,10 @@ export default function VoicePage() {
                 language={micLanguage}
                 onResult={(r) => onMicResult({ text: r.text, route: r.route })}
                 onError={(m) => setMicError(m)}
-                onInterrupt={() => {
-                  try {
-                    testAudioRef.current?.pause();
-                  } catch {
-                    /* element may not exist yet */
-                  }
-                }}
+                // ``onInterrupt`` removed: the always-on VAD was
+                // hearing the agent's own playback through the
+                // speaker and treating it as user speech, which
+                // chained into pausing the same playback.
                 className="ml-auto"
               />
             </div>
