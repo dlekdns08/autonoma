@@ -451,6 +451,19 @@ async def voice_transcribe(
 
     _asr_metrics.record_transcribe(stage="batch", ok=True, duration_ms=result.duration_ms)
 
+    # Audit log — best-effort, swallows DB errors so a transient outage
+    # doesn't break a transcribe response.
+    from autonoma.voice import transcripts_store as _ts
+
+    await _ts.record(
+        user_id=str(user.id),
+        text=result.text,
+        stage="batch",
+        language=result.language or lang,
+        duration_ms=result.duration_ms,
+        model=result.model,
+    )
+
     logger.info(
         f"[voice] transcribed user={user.id} bytes={len(raw)} "
         f"text={result.text[:60]!r} ms={result.duration_ms}"
@@ -704,8 +717,18 @@ async def voice_stream(ws: WebSocket) -> None:
                     frame = json.loads(payload_text)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(frame, dict) and frame.get("type") == "stop":
+                if not isinstance(frame, dict):
+                    continue
+                ftype = frame.get("type")
+                if ftype == "stop":
                     break
+                if ftype == "interrupt":
+                    # Barge-in (feature #2). Drop pending TTS jobs
+                    # site-wide so the agent backlog doesn't replay
+                    # over the user's voice. The current chunk in
+                    # flight finishes — see ``cancel_all`` docstring.
+                    await bus.emit("tts.cancel", reason="user_barge_in")
+                    continue
                 # Unknown text frames are ignored (forward-compat).
     except WebSocketDisconnect:
         pass
@@ -789,6 +812,20 @@ async def voice_stream(ws: WebSocket) -> None:
         f"final={final_text[:60]!r} ms={getattr(final_result, 'duration_ms', 0)}"
     )
 
+    # Audit log for the streaming final pass — same best-effort policy.
+    from autonoma.voice import transcripts_store as _ts
+
+    await _ts.record(
+        user_id=str(user.id),
+        text=final_text,
+        stage="final",
+        language=getattr(final_result, "language", "") or language,
+        duration_ms=getattr(final_result, "duration_ms", 0),
+        model=getattr(final_result, "model", ""),
+        route_action=route_payload.get("action") or "",
+        route_target=target,
+    )
+
     try:
         await ws.send_json(
             {
@@ -832,3 +869,43 @@ async def voice_metrics(
     snap["provider"] = getattr(_settings, "voice_asr_provider", "cohere")
     snap["model"] = getattr(_settings, "voice_asr_model", "")
     return snap
+
+
+# ── Voice transcripts — feature #1 ───────────────────────────────────
+
+
+@router.get("/api/voice/transcripts")
+async def list_voice_transcripts(
+    limit: int = Query(default=50, ge=1, le=500),
+    session_id: int | None = Query(default=None),
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """List the caller's recent transcripts, newest first.
+
+    Non-admins are scoped to their own rows. ``session_id`` further
+    narrows to a specific swarm run when set.
+    """
+    from autonoma.voice import transcripts_store as _ts
+
+    rows = await _ts.list_recent(
+        user_id=str(user.id),
+        session_id=session_id,
+        limit=limit,
+    )
+    return {
+        "transcripts": [
+            {
+                "id": r.id,
+                "session_id": r.session_id,
+                "stage": r.stage,
+                "text": r.text,
+                "language": r.language,
+                "duration_ms": r.duration_ms,
+                "model": r.model,
+                "route_action": r.route_action,
+                "route_target": r.route_target,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
