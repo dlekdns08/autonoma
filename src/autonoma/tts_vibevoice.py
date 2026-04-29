@@ -242,15 +242,35 @@ class VibeVoiceClient(BaseTTSClient):
         try:
             import vibevoice  # type: ignore[import-not-found]
         except ImportError as exc:
-            self._load_error = (
-                "vibevoice package not installed. Run: "
-                "uv pip install 'vibevoice[streamingtts] @ "
-                "git+https://github.com/microsoft/VibeVoice.git@main'"
-            )
-            logger.error("[tts/vibevoice] %s: %s", self._load_error, exc)
+            msg = str(exc)
+            if "No module named 'vibevoice'" in msg:
+                # The package itself is missing — a fresh-install case.
+                self._load_error = (
+                    "vibevoice package not installed. Run: "
+                    "uv pip install 'vibevoice[streamingtts] @ "
+                    "git+https://github.com/microsoft/VibeVoice.git@main'"
+                )
+            else:
+                # ``vibevoice`` is installed but a transitive import
+                # failed — overwhelmingly this is the transformers
+                # version skew described below. Surface the actionable
+                # explanation so an operator can fix the real issue
+                # instead of re-running ``pip install`` in a loop.
+                self._load_error = (
+                    f"vibevoice installed but its transitive imports failed: "
+                    f"{exc}. Most likely cause: vibevoice 1.0.0 pins "
+                    "transformers~=4.51, but Cohere ASR (used by "
+                    "/api/voice/*) pulls transformers 5.x. The two "
+                    "can't coexist in one venv. Either: "
+                    "(a) pin transformers~=4.51 in pyproject.toml and "
+                    "    set AUTONOMA_VOICE_ASR_PROVIDER=none, OR "
+                    "(b) keep ASR and stay on AUTONOMA_TTS_PROVIDER=omnivoice "
+                    "    until vibevoice ships a transformers-5 compatible release."
+                )
+            logger.error("[tts/vibevoice] %s", self._load_error)
             return
         except ValueError as exc:
-            self._load_error = f"vibevoice import failed: {exc}"
+            self._load_error = f"vibevoice import failed with ValueError: {exc}"
             logger.error("[tts/vibevoice] %s", self._load_error)
             return
 
