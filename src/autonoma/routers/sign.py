@@ -253,8 +253,18 @@ async def upload_clip(
     admins + translators to call; no FS escape (sanitized name).
     """
     name = str(payload.get("name") or "").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_\-:\.]{1,64}", name):
-        raise HTTPException(400, detail={"code": "invalid_clip_name", "message": "영숫자/._:- 1-64자."})
+    # Tightened from ``[A-Za-z0-9_\-:.]{1,64}``: the ``.`` and ``:``
+    # characters were never used by the legitimate UI and ``:`` is a
+    # filesystem ADS marker on Windows, so dropping them removes a
+    # cross-platform footgun without breaking any saved clips.
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name):
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_clip_name",
+                "message": "영숫자/_/- 1-64자만 허용됩니다.",
+            },
+        )
     frames = payload.get("frames")
     if not isinstance(frames, list) or not frames:
         raise HTTPException(400, detail={"code": "invalid_frames", "message": "frames는 비어있지 않은 배열이어야 합니다."})
