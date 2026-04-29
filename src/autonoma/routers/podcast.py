@@ -342,6 +342,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
                 "podcast.line_audio_chunk",
                 session_id=state.id,
                 seq=seq,
+                speaker=speaker_name,
                 index=index,
                 b64=base64.b64encode(chunk).decode("ascii"),
             )
