@@ -38,9 +38,24 @@ from autonoma.tts_base import BaseTTSClient, TTSError
 
 logger = logging.getLogger(__name__)
 
-# Defaults tuned for VibeVoice-1.5B; overridable via settings so a
-# heavier (or smaller) variant doesn't require a code change.
-DEFAULT_MODEL_ID = "microsoft/VibeVoice-1.5B"
+# Defaults tuned for VibeVoice-Realtime-0.5B.
+#
+# Why not the 1.5B? We tested it — vibevoice 1.0.0 only exports the
+# *streaming* inference class at the top level
+# (``VibeVoiceStreamingForConditionalGenerationInference``) and the
+# 1.5B checkpoint does NOT contain the streaming-only layers
+# (``model.tts_language_model.layers.*``), so loading 1.5B against the
+# streaming class leaves those layers randomly initialised. The
+# offline class that fits 1.5B is hidden in
+# ``vibevoice.modular.modeling_vibevoice`` and lacks ``generate``
+# entirely — its ``forward_speech_features`` doesn't accept
+# BatchEncoding inputs from VibeVoiceProcessor. Net effect: 1.5B is
+# functionally a "fine-tune me yourself" checkpoint, not an
+# operator-friendly inference model.
+#
+# Realtime 0.5B + streaming class + streaming weights is a clean
+# match. Override via ``settings.vibevoice_model_id`` for fine-tunes.
+DEFAULT_MODEL_ID = "microsoft/VibeVoice-Realtime-0.5B"
 DEFAULT_SAMPLE_RATE = 24_000
 
 # Same singleton pattern as ``tts_omnivoice``: every worker reuses one
