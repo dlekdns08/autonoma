@@ -77,10 +77,32 @@ uv sync --no-dev --extra tts
 # the source stable across our requires-python matrix). The sync
 # above therefore strips it on every startup. Restore here only when
 # the venv is missing it — first boot pays the git-clone cost (a few
-# seconds), every subsequent boot is a no-op import check. Fail open
-# so a transient git/network outage doesn't block the API entirely
-# (TTS factory falls back to StubTTSClient).
+# seconds), every subsequent boot is a no-op import check.
+#
+# IMPORTANT version-skew note: vibevoice 1.0.0 expects
+# ``transformers ~=4.51``, while Cohere ASR (the default
+# ``AUTONOMA_VOICE_ASR_PROVIDER=cohere``) needs transformers 5.x. The
+# two can't coexist in one venv. When the operator opted into
+# vibevoice we pin transformers below the 5.0 boundary AFTER ``uv
+# sync`` runs, then re-install vibevoice so its transitive imports
+# resolve. Operators who want both backends should run two API
+# processes with separate venvs — that's outside this script's scope.
 if [ "${AUTONOMA_TTS_PROVIDER:-}" = "vibevoice" ]; then
+  # Force transformers back into the 4.51 line every time. This
+  # overwrites the version ``uv sync`` just installed (which is a
+  # transformers-5 build pulled by Cohere ASR's lockfile entry).
+  # Only re-install when needed — checking the installed version
+  # is a one-line probe and saves a network round-trip.
+  current_tx=$(.venv/bin/python -c "import transformers; print(transformers.__version__)" 2>/dev/null || echo "")
+  case "$current_tx" in
+    4.51.*)
+      ;;
+    *)
+      echo "[run_api_native] pinning transformers~=4.51 for vibevoice (was: $current_tx)…"
+      uv pip install --python .venv/bin/python --quiet 'transformers~=4.51.0' || \
+        echo "[run_api_native] WARN: transformers downgrade failed" >&2
+      ;;
+  esac
   if ! .venv/bin/python -c "import vibevoice" 2>/dev/null; then
     echo "[run_api_native] vibevoice missing — installing from git…"
     uv pip install --python .venv/bin/python --quiet \
