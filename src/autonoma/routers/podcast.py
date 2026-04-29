@@ -1,23 +1,12 @@
-"""Podcast / multi-character dialogue — feature "Wave C".
+"""Podcast / multi-character dialogue — N-participant variant.
 
-Two characters (host + guest) hold a scripted-but-LLM-generated
-conversation about a topic. Each turn is synthesised through OmniVoice
-with the speaker's own voice profile (pre-uploaded via /voice). Live
-listeners can interrupt with a chat message or a voice utterance —
-that input is folded into the next dialogue chunk so the conversation
-can react to the room.
+A session now describes 2–6 participants (each: name, voice profile,
+persona, optional VRM file). The LLM picks who speaks next on every
+turn — no strict rotation. Listeners can interject with text or voice;
+that input is folded into the next dialogue chunk.
 
-Why a separate router instead of building on the existing swarm?
-  * Swarms are project-driven; this is dialogue-driven, with no
-    tasks, files, or grading. Reusing AgentSwarm here would mean
-    bending every prompt template the swarm holds.
-  * Listener interaction is a much tighter loop than the swarm's
-    round-based feedback queue, so the orchestrator runs as its
-    own asyncio task with explicit interrupt handling.
-
-Persistence: in-memory only for now (sessions live until the API
-process restarts or the owner stops them). Adding a DB table is a
-straight-forward follow-up if operators want resumable sessions.
+Persistence: in-memory only. Session lives until the API restarts or
+the owner stops it.
 """
 
 from __future__ import annotations
@@ -51,14 +40,27 @@ router = APIRouter(tags=["podcast"])
 # ── Request / response models ────────────────────────────────────────
 
 
+class ParticipantSpec(BaseModel):
+    """One speaker on the podcast.
+
+    ``vrm_file`` is a hint for the frontend stage — the backend doesn't
+    use it for anything other than echoing it back on each
+    ``podcast.line_started`` event so the UI knows which VRM to
+    spotlight. Empty string = let the frontend pick its default.
+    """
+
+    name: str = Field(..., min_length=1, max_length=64)
+    voice_profile_id: str = Field(..., min_length=1, max_length=64)
+    persona: str = Field("", max_length=400)
+    vrm_file: str = Field("", max_length=128)
+
+
 class CreateSessionRequest(BaseModel):
-    host_name: str = Field(..., min_length=1, max_length=64)
-    guest_name: str = Field(..., min_length=1, max_length=64)
-    host_voice_profile_id: str = Field(..., min_length=1, max_length=64)
-    guest_voice_profile_id: str = Field(..., min_length=1, max_length=64)
+    # 2 minimum — a "podcast" needs more than one voice. 6 is a soft
+    # cap so the LLM context stays manageable; raise carefully if you
+    # try larger casts (token budget grows quickly).
+    participants: list[ParticipantSpec] = Field(..., min_length=2, max_length=6)
     topic: str = Field(..., min_length=1, max_length=400)
-    host_persona: str = Field("", max_length=400)
-    guest_persona: str = Field("", max_length=400)
     # Total dialogue turns to script per LLM call. We re-call after
     # exhausting the chunk so the conversation can react to interrupts.
     chunk_size: int = Field(4, ge=2, le=8)
@@ -85,9 +87,9 @@ class _SessionState:
     owner_user_id: str
     spec: CreateSessionRequest
     status: str = "idle"  # idle / running / paused / ended / error
-    # Rolling history of turns the LLM has *already produced* — both
-    # spoken and pending. Used as conversational context on the next
-    # LLM call.
+    # Rolling history of turns the LLM has already produced. Each entry
+    # is ``{"speaker": "<participant.name>" or "listener", "text": str}``.
+    # Used as conversational context on the next LLM call.
     history: list[dict[str, str]] = field(default_factory=list)
     turns_played: int = 0
     # Pending listener interrupt (raw text). Consumed at the start
@@ -95,12 +97,25 @@ class _SessionState:
     pending_user_input: str | None = None
     # Background orchestrator task. None when not running.
     task: asyncio.Task[Any] | None = None
-    # Set when the user (or system) wants the current loop to
-    # break out of its TTS playback and re-enter the LLM stage —
-    # typically because new listener input arrived.
+    # Set when the user (or system) wants the current loop to break
+    # out of its TTS playback and re-enter the LLM stage — typically
+    # because new listener input arrived.
     interrupt_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Set while the orchestrator is paused. Cleared by /resume.
+    paused_event: asyncio.Event = field(default_factory=asyncio.Event)
     error: str | None = None
     created_at: float = field(default_factory=time.time)
+
+    def participant_by_name(self, name: str) -> ParticipantSpec | None:
+        """Case-insensitive lookup. The LLM occasionally capitalises
+        differently than the spec, so we normalise here rather than
+        forcing the model to echo the exact string.
+        """
+        target = name.strip().lower()
+        for p in self.spec.participants:
+            if p.name.lower() == target:
+                return p
+        return None
 
 
 _sessions: dict[str, _SessionState] = {}
@@ -110,8 +125,7 @@ _sessions_lock = asyncio.Lock()
 # ── Module-level resources ───────────────────────────────────────────
 
 
-# Single shared TTS client for podcast synthesis. Same model the swarm
-# uses; cheap to share across sessions because OmniVoice itself
+# Single shared TTS client. Cheap to share — OmniVoice itself
 # serialises generate() internally.
 _tts_client = None
 
@@ -130,15 +144,8 @@ _TURNS_RE = re.compile(r"\{[\s\S]*\}")
 
 
 def _build_admin_llm_client() -> Any:
-    """Reuse the same admin LLM credential the swarm boots with.
-
-    We do this here instead of carrying a per-session config because
-    the podcast feature is intended for the operator's own demo
-    sessions, not multi-tenant. If a tenant model becomes a need, the
-    config can move into ``CreateSessionRequest`` (along with rate
-    limits per owner_user_id).
-    """
-    from autonoma.api import _build_admin_llm_config  # local import — circular at module load
+    """Reuse the same admin LLM credential the swarm boots with."""
+    from autonoma.api import _build_admin_llm_config  # local — circular at module load
 
     cfg = _build_admin_llm_config()
     if cfg is None:
@@ -148,11 +155,33 @@ def _build_admin_llm_client() -> Any:
     return create_llm_client(cfg)
 
 
+def _render_history_for_prompt(state: _SessionState) -> str:
+    if not state.history:
+        return "  (start of conversation)"
+    out: list[str] = []
+    for t in state.history[-20:]:
+        speaker = t["speaker"]
+        if speaker == "listener":
+            out.append(f"  LISTENER: {t['text']}")
+        else:
+            out.append(f"  {speaker}: {t['text']}")
+    return "\n".join(out)
+
+
+def _render_participants_for_prompt(state: _SessionState) -> str:
+    out: list[str] = []
+    for p in state.spec.participants:
+        persona = p.persona or "A thoughtful contributor to the conversation."
+        out.append(f"  - {p.name}: {persona}")
+    return "\n".join(out)
+
+
 async def _generate_chunk(state: _SessionState) -> list[dict[str, str]]:
     """Ask the LLM to produce the next ``chunk_size`` dialogue turns.
 
-    Returns a list of ``{"speaker": "host"|"guest", "text": str}`` dicts.
-    Empty list on failure — caller decides whether to retry.
+    Returns a list of ``{"speaker": "<name>", "text": str}`` dicts —
+    speaker names are matched case-insensitively against the
+    participant spec downstream.
     """
     spec = state.spec
     client = _build_admin_llm_client()
@@ -160,44 +189,37 @@ async def _generate_chunk(state: _SessionState) -> list[dict[str, str]]:
         state.error = "admin LLM not configured"
         return []
 
-    history_str = (
-        "\n".join(
-            f"  {t['speaker'].upper()} ({spec.host_name if t['speaker']=='host' else spec.guest_name}): {t['text']}"
-            for t in state.history[-12:]
-        )
-        or "  (start of conversation)"
-    )
-
     listener_block = ""
     if state.pending_user_input:
-        # The listener input is consumed here — we add it to history
-        # afterwards so subsequent turns can refer to it without re-
-        # injecting via the system prompt.
         listener_block = (
             f"\nA live listener just commented: \"{state.pending_user_input}\"\n"
             "The next turns should naturally acknowledge or react to this input — "
             "do NOT ignore it.\n"
         )
 
+    valid_speakers = ", ".join(p.name for p in spec.participants)
+
     system = (
-        "You are scripting a relaxed two-person podcast dialogue. "
+        "You are scripting a relaxed multi-person podcast dialogue. "
         "Keep each turn 1–3 sentences, conversational, and in the same "
-        "language the topic is given in. Output STRICT JSON only — "
-        "no markdown fences, no preface."
+        "language the topic is given in. Pick speakers naturally based "
+        "on conversation flow — don't strictly rotate, but make sure "
+        "everyone participates over the long run. Output STRICT JSON only "
+        "— no markdown fences, no preface."
     )
-    user_msg = f"""HOST: {spec.host_name} — {spec.host_persona or 'A curious, warm host who asks great questions.'}
-GUEST: {spec.guest_name} — {spec.guest_persona or 'A thoughtful guest with strong opinions and stories.'}
+    user_msg = f"""PARTICIPANTS:
+{_render_participants_for_prompt(state)}
+
+VALID SPEAKER NAMES (use exactly these, no others): {valid_speakers}
 
 TOPIC: {spec.topic}
 
 CONVERSATION SO FAR:
-{history_str}
+{_render_history_for_prompt(state)}
 {listener_block}
-Generate the next {spec.chunk_size} dialogue turns. Alternate speakers
-naturally — they don't have to strictly take turns if the conversation
-demands a follow-up from the same speaker. Output ONLY this JSON:
+Generate the next {spec.chunk_size} dialogue turns. Output ONLY this JSON:
 
-{{"turns": [{{"speaker": "host", "text": "..."}}, {{"speaker": "guest", "text": "..."}}, ...]}}"""
+{{"turns": [{{"speaker": "<name>", "text": "..."}}, ...]}}"""
 
     try:
         resp = await client.create(
@@ -213,15 +235,11 @@ demands a follow-up from the same speaker. Output ONLY this JSON:
         return []
 
     raw = (resp.text or "").strip()
-    # Strip markdown fences if the model ignored the "no fences" note.
     if raw.startswith("```"):
         raw = raw.strip("`")
-        # Drop the optional ``json`` language hint on the first line.
         nl = raw.find("\n")
         if nl != -1 and raw[:nl].strip().lower() == "json":
             raw = raw[nl + 1 :]
-    # Salvage by grabbing the outermost JSON object if the model
-    # surrounded it with prose.
     if not raw.startswith("{"):
         m = _TURNS_RE.search(raw)
         if m:
@@ -240,11 +258,18 @@ demands a follow-up from the same speaker. Output ONLY this JSON:
     for t in turns:
         if not isinstance(t, dict):
             continue
-        speaker = str(t.get("speaker") or "").strip().lower()
+        speaker = str(t.get("speaker") or "").strip()
         text = str(t.get("text") or "").strip()
-        if speaker not in ("host", "guest") or not text:
+        if not speaker or not text:
             continue
-        out.append({"speaker": speaker, "text": text[:600]})
+        # Resolve speaker case-insensitively. Drop the turn entirely if
+        # the model invented a name that's not in the spec — better
+        # than silently piping "Charlie" to Alice's voice.
+        match = state.participant_by_name(speaker)
+        if match is None:
+            logger.warning("[podcast] LLM returned unknown speaker %r — dropping turn", speaker)
+            continue
+        out.append({"speaker": match.name, "text": text[:600]})
     return out
 
 
@@ -252,31 +277,25 @@ demands a follow-up from the same speaker. Output ONLY this JSON:
 
 
 async def _emit(event: str, **kwargs: Any) -> None:
-    """Wrapper so we can quickly add room-scoping later if needed."""
     await bus.emit(event, **kwargs)
 
 
 async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
-    """Synthesise + emit one turn. Returns False if interrupted mid-play.
-
-    The audio is base64-chunked over the bus, mirroring the swarm's
-    ``agent.speech_audio_*`` shape so the frontend can reuse the
-    same playback machinery if it wants to. We emit under a different
-    namespace (``podcast.line_audio_*``) to keep the event schema
-    independent of the swarm's.
-    """
+    """Synthesise + emit one turn. Returns False if interrupted mid-play."""
     spec = state.spec
-    speaker = turn["speaker"]
+    speaker_name = turn["speaker"]
     text = turn["text"]
-    profile_id = spec.host_voice_profile_id if speaker == "host" else spec.guest_voice_profile_id
-    display_name = spec.host_name if speaker == "host" else spec.guest_name
+    participant = state.participant_by_name(speaker_name)
+    if participant is None:
+        # Defensive — _generate_chunk should have filtered this.
+        return True
 
-    profile = await get_profile(profile_id)
+    profile = await get_profile(participant.voice_profile_id)
     if profile is None:
         await _emit(
             "podcast.line_failed",
             session_id=state.id,
-            speaker=speaker,
+            speaker=speaker_name,
             reason="profile_not_found",
         )
         return True  # not an interrupt — keep going
@@ -286,15 +305,17 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
         "podcast.line_started",
         session_id=state.id,
         seq=seq,
-        speaker=speaker,
-        speaker_name=display_name,
+        speaker=speaker_name,
+        speaker_name=speaker_name,
+        vrm_file=participant.vrm_file or "",
         text=text,
     )
     await _emit(
         "podcast.line_audio_start",
         session_id=state.id,
         seq=seq,
-        speaker=speaker,
+        speaker=speaker_name,
+        vrm_file=participant.vrm_file or "",
         mime="audio/wav",
     )
 
@@ -305,7 +326,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
         async for chunk in synthesize_streaming(
             client,
             text=text,
-            voice=profile_id,
+            voice=participant.voice_profile_id,
             mood="",
             language=spec.language,
             ref_audio=profile.ref_audio,
@@ -317,9 +338,6 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
                 break
             if not chunk:
                 continue
-            # base64 over the bus matches the existing
-            # agent.speech_audio_chunk encoding so a future merge
-            # of the playback hooks is straightforward.
             await _emit(
                 "podcast.line_audio_chunk",
                 session_id=state.id,
@@ -334,7 +352,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
             "podcast.line_failed",
             session_id=state.id,
             seq=seq,
-            speaker=speaker,
+            speaker=speaker_name,
             reason=f"tts_error: {exc}",
         )
 
@@ -342,7 +360,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
         "podcast.line_audio_end",
         session_id=state.id,
         seq=seq,
-        speaker=speaker,
+        speaker=speaker_name,
         interrupted=interrupted,
     )
     state.turns_played += 1
@@ -353,26 +371,35 @@ async def _orchestrator(state: _SessionState) -> None:
     """Main loop for one podcast session.
 
     Drives LLM chunk → for each turn synthesise + play → on listener
-    interrupt, drop the rest of the chunk and re-enter the LLM step
-    with the new context. Stops cleanly on max_total_turns or
-    explicit cancel.
+    interrupt or pause, drop the rest of the chunk and re-enter the
+    LLM step with the new context.
     """
     state.status = "running"
-    await _emit("podcast.started", session_id=state.id)
+    await _emit(
+        "podcast.started",
+        session_id=state.id,
+        participants=[
+            {"name": p.name, "vrm_file": p.vrm_file} for p in state.spec.participants
+        ],
+    )
     try:
         while state.turns_played < state.spec.max_total_turns:
+            # Honour pause — sit on the event until /resume clears it.
+            if state.paused_event.is_set():
+                state.status = "paused"
+                await _emit("podcast.paused", session_id=state.id)
+                while state.paused_event.is_set():
+                    await asyncio.sleep(0.2)
+                state.status = "running"
+                await _emit("podcast.resumed", session_id=state.id)
+
             chunk = await _generate_chunk(state)
             if not chunk:
                 logger.warning("[podcast %s] empty chunk; stopping", state.id)
                 state.status = "error"
                 break
-            # Append to history *before* playback so an interrupt
-            # mid-chunk doesn't lose the lines already committed.
             for turn in chunk:
                 state.history.append(turn)
-            # Pending listener input was incorporated into the chunk
-            # we just generated; merge it into history as a synthetic
-            # ``listener`` turn so subsequent prompts have it.
             if state.pending_user_input:
                 state.history.append(
                     {"speaker": "listener", "text": state.pending_user_input}
@@ -381,7 +408,9 @@ async def _orchestrator(state: _SessionState) -> None:
             for turn in chunk:
                 if state.interrupt_event.is_set():
                     state.interrupt_event.clear()
-                    break  # re-enter the outer loop → new LLM chunk
+                    break
+                if state.paused_event.is_set():
+                    break
                 ok = await _play_turn(state, turn)
                 if not ok:
                     state.interrupt_event.clear()
@@ -410,18 +439,24 @@ async def _orchestrator(state: _SessionState) -> None:
 
 
 def _public_view(state: _SessionState) -> dict[str, Any]:
-    """JSON-serialisable shape for GET responses."""
     return {
         "id": state.id,
         "owner_user_id": state.owner_user_id,
         "status": state.status,
         "turns_played": state.turns_played,
         "max_total_turns": state.spec.max_total_turns,
-        "host_name": state.spec.host_name,
-        "guest_name": state.spec.guest_name,
         "topic": state.spec.topic,
         "language": state.spec.language,
-        "history": state.history[-20:],
+        "participants": [
+            {
+                "name": p.name,
+                "voice_profile_id": p.voice_profile_id,
+                "persona": p.persona,
+                "vrm_file": p.vrm_file,
+            }
+            for p in state.spec.participants
+        ],
+        "history": state.history[-30:],
         "error": state.error,
     }
 
@@ -431,19 +466,31 @@ async def create_session(
     payload: CreateSessionRequest,
     user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
-    # Validate both voice profiles up-front so the user gets a clear
-    # 400 before they hit start and end up debugging the orchestrator.
-    for label, pid in (
-        ("host", payload.host_voice_profile_id),
-        ("guest", payload.guest_voice_profile_id),
-    ):
-        prof = await get_profile(pid)
+    # Reject duplicate names — the LLM disambiguates by name, so two
+    # participants sharing one would be unaddressable.
+    seen: set[str] = set()
+    for p in payload.participants:
+        key = p.name.strip().lower()
+        if key in seen:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "duplicate_participant_name",
+                    "message": f"Participant name '{p.name}' is duplicated.",
+                },
+            )
+        seen.add(key)
+
+    # Validate each voice profile so the user gets a clean 400 before
+    # the orchestrator starts and ends up debugging it from logs.
+    for p in payload.participants:
+        prof = await get_profile(p.voice_profile_id)
         if prof is None:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail={
                     "code": "voice_profile_not_found",
-                    "message": f"{label} voice profile {pid} not found",
+                    "message": f"Voice profile {p.voice_profile_id} not found for {p.name}",
                 },
             )
     sid = str(uuid.uuid4())
@@ -461,8 +508,6 @@ def _require_owned(session_id: str, user: User) -> _SessionState:
             detail={"code": "session_not_found"},
         )
     if state.owner_user_id != str(user.id) and user.role != "admin":
-        # Same 404 vs 403 reasoning as elsewhere — don't reveal the
-        # existence of someone else's session via status code.
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
             detail={"code": "session_not_found"},
@@ -477,9 +522,10 @@ async def start_session(
 ) -> dict[str, Any]:
     state = _require_owned(session_id, user)
     if state.task is not None and not state.task.done():
-        return _public_view(state)  # already running — idempotent
+        return _public_view(state)
     state.error = None
     state.interrupt_event.clear()
+    state.paused_event.clear()
     state.task = asyncio.create_task(_orchestrator(state), name=f"podcast-{session_id}")
     return _public_view(state)
 
@@ -490,6 +536,7 @@ async def stop_session(
     user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     state = _require_owned(session_id, user)
+    state.paused_event.clear()
     if state.task and not state.task.done():
         state.task.cancel()
         try:
@@ -501,18 +548,39 @@ async def stop_session(
     return _public_view(state)
 
 
+@router.post("/api/podcast/sessions/{session_id}/pause")
+async def pause_session(
+    session_id: str,
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Halt playback at the next inter-turn boundary.
+
+    The current line finishes synthesising (cancelling mid-chunk would
+    leave a half-rendered WAV on the bus), then the orchestrator
+    parks on ``paused_event`` until /resume.
+    """
+    state = _require_owned(session_id, user)
+    state.paused_event.set()
+    return _public_view(state)
+
+
+@router.post("/api/podcast/sessions/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    state = _require_owned(session_id, user)
+    state.paused_event.clear()
+    return _public_view(state)
+
+
 @router.post("/api/podcast/sessions/{session_id}/interrupt")
 async def interrupt_session(
     session_id: str,
     payload: InterruptRequest,
     user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
-    """Inject a listener message and break the current playback.
-
-    The orchestrator picks up ``pending_user_input`` on the next LLM
-    chunk; ``interrupt_event`` ensures we don't have to wait for the
-    current line to finish first.
-    """
+    """Inject a listener message and break the current playback."""
     state = _require_owned(session_id, user)
     text = payload.text.strip()
     if not text:
@@ -558,6 +626,7 @@ async def delete_session(
     user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     state = _require_owned(session_id, user)
+    state.paused_event.clear()
     if state.task and not state.task.done():
         state.task.cancel()
         try:
