@@ -436,12 +436,35 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
     setRecording(false);
     setUploading(true);
 
+    // Bound how long we'll wait for the server's ``final`` frame. Without
+    // this the UI hangs forever if the server crashes between ``stop``
+    // and ``final`` (or if the WS drops mid-flush). 30 s is generous
+    // for the final transcribe pass, which is normally <5 s.
+    const FINAL_TIMEOUT_MS = 30_000;
     const final = await new Promise<PushToTalkResult | null>((resolve) => {
       finalResolverRef.current = resolve;
+      const timer = window.setTimeout(() => {
+        // ``finalResolverRef`` may have been cleared by the message
+        // handler if the final landed concurrently — in that case the
+        // resolve below is a no-op (Promise resolves only once).
+        if (finalResolverRef.current === resolve) {
+          finalResolverRef.current = null;
+          resolve(null);
+        }
+      }, FINAL_TIMEOUT_MS);
+      // Wrap the resolver so the timer is cancelled either way and
+      // we don't leak a setTimeout closure.
+      const originalResolve = resolve;
+      finalResolverRef.current = (r) => {
+        window.clearTimeout(timer);
+        originalResolve(r);
+      };
       try {
         rec.stop();
       } catch {
-        resolve(null);
+        window.clearTimeout(timer);
+        finalResolverRef.current = null;
+        originalResolve(null);
       }
     });
 
