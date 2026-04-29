@@ -42,14 +42,16 @@ jobs:
           AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-4-6' }}
           AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
           AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
-          # Hardcoded — do NOT read from secrets.  Legacy values like
-          # ``AUTONOMA_TTS_PROVIDER=azure`` still live in older GitHub
-          # secrets stores, but the azure/openai TTS paths were removed
-          # in favor of OmniVoice (see src/autonoma/tts.py header).  A
-          # stale secret override crashes pydantic-settings at startup
-          # and sends the launchd agent into a KeepAlive crash-loop.
-          AUTONOMA_TTS_ENABLED: 'true'
-          AUTONOMA_TTS_PROVIDER: 'omnivoice'
+          # Now safe to read from secrets: ``config.py`` enforces
+          # ``Literal["omnivoice", "vibevoice", "none"]`` on
+          # ``tts_provider``, so a stale ``azure``-era secret would
+          # crash with a clear pydantic ValidationError at startup
+          # (the operator notices), not a silent KeepAlive loop.
+          # Default ``omnivoice`` keeps existing deploys unchanged
+          # when no secret is set; flip to ``vibevoice`` by setting
+          # the GitHub secret with that value.
+          AUTONOMA_TTS_ENABLED: ${{ secrets.AUTONOMA_TTS_ENABLED || 'true' }}
+          AUTONOMA_TTS_PROVIDER: ${{ secrets.AUTONOMA_TTS_PROVIDER || 'omnivoice' }}
           # HF_TOKEN gates the Cohere ASR model used by /api/voice/*.
           # transformers/huggingface_hub auto-detect both names so we
           # set both for safety. Empty when the secret isn't configured
