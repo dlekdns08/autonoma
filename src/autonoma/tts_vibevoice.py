@@ -284,25 +284,60 @@ class VibeVoiceClient(BaseTTSClient):
         # existed).
         import importlib
 
-        # vibevoice 1.0.0 actually exports
-        # ``VibeVoiceStreamingForConditionalGenerationInference`` (note
-        # the order: ``Streaming`` is the prefix, not a suffix). Both
-        # the streaming class and processor are available at the top
-        # level for convenience; the offline ``VibeVoiceForConditionalGeneration``
-        # lives only in the deeper module path.
-        _model_candidates = [
-            ("vibevoice", "VibeVoiceStreamingForConditionalGenerationInference"),
-            (
-                "vibevoice.modular.modeling_vibevoice_streaming_inference",
-                "VibeVoiceStreamingForConditionalGenerationInference",
-            ),
-            # Offline fallback if the streaming class is somehow
-            # unavailable on this build.
-            (
-                "vibevoice.modular.modeling_vibevoice",
-                "VibeVoiceForConditionalGeneration",
-            ),
-        ]
+        # vibevoice 1.0.0 ships TWO incompatible class families and the
+        # right one is determined by the *checkpoint*, not the user's
+        # preference:
+        #
+        #   - ``microsoft/VibeVoice-1.5B``  →  offline class
+        #     (``VibeVoiceForConditionalGeneration`` +
+        #     ``VibeVoiceProcessor``). Loading the streaming class
+        #     against this checkpoint leaves the entire
+        #     ``tts_language_model.layers.*`` block uninitialised and
+        #     the model emits noise.
+        #   - ``microsoft/VibeVoice-Realtime-0.5B``  →  streaming class
+        #     (``VibeVoiceStreamingForConditionalGenerationInference``
+        #     + ``VibeVoiceStreamingProcessor``). Tuned for live use.
+        #
+        # We pick the family from the model id. ``-Realtime-`` /
+        # ``-streaming`` markers route to the streaming family;
+        # everything else (including the default 1.5B) routes to the
+        # offline family.
+        is_realtime_id = (
+            "realtime" in self.model_id.lower()
+            or "streaming" in self.model_id.lower()
+        )
+
+        if is_realtime_id:
+            _model_candidates = [
+                ("vibevoice", "VibeVoiceStreamingForConditionalGenerationInference"),
+                (
+                    "vibevoice.modular.modeling_vibevoice_streaming_inference",
+                    "VibeVoiceStreamingForConditionalGenerationInference",
+                ),
+            ]
+            _proc_candidates = [
+                ("vibevoice", "VibeVoiceStreamingProcessor"),
+                ("vibevoice.processor", "VibeVoiceStreamingProcessor"),
+                (
+                    "vibevoice.processor.vibevoice_streaming_processor",
+                    "VibeVoiceStreamingProcessor",
+                ),
+            ]
+        else:
+            _model_candidates = [
+                (
+                    "vibevoice.modular.modeling_vibevoice",
+                    "VibeVoiceForConditionalGeneration",
+                ),
+            ]
+            _proc_candidates = [
+                ("vibevoice.processor", "VibeVoiceProcessor"),
+                (
+                    "vibevoice.processor.vibevoice_processor",
+                    "VibeVoiceProcessor",
+                ),
+            ]
+
         for mod_path, cls_name in _model_candidates:
             try:
                 mod = importlib.import_module(mod_path)
@@ -312,23 +347,13 @@ class VibeVoiceClient(BaseTTSClient):
             if cls is not None:
                 ModelCls = cls
                 logger.info(
-                    "[tts/vibevoice] using %s from %s", cls_name, mod_path
+                    "[tts/vibevoice] using %s from %s for model_id=%s",
+                    cls_name,
+                    mod_path,
+                    self.model_id,
                 )
                 break
 
-        _proc_candidates = [
-            # Streaming processor preferred — paired with the
-            # streaming inference class above.
-            ("vibevoice", "VibeVoiceStreamingProcessor"),
-            ("vibevoice.processor", "VibeVoiceStreamingProcessor"),
-            (
-                "vibevoice.processor.vibevoice_streaming_processor",
-                "VibeVoiceStreamingProcessor",
-            ),
-            # Offline fallback.
-            ("vibevoice.processor", "VibeVoiceProcessor"),
-            ("vibevoice.processor.vibevoice_processor", "VibeVoiceProcessor"),
-        ]
         for mod_path, cls_name in _proc_candidates:
             try:
                 mod = importlib.import_module(mod_path)

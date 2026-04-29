@@ -268,17 +268,23 @@ async def voice_test_profile(
     if profile is None:
         raise _voice_error(404, "profile_not_found", "해당 프로필을 찾을 수 없습니다.")
 
+    # Use the TTS factory so this endpoint honours
+    # ``settings.tts_provider`` — historically it bypassed the factory
+    # and hard-imported ``tts_omnivoice``, which broke the moment the
+    # operator switched to vibevoice (the omnivoice extra was dropped
+    # alongside that switch). Now the same /voice test bench works
+    # against whichever backend is configured.
     try:
-        from autonoma.tts_omnivoice import get_shared_client
+        from autonoma.tts import create_tts_client, tts_config_from_settings
         from autonoma.tts_synth import classify_synth_error, synthesize_collected
     except ImportError as exc:
         raise _voice_error(
-            503, "omnivoice_missing",
-            "서버에 OmniVoice 패키지가 설치되지 않았습니다.",
+            503, "tts_unavailable",
+            "서버에 TTS 모듈이 설치되지 않았습니다.",
             detail_raw=str(exc),
         )
 
-    client = get_shared_client()
+    client = create_tts_client(tts_config_from_settings())
     try:
         result = await synthesize_collected(
             client,
