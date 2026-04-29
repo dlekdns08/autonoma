@@ -531,24 +531,71 @@ class VibeVoiceClient(BaseTTSClient):
             except Exception:
                 pass
 
-        # Inference. We try ``model.generate`` first (most common) and
-        # fall back to ``model.synthesize`` if the wrapped class
-        # exposes a tts-specific entry point.
+        # Inference entry point. The VibeVoice family doesn't expose
+        # the ``transformers.PreTrainedModel.generate`` we'd normally
+        # expect — different revisions use different names. Walk a
+        # priority list of likely names; for each, only pass
+        # ``max_new_tokens`` when the method's signature accepts it
+        # (some custom inference helpers don't).
+        import inspect
+
+        kw = inputs if isinstance(inputs, dict) else inputs.data
+        method_candidates = (
+            # vibevoice 1.5B's offline class hides ``generate`` and
+            # exposes ``forward_speech_features`` instead — try it
+            # first since that's the only non-training entry point
+            # the dir() inspection turned up.
+            "forward_speech_features",
+            "generate",          # transformers canonical
+            "generate_speech",   # tts-specific
+            "generate_audio",
+            "synthesize",
+            "tts",
+            "infer",
+            "sample",
+            "forward",           # last-resort: encoder-decoder pass
+        )
+        method_called: str | None = None
+        outputs = None
         with torch.no_grad():
-            if hasattr(self._model, "generate"):
-                outputs = self._model.generate(
-                    **(inputs if isinstance(inputs, dict) else inputs.data),
-                    max_new_tokens=getattr(settings, "vibevoice_max_new_tokens", 4096),
-                )
-            elif hasattr(self._model, "synthesize"):
-                outputs = self._model.synthesize(
-                    **(inputs if isinstance(inputs, dict) else inputs.data),
-                )
-            else:
-                raise TTSError(
-                    "VibeVoice model exposes neither .generate nor .synthesize — "
-                    "update _run_inference for this revision."
-                )
+            for name in method_candidates:
+                fn = getattr(self._model, name, None)
+                if fn is None or not callable(fn):
+                    continue
+                try:
+                    sig = inspect.signature(fn)
+                    extra: dict[str, Any] = {}
+                    if "max_new_tokens" in sig.parameters:
+                        extra["max_new_tokens"] = getattr(
+                            settings, "vibevoice_max_new_tokens", 4096
+                        )
+                except (TypeError, ValueError):
+                    extra = {}
+                try:
+                    outputs = fn(**kw, **extra)
+                    method_called = name
+                    break
+                except TypeError as exc:
+                    # Method exists but doesn't accept these kwargs —
+                    # log and try the next candidate. Don't raise yet.
+                    logger.debug(
+                        "[tts/vibevoice] %s rejected kwargs (%s); trying next",
+                        name, exc,
+                    )
+                    continue
+        if outputs is None or method_called is None:
+            available = [
+                m for m in dir(self._model)
+                if not m.startswith("_") and callable(getattr(self._model, m, None))
+            ]
+            raise TTSError(
+                "VibeVoice model exposes none of the expected inference "
+                f"methods. Tried: {method_candidates}. "
+                f"Public callables on the model: {available[:30]}{'...' if len(available) > 30 else ''}. "
+                "Update ``method_candidates`` in tts_vibevoice._run_inference "
+                "with the right name for this vibevoice revision."
+            )
+        logger.info("[tts/vibevoice] inference via %s()", method_called)
 
         # Decode. Audio TTS models conventionally return either:
         #   (a) a tensor / ndarray of audio samples, or
