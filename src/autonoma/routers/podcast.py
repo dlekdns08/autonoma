@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import re
 import time
 import uuid
+import wave
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -280,6 +282,30 @@ async def _emit(event: str, **kwargs: Any) -> None:
     await bus.emit(event, **kwargs)
 
 
+def _wav_duration_s(wav_bytes: bytes) -> float:
+    """Return WAV blob duration in seconds, 0.0 if unparseable.
+
+    The orchestrator uses this to space turns by the actual playback
+    length. Without it, fast backends (MLX is ≤1 s synth for a 5 s
+    utterance) emit several speakers' audio back-to-back; the client
+    queues the WAVs into separate ``<audio>`` elements, but the next
+    turn's ``line_audio_end`` arrives before the previous turn's
+    ``onended`` fires, so the previous voice is cut off and speakers
+    overlap mid-sentence ("마구 섞여서").
+    """
+    if not wav_bytes:
+        return 0.0
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            frames = wf.getnframes()
+            sr = wf.getframerate()
+            if sr <= 0 or frames <= 0:
+                return 0.0
+            return frames / float(sr)
+    except (wave.Error, EOFError):
+        return 0.0
+
+
 async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
     """Synthesise + emit one turn. Returns False if interrupted mid-play."""
     spec = state.spec
@@ -322,6 +348,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
     client = _get_tts_client()
     index = 0
     interrupted = False
+    audio_buf = bytearray()
     try:
         async for chunk in synthesize_streaming(
             client,
@@ -338,6 +365,7 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
                 break
             if not chunk:
                 continue
+            audio_buf.extend(chunk)
             await _emit(
                 "podcast.line_audio_chunk",
                 session_id=state.id,
@@ -365,6 +393,31 @@ async def _play_turn(state: _SessionState, turn: dict[str, str]) -> bool:
         interrupted=interrupted,
     )
     state.turns_played += 1
+
+    # Hold the orchestrator until the client is likely done playing
+    # this line. Synth (esp. MLX) finishes far faster than playback,
+    # so without this gate the next ``_play_turn`` would already be
+    # streaming the next speaker before the current one finishes.
+    # 250 ms safety margin covers WS jitter + browser audio decode +
+    # ``onended`` event scheduling latency. The interrupt_event short
+    # circuits the wait so listener interjections don't get queued
+    # behind the unfinished line.
+    if not interrupted and audio_buf:
+        playback_s = _wav_duration_s(bytes(audio_buf))
+        if playback_s > 0:
+            try:
+                await asyncio.wait_for(
+                    state.interrupt_event.wait(),
+                    timeout=playback_s + 0.25,
+                )
+                # Interrupt fired mid-playback — propagate so the outer
+                # loop drops the remaining queued chunk and re-enters
+                # the LLM step with the new context.
+                interrupted = True
+            except asyncio.TimeoutError:
+                # Normal completion — playback finished on time.
+                pass
+
     return not interrupted
 
 
