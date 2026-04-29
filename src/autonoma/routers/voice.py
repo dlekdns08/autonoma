@@ -40,8 +40,12 @@ from autonoma.auth import (
     read_session_token,
     require_active_user,
 )
+from autonoma.config import settings as _voice_settings
 from autonoma.event_bus import bus
 from autonoma.mocap import is_known_vrm
+from autonoma.voice import metrics as _asr_metrics
+from autonoma.voice import transcripts_store as _ts
+from autonoma.voice.asr import get_asr_provider
 from autonoma.voice.store import IntegrityError as _VoiceIntegrityError
 
 logger = logging.getLogger(__name__)
