@@ -83,7 +83,14 @@ class CohereAsrProvider(AsrProvider):
         self._model: Any = None
         self._device: str = "cpu"
         self._lock = threading.Lock()
-        self._load_error: Exception | None = None
+        # Stored as a plain ``str`` so each ``_ensure_loaded`` call that
+        # follows a prior failure raises a *fresh* ``RuntimeError`` —
+        # we used to stash the original exception object and ``raise``
+        # it on every call, which made each retry chain a new
+        # ``__cause__`` onto the same instance. The traceback then
+        # grew without bound across the warmup retries logged on
+        # startup. Keeping just the message keeps each raise atomic.
+        self._load_error: str | None = None
         # Reusable scratch tempfile path for the ``transcribe`` audio
         # spill. Created lazily on first call and overwritten in place
         # on every subsequent call — avoids the "thousands of /tmp
@@ -114,7 +121,9 @@ class CohereAsrProvider(AsrProvider):
         if self._model is not None:
             return
         if self._load_error is not None:
-            raise self._load_error
+            # Fresh exception object per call — see the dataclass field
+            # comment for why we no longer re-raise the saved instance.
+            raise RuntimeError(self._load_error)
         try:
             # Imported lazily so importing this module without the ASR
             # extras installed never fails at startup.
@@ -123,12 +132,12 @@ class CohereAsrProvider(AsrProvider):
                 CohereAsrForConditionalGeneration,
             )
         except ImportError as exc:
-            self._load_error = RuntimeError(
+            self._load_error = (
                 "transformers with CohereAsrForConditionalGeneration is required "
                 f"for {self.MODEL_ID}. Install a version that ships the Cohere ASR "
                 "class (>= the release that added it in 2026-Q1)."
             )
-            raise self._load_error from exc
+            raise RuntimeError(self._load_error) from exc
 
         device = self._select_device()
         self._device = device
