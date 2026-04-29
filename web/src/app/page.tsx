@@ -119,6 +119,14 @@ function UserChip({
       >
         voice
       </a>
+      <span className="text-white/20">|</span>
+      <a
+        href="/podcast"
+        className="text-emerald-300/70 hover:text-emerald-200 transition-colors underline underline-offset-2"
+        title="멀티캐릭터 팟캐스트"
+      >
+        podcast
+      </a>
       {isAdmin && (
         <>
           <span className="text-white/20">|</span>
