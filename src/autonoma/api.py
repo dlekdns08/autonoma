@@ -3557,11 +3557,18 @@ async def list_models_server(
 
 
 @app.post("/api/models")
-async def list_models_with_key(payload: dict[str, Any]):
+async def list_models_with_key(
+    payload: dict[str, Any],
+    _user: User = Depends(require_active_user),
+):
     """Return models for a user-supplied key (used by the 'User API key' tab).
 
     Request body:
         {"provider": "anthropic"|"openai"|"vllm", "api_key": "...", "base_url": "..."}
+
+    Auth-gated: anonymous callers shouldn't be able to mint requests
+    against arbitrary OpenAI/Anthropic keys via this endpoint (it's a
+    free SSRF-into-paid-API surface otherwise).
     """
     from autonoma.model_catalog import list_models
 
