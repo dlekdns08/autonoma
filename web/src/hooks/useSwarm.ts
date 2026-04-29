@@ -222,16 +222,19 @@ export function useSwarm() {
   const [mocapTriggerFiredEvent, setMocapTriggerFiredEvent] =
     useState<MocapTriggerFiredEvent | null>(null);
   const mocapTriggerFiredEventSeqRef = useRef(0);
-  // Multi-character podcast (Wave C). Single state slot for the
-  // latest podcast.* event — the /podcast page reads this to drive
-  // its state machine. Same monotonic-seq pattern as the mocap
-  // events above so a re-render handing back the same object
-  // doesn't cause a duplicate apply.
-  const [podcastEvent, setPodcastEvent] = useState<{
-    kind: string;
-    data: Record<string, unknown>;
-    seq: number;
-  } | null>(null);
+  // Multi-character podcast (Wave C). Ref-backed queue + tick counter
+  // — NOT a single state slot. The orchestrator emits 4+ events per
+  // turn back-to-back (line_started → audio_start → audio_chunk →
+  // audio_end). React 18 batches setState across those rapid-fire
+  // ws frames, so a single state slot would only let the consumer
+  // observe the LAST event per render commit, dropping line_started
+  // (which sets up the per-line buffer) and chunk frames in between.
+  // The queue accumulates every event; the tick state just wakes the
+  // /podcast page's effect, which drains the queue in arrival order.
+  const podcastEventQueueRef = useRef<
+    Array<{ kind: string; data: Record<string, unknown>; seq: number }>
+  >([]);
+  const [podcastEventTick, setPodcastEventTick] = useState(0);
   const podcastEventSeqRef = useRef(0);
 
   // Same pattern as mocap bindings, for voice profile bindings. The
@@ -787,10 +790,10 @@ export function useSwarm() {
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
             sfxRef.current.play("ghost");
             break;
-          // Podcast — single multiplexed event slot. The /podcast page
-          // discriminates on ``kind`` and re-emits to its own audio
-          // playback machinery. Listed explicitly (not via fallthrough)
-          // so an unknown event still hits the default branch + log.
+          // Podcast — push every event into the ref queue, then bump
+          // the tick to wake the consumer effect. Crucially, we do NOT
+          // store the event in React state (see queue declaration
+          // above for the batching rationale).
           case "podcast.started":
           case "podcast.line_started":
           case "podcast.line_audio_start":
@@ -798,12 +801,15 @@ export function useSwarm() {
           case "podcast.line_audio_end":
           case "podcast.line_failed":
           case "podcast.user_input":
+          case "podcast.paused":
+          case "podcast.resumed":
           case "podcast.ended": {
-            setPodcastEvent({
+            podcastEventQueueRef.current.push({
               kind: event,
               data,
               seq: ++podcastEventSeqRef.current,
             });
+            setPodcastEventTick((n) => n + 1);
             break;
           }
           case "live.reaction": {
@@ -1505,9 +1511,12 @@ export function useSwarm() {
     // pauses every speaking agent on press without tearing down the
     // analyser graph.
     interruptAgentVoice: voice.interruptAll,
-    // Latest multiplexed podcast.* event from the WS, or null. The
-    // /podcast page subscribes via this to drive playback + UI.
-    podcastEvent,
+    // Multiplexed podcast.* event stream. Consumers drain
+    // ``podcastEventQueue.current`` (a ref-backed FIFO) whenever
+    // ``podcastEventTick`` bumps — see the queue declaration above
+    // for why this isn't a single state slot.
+    podcastEventQueue: podcastEventQueueRef,
+    podcastEventTick,
     room,
     chat,
     sendChat,
