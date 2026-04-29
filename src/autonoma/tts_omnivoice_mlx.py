@@ -151,6 +151,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 text=text,
                 ref_audio=ref_audio,
                 ref_audio_mime=ref_audio_mime,
+                ref_text=ref_text,
+                language=language,
             )
         if not wav_bytes:
             return
@@ -165,12 +167,42 @@ class OmniVoiceMlxClient(BaseTTSClient):
         text: str,
         ref_audio: bytes | None,
         ref_audio_mime: str,
+        ref_text: str = "",
+        language: str = "ko",
     ) -> bytes:
         """Bridge to ``mlx_audio.tts.generate.generate_audio``.
 
-        That helper writes WAV(s) to disk under ``file_prefix``; we
-        give it a private tempdir, scan for the resulting WAV, and
-        return the bytes.
+        Inspected signature (mlx-audio 0.4.3):
+
+            generate_audio(
+                text: str,
+                model: Module | str | None = None,
+                max_tokens: int = 1200,
+                voice: str = 'af_heart',
+                ref_audio: str | None = None,
+                ref_text: str | None = None,
+                stt_model: str | Module | None = 'mlx-community/whisper-...',
+                output_path: str | None = None,
+                file_prefix: str = 'audio',
+                audio_format: str = 'wav',
+                lang_code: str = 'en',
+                save: bool = False,        # ← critical: defaults to NOT writing files
+                ...
+            )
+
+        Three quirks the docs didn't telegraph and we have to handle:
+
+        1. ``save=False`` is the default. Without ``save=True`` no file
+           is ever written, regardless of ``output_path`` /
+           ``file_prefix``. Our caller wants WAV bytes back, so we
+           have to flip it.
+        2. ``ref_text`` lets us bypass the built-in STT step. Voice
+           profiles already carry the transcript, so passing it makes
+           the call deterministic and skips the multi-second whisper
+           round trip.
+        3. ``lang_code`` defaults to English. We pass through the
+           caller's language so Korean / Japanese profiles get the
+           right tokenizer.
         """
         from mlx_audio.tts.generate import generate_audio  # type: ignore[import-not-found]
 
@@ -180,9 +212,6 @@ class OmniVoiceMlxClient(BaseTTSClient):
         # we pass ``None`` and let the model use its default voice.
         ref_path: str | None = None
         if ref_audio:
-            # Pick a sensible suffix from the mime so the audio loader
-            # inside mlx_audio sniffs the right format. WAV covers
-            # virtually every profile we ship; fall back to ``.bin``.
             suffix = ".wav"
             if "ogg" in ref_audio_mime:
                 suffix = ".ogg"
@@ -198,37 +227,54 @@ class OmniVoiceMlxClient(BaseTTSClient):
 
         try:
             with tempfile.TemporaryDirectory(prefix="autonoma_mlx_out_") as outdir:
-                file_prefix = os.path.join(outdir, "out")
+                output_path = os.path.join(outdir, "out.wav")
                 kwargs: dict[str, Any] = {
-                    "model": self._model,
                     "text": text,
-                    "file_prefix": file_prefix,
+                    "model": self._model,
+                    "output_path": output_path,
+                    "file_prefix": "out",
+                    "audio_format": "wav",
+                    "lang_code": language or "en",
+                    # ``save=True`` is mandatory — without it
+                    # generate_audio runs inference, throws away the
+                    # tensor, and returns ``None`` with no file written.
+                    "save": True,
+                    # Quiet the per-call progress logging; we already
+                    # log start/end ourselves.
+                    "verbose": False,
                 }
                 if ref_path is not None:
                     kwargs["ref_audio"] = ref_path
+                # ``ref_text`` makes the synth deterministic and skips
+                # the built-in whisper STT step. The processor accepts
+                # an empty string as "use STT instead" so we only set
+                # it when the caller actually has the transcript.
+                if ref_text:
+                    kwargs["ref_text"] = ref_text
                 generate_audio(**kwargs)
-                # generate_audio's exact output filename isn't part of
-                # the public contract — different model variants emit
-                # ``out.wav``, ``out_0.wav``, ``out_001.wav``, etc.
-                # Walk the dir, pick the first .wav, read it.
-                wav_paths = sorted(
-                    os.path.join(outdir, n)
-                    for n in os.listdir(outdir)
-                    if n.lower().endswith(".wav")
-                )
-                if not wav_paths:
-                    logger.warning(
-                        "[tts/omnivoice-mlx] generate_audio produced no WAV "
-                        "files under %s",
-                        outdir,
+
+                # ``output_path`` is what we asked for, but mlx_audio
+                # also occasionally emits ``{file_prefix}_NNN.wav`` for
+                # chunked output. Prefer the explicit path, fall back
+                # to a glob.
+                if os.path.exists(output_path):
+                    with open(output_path, "rb") as f:
+                        wav_bytes = f.read()
+                else:
+                    wav_paths = sorted(
+                        os.path.join(outdir, n)
+                        for n in os.listdir(outdir)
+                        if n.lower().endswith(".wav")
                     )
-                    return b""
-                # If multiple chunks were written (rare), concatenate
-                # raw bytes is wrong (each has its own RIFF header).
-                # Take the first; the upstream pipeline expects one
-                # WAV per synthesize() call.
-                with open(wav_paths[0], "rb") as f:
-                    wav_bytes = f.read()
+                    if not wav_paths:
+                        logger.warning(
+                            "[tts/omnivoice-mlx] generate_audio produced no "
+                            "WAV files under %s",
+                            outdir,
+                        )
+                        return b""
+                    with open(wav_paths[0], "rb") as f:
+                        wav_bytes = f.read()
                 logger.info(
                     "[tts/omnivoice-mlx] synth ok text_len=%d bytes=%d",
                     len(text),
