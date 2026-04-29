@@ -275,6 +275,16 @@ async def _migration_010_mocap_last_accessed(conn) -> None:
         )
 
 
+async def _migration_011_voice_transcripts(conn) -> None:
+    """Create the ``voice_transcripts`` table.
+
+    Append-only audit log of completed ASR transcriptions, used by the
+    /voice studio history panel and the future audit dashboard.
+    Standard ``create_all(checkfirst=True)`` since the table is new.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -286,6 +296,7 @@ MIGRATIONS: list[Migration] = [
     (8, _migration_008_agent_journal),
     (9, _migration_009_personas),
     (10, _migration_010_mocap_last_accessed),
+    (11, _migration_011_voice_transcripts),
 ]
 
 
