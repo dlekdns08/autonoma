@@ -16,10 +16,10 @@
  * PoC, like mocap bindings).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
-import { useSwarm } from "@/hooks/useSwarm";
+import { useSwarm, API_BASE_URL } from "@/hooks/useSwarm";
 import {
   useVoiceProfiles,
   voiceProfileAudioUrl,
@@ -86,6 +86,41 @@ export default function VoicePage() {
   const [micError, setMicError] = useState<string | null>(null);
   // Empty string → server falls back to auto-detect via Cohere.
   const [micLanguage, setMicLanguage] = useState<string>("ko");
+
+  // Transcript history (feature #1). Lazy-loaded; shows the last 20
+  // ASR results for the logged-in user across both batch and stream.
+  type TranscriptRow = {
+    id: string;
+    stage: string;
+    text: string;
+    language: string;
+    duration_ms: number;
+    model: string;
+    route_action: string;
+    created_at: string | null;
+  };
+  const [transcripts, setTranscripts] = useState<TranscriptRow[]>([]);
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
+  const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
+  const refreshTranscripts = useCallback(async () => {
+    setTranscriptsLoading(true);
+    setTranscriptsError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/voice/transcripts?limit=20`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { transcripts: TranscriptRow[] };
+      setTranscripts(data.transcripts ?? []);
+    } catch (err) {
+      setTranscriptsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranscriptsLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshTranscripts();
+  }, [refreshTranscripts]);
 
   const testProfileId = useMemo(() => {
     if (selectedTestProfileId) {
@@ -274,6 +309,9 @@ export default function VoicePage() {
       return;
     }
     setTestText(r.text);
+    // Server already wrote the row by the time we get here, so refresh
+    // the history pane to surface the new entry.
+    void refreshTranscripts();
     if (autoSynth) {
       if (!testProfileId) {
         setMicError("프로파일을 먼저 선택하세요.");
@@ -527,6 +565,17 @@ export default function VoicePage() {
                 route={false}
                 onResult={onMicResult}
                 onError={(m) => setMicError(m)}
+                onInterrupt={() => {
+                  // Pause the OmniVoice playback if it's running so
+                  // the user's mic doesn't fight the speaker. Cheap
+                  // and idempotent — pause() on an ended/empty audio
+                  // is a no-op.
+                  try {
+                    testAudioRef.current?.pause();
+                  } catch {
+                    /* element may not exist yet */
+                  }
+                }}
               />
               <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
                 <span>언어</span>
@@ -586,6 +635,74 @@ export default function VoicePage() {
               />
             )}
           </div>
+        </section>
+
+        {/* ── Transcript history (feature #1) ─────────────────────── */}
+        <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h2 className="font-mono text-sm font-semibold text-white/80">
+                최근 전사 기록
+              </h2>
+              <p className="mt-0.5 font-mono text-[10px] text-white/40">
+                내가 마이크로 말한 내용 (스트리밍 final + 일괄 업로드 모두).
+                최신 20건. 부분 자막은 저장되지 않습니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshTranscripts()}
+              className="rounded-md border border-white/10 bg-white/5 px-3 py-1 font-mono text-[10px] text-white/60 hover:bg-white/10"
+            >
+              ↻ 새로고침
+            </button>
+          </div>
+          {transcriptsError && (
+            <StatusBox tone="error" title="히스토리 불러오기 실패">
+              {transcriptsError}
+            </StatusBox>
+          )}
+          {transcriptsLoading && transcripts.length === 0 ? (
+            <p className="font-mono text-xs text-white/40">loading…</p>
+          ) : transcripts.length === 0 ? (
+            <p className="font-mono text-xs text-white/40">
+              아직 전사 기록이 없습니다. 마이크로 말해보세요.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {transcripts.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTestText(t.text)}
+                  title="이 텍스트를 테스트 입력에 채웁니다"
+                  className="flex flex-col items-stretch gap-1 rounded-lg border border-white/10 bg-slate-900/40 px-3 py-2 text-left hover:border-fuchsia-500/40"
+                >
+                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-white/40">
+                    <span>
+                      {t.created_at
+                        ? new Date(t.created_at).toLocaleString()
+                        : "—"}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span className="rounded bg-white/5 px-1.5 py-0.5">
+                        {t.stage}
+                      </span>
+                      {t.language && (
+                        <span className="rounded bg-white/5 px-1.5 py-0.5">
+                          {t.language}
+                        </span>
+                      )}
+                      <span>{t.duration_ms}ms</span>
+                    </span>
+                  </div>
+                  <div className="font-mono text-sm text-white/80 break-words">
+                    {t.text}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* ── Binding matrix ───────────────────────────────────────── */}
