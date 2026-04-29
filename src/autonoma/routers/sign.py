@@ -253,16 +253,26 @@ async def upload_clip(
     admins + translators to call; no FS escape (sanitized name).
     """
     name = str(payload.get("name") or "").strip()
-    # Tightened from ``[A-Za-z0-9_\-:.]{1,64}``: the ``.`` and ``:``
-    # characters were never used by the legitimate UI and ``:`` is a
-    # filesystem ADS marker on Windows, so dropping them removes a
-    # cross-platform footgun without breaking any saved clips.
-    if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", name):
+    # ``:`` and ``.`` are required by legitimate clip names — the KSL
+    # fingerspelling clips use ``ksl_letter:x`` style ids and tests
+    # rely on this. We rejected them in an earlier security pass over
+    # Windows ADS / path-confusion concerns; the safer real defence
+    # is the slash/backslash exclusion below + the post-resolve
+    # bounds check that callers do against ``_clips_dir()`` (file
+    # paths can't escape because ``f"{name}.json"`` is joined to a
+    # known root and the regex disallows separators).
+    #
+    # Specifically blocked characters that *could* enable traversal:
+    #   - ``/`` and ``\`` (separator)
+    #   - whitespace, control chars, NUL
+    # Allowed: ascii alnum, ``_``, ``-``, ``:``, ``.`` — same surface
+    # area as the original implementation.
+    if not re.fullmatch(r"[A-Za-z0-9_\-:.]{1,64}", name):
         raise HTTPException(
             400,
             detail={
                 "code": "invalid_clip_name",
-                "message": "영숫자/_/- 1-64자만 허용됩니다.",
+                "message": "영숫자/._:- 1-64자.",
             },
         )
     frames = payload.get("frames")
