@@ -270,106 +270,115 @@ export default function PodcastPage() {
   }, []);
 
   // ── WS event handler ─────────────────────────────────────────
+  // Drain the ref-backed queue every time useSwarm bumps the tick.
+  // Single-slot state would coalesce rapid-fire line_started /
+  // audio_chunk frames under React 18 batching — losing the
+  // line_started would leave ``slot.currentSeq`` stuck at -1 and
+  // every subsequent audio_end's ``currentSeq !== seq`` check would
+  // skip playback, exactly the "첫 말 이후 다음으로 안 넘어가"
+  // symptom.
   const lastSeenSeqRef = useRef(0);
   useEffect(() => {
-    const evt = swarm.podcastEvent;
-    if (!evt) return;
-    if (evt.seq <= lastSeenSeqRef.current) return;
-    lastSeenSeqRef.current = evt.seq;
+    const queue = swarm.podcastEventQueue.current;
+    while (queue.length > 0) {
+      const evt = queue.shift()!;
+      if (evt.seq <= lastSeenSeqRef.current) continue;
+      lastSeenSeqRef.current = evt.seq;
 
-    const data = evt.data as Record<string, unknown>;
-    switch (evt.kind) {
-      case "podcast.line_started": {
-        const speaker = data.speaker as string;
-        const text = (data.text as string) || "";
-        setCurrentSpeaker(speaker);
-        setCurrentText(text);
-        const seq = data.seq as number;
-        const slot = ensureSlot(speaker);
-        slot.currentSeq = seq;
-        lineBufRef.current.set(`${speaker}:${seq}`, []);
-        break;
-      }
-      case "podcast.line_audio_chunk": {
-        const speaker = data.speaker as string | undefined;
-        const seq = data.seq as number;
-        const b64 = data.b64 as string | undefined;
-        if (!b64) break;
-        // Speaker isn't repeated on chunk frames in the original
-        // schema, but we put it on for clarity. Fall back to looking
-        // up the line buffer purely by seq across every speaker.
-        if (speaker) {
-          const buf = lineBufRef.current.get(`${speaker}:${seq}`);
-          if (buf) buf.push(decodeBase64(b64));
-        } else {
-          // Fall back: scan all open lines for this seq.
-          for (const [key, buf] of lineBufRef.current) {
-            if (key.endsWith(`:${seq}`)) {
-              buf.push(decodeBase64(b64));
-              break;
+      const data = evt.data as Record<string, unknown>;
+      switch (evt.kind) {
+        case "podcast.line_started": {
+          const speaker = data.speaker as string;
+          const text = (data.text as string) || "";
+          setCurrentSpeaker(speaker);
+          setCurrentText(text);
+          const seq = data.seq as number;
+          const slot = ensureSlot(speaker);
+          slot.currentSeq = seq;
+          lineBufRef.current.set(`${speaker}:${seq}`, []);
+          break;
+        }
+        case "podcast.line_audio_chunk": {
+          const speaker = data.speaker as string | undefined;
+          const seq = data.seq as number;
+          const b64 = data.b64 as string | undefined;
+          if (!b64) break;
+          // Speaker isn't repeated on chunk frames in the original
+          // schema, but we put it on for clarity. Fall back to looking
+          // up the line buffer purely by seq across every speaker.
+          if (speaker) {
+            const buf = lineBufRef.current.get(`${speaker}:${seq}`);
+            if (buf) buf.push(decodeBase64(b64));
+          } else {
+            // Fall back: scan all open lines for this seq.
+            for (const [key, buf] of lineBufRef.current) {
+              if (key.endsWith(`:${seq}`)) {
+                buf.push(decodeBase64(b64));
+                break;
+              }
             }
           }
+          break;
         }
-        break;
-      }
-      case "podcast.line_audio_end": {
-        const speaker = data.speaker as string;
-        const seq = data.seq as number;
-        const key = `${speaker}:${seq}`;
-        const chunks = lineBufRef.current.get(key);
-        lineBufRef.current.delete(key);
-        if (!chunks || chunks.length === 0) break;
-        const slot = ensureSlot(speaker);
-        if (slot.currentSeq !== seq) break; // superseded
-        let total = 0;
-        for (const c of chunks) total += c.byteLength;
-        const merged = new Uint8Array(total);
-        let off = 0;
-        for (const c of chunks) {
-          merged.set(c, off);
-          off += c.byteLength;
+        case "podcast.line_audio_end": {
+          const speaker = data.speaker as string;
+          const seq = data.seq as number;
+          const key = `${speaker}:${seq}`;
+          const chunks = lineBufRef.current.get(key);
+          lineBufRef.current.delete(key);
+          if (!chunks || chunks.length === 0) break;
+          const slot = ensureSlot(speaker);
+          if (slot.currentSeq !== seq) break; // superseded
+          let total = 0;
+          for (const c of chunks) total += c.byteLength;
+          const merged = new Uint8Array(total);
+          let off = 0;
+          for (const c of chunks) {
+            merged.set(c, off);
+            off += c.byteLength;
+          }
+          // Pass the Uint8Array view directly — TS18 narrows
+          // ``ArrayBuffer`` more strictly than ``ArrayBufferLike``,
+          // and typed-array views are accepted by ``Blob`` either way.
+          const blob = new Blob([merged], { type: "audio/wav" });
+          const url = URL.createObjectURL(blob);
+          const prev = slot.audio.src;
+          slot.audio.src = url;
+          slot.audio.onended = () => URL.revokeObjectURL(url);
+          slot.audio.onerror = () => URL.revokeObjectURL(url);
+          connectAnalyser(slot);
+          slot.audio.play().catch(() => {
+            URL.revokeObjectURL(url);
+          });
+          if (prev && prev.startsWith("blob:")) {
+            window.setTimeout(() => URL.revokeObjectURL(prev), 1000);
+          }
+          break;
         }
-        // Pass the Uint8Array view directly — TS18 narrows
-        // ``ArrayBuffer`` more strictly than ``ArrayBufferLike``, and
-        // typed-array views are accepted by ``Blob`` either way.
-        const blob = new Blob([merged], { type: "audio/wav" });
-        const url = URL.createObjectURL(blob);
-        const prev = slot.audio.src;
-        slot.audio.src = url;
-        slot.audio.onended = () => URL.revokeObjectURL(url);
-        slot.audio.onerror = () => URL.revokeObjectURL(url);
-        connectAnalyser(slot);
-        slot.audio.play().catch(() => {
-          URL.revokeObjectURL(url);
-        });
-        if (prev && prev.startsWith("blob:")) {
-          window.setTimeout(() => URL.revokeObjectURL(prev), 1000);
+        case "podcast.line_failed": {
+          const reason = (data.reason as string) || "unknown";
+          setCreateError(`라인 합성 실패: ${reason}`);
+          break;
         }
-        break;
-      }
-      case "podcast.line_failed": {
-        const reason = (data.reason as string) || "unknown";
-        setCreateError(`라인 합성 실패: ${reason}`);
-        break;
-      }
-      case "podcast.user_input": {
-        setInterruptText("");
-        break;
-      }
-      case "podcast.paused":
-      case "podcast.resumed":
-      case "podcast.ended": {
-        // Refresh from server for status truth.
-        if (session) void refreshSession(session.id);
-        if (evt.kind === "podcast.ended") {
-          setCurrentSpeaker(null);
-          setCurrentText("");
+        case "podcast.user_input": {
+          setInterruptText("");
+          break;
         }
-        break;
+        case "podcast.paused":
+        case "podcast.resumed":
+        case "podcast.ended": {
+          // Refresh from server for status truth.
+          if (session) void refreshSession(session.id);
+          if (evt.kind === "podcast.ended") {
+            setCurrentSpeaker(null);
+            setCurrentText("");
+          }
+          break;
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [swarm.podcastEvent]);
+  }, [swarm.podcastEventTick]);
 
   // ── API helpers ──────────────────────────────────────────────
   const refreshSession = useCallback(async (sid: string) => {
