@@ -161,7 +161,7 @@ function Dashboard() {
     state, connected, connectionFailed, toasts, dismissToast,
     sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
     authState, authenticate, logout, sessionId,
-    emotes, getMouthAmplitude,
+    emotes, getMouthAmplitude, interruptAgentVoice,
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
     lastRunFieldPaths,
@@ -601,6 +601,7 @@ function Dashboard() {
           <PushToTalkButton
             mode="stream"
             language="ko"
+            onInterrupt={interruptAgentVoice}
           />
         </div>
         <ChatInput onSend={sendMessage} connected={connected} />
