@@ -222,6 +222,18 @@ export function useSwarm() {
   const [mocapTriggerFiredEvent, setMocapTriggerFiredEvent] =
     useState<MocapTriggerFiredEvent | null>(null);
   const mocapTriggerFiredEventSeqRef = useRef(0);
+  // Multi-character podcast (Wave C). Single state slot for the
+  // latest podcast.* event — the /podcast page reads this to drive
+  // its state machine. Same monotonic-seq pattern as the mocap
+  // events above so a re-render handing back the same object
+  // doesn't cause a duplicate apply.
+  const [podcastEvent, setPodcastEvent] = useState<{
+    kind: string;
+    data: Record<string, unknown>;
+    seq: number;
+  } | null>(null);
+  const podcastEventSeqRef = useRef(0);
+
   // Same pattern as mocap bindings, for voice profile bindings. The
   // state lives in ``useVoiceEventState`` so the concrete refresh/patch
   // plumbing is out of this file.
@@ -775,6 +787,25 @@ export function useSwarm() {
             addToast("ghost", "Ghost Sighting!", `${data.message}`, "👻");
             sfxRef.current.play("ghost");
             break;
+          // Podcast — single multiplexed event slot. The /podcast page
+          // discriminates on ``kind`` and re-emits to its own audio
+          // playback machinery. Listed explicitly (not via fallthrough)
+          // so an unknown event still hits the default branch + log.
+          case "podcast.started":
+          case "podcast.line_started":
+          case "podcast.line_audio_start":
+          case "podcast.line_audio_chunk":
+          case "podcast.line_audio_end":
+          case "podcast.line_failed":
+          case "podcast.user_input":
+          case "podcast.ended": {
+            setPodcastEvent({
+              kind: event,
+              data,
+              seq: ++podcastEventSeqRef.current,
+            });
+            break;
+          }
           case "live.reaction": {
             // One-tap viewer reaction. We surface it via a transient
             // toast AND publish to a ref ring buffer so the Stage can
@@ -1474,6 +1505,9 @@ export function useSwarm() {
     // pauses every speaking agent on press without tearing down the
     // analyser graph.
     interruptAgentVoice: voice.interruptAll,
+    // Latest multiplexed podcast.* event from the WS, or null. The
+    // /podcast page subscribes via this to drive playback + UI.
+    podcastEvent,
     room,
     chat,
     sendChat,
