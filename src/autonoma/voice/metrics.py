@@ -17,13 +17,13 @@ this is fine in the deployed topology.
 
 from __future__ import annotations
 
-import threading
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 # Window of recent latencies (ms) for percentile queries. ``deque`` so
-# the rotation is O(1). 1024 is enough for stable p95 at our QPS.
+# the rotation is O(1). 1024 is enough for stable p95 at our QPS
+# (~10 ASR calls/s = ~100s of history retained).
 _LATENCY_WINDOW: int = 1024
 
 
@@ -41,7 +41,21 @@ class _Counters:
 
 
 _state = _Counters()
-_lock = threading.Lock()
+
+
+# We deliberately do NOT take a lock around the counter mutations below.
+# Reasoning:
+#   * ``record_transcribe`` is called from the async event loop (router
+#     handlers) — there is no ``await`` inside it, so no other coroutine
+#     can interleave in CPython.
+#   * ``deque.append`` is thread-safe in CPython for primitive item types.
+#   * ``int += 1`` is not atomic at the bytecode level, but the only
+#     producer is the single asyncio loop thread; ASR worker threads
+#     don't call this directly.
+# A previous version used ``threading.Lock``, which would block the
+# event loop the moment any code path called ``record_transcribe`` from
+# an ``await``-able context. Removing it both fixes that bug and
+# simplifies the call sites.
 
 
 def record_transcribe(
@@ -55,23 +69,22 @@ def record_transcribe(
     failures cluster in partials (likely Cohere choking on truncated
     WebM) vs. finals (real transcribe issues).
     """
-    with _lock:
-        _state.transcribe_total += 1
-        if duration_ms > 0:
-            _state.latencies_ms.append(duration_ms)
+    _state.transcribe_total += 1
+    if duration_ms > 0:
+        _state.latencies_ms.append(duration_ms)
+    if not ok:
+        _state.transcribe_failures += 1
+        _state.last_error_ts = _now()
+        _state.last_error_message = (error or "")[:200]
+    if stage == "partial":
+        _state.partial_total += 1
         if not ok:
-            _state.transcribe_failures += 1
-            _state.last_error_ts = _now()
-            _state.last_error_message = (error or "")[:200]
-        if stage == "partial":
-            _state.partial_total += 1
-            if not ok:
-                _state.partial_failures += 1
-        elif stage == "final":
-            _state.final_total += 1
-            if not ok:
-                _state.final_failures += 1
-        # ``batch`` is implicit in the totals above; no per-stage extra.
+            _state.partial_failures += 1
+    elif stage == "final":
+        _state.final_total += 1
+        if not ok:
+            _state.final_failures += 1
+    # ``batch`` is implicit in the totals above; no per-stage extra.
 
 
 def _now() -> float:
@@ -90,18 +103,19 @@ def _percentile(values: list[int], p: float) -> int:
 
 def snapshot() -> dict[str, Any]:
     """Return a JSON-serialisable snapshot for the metrics endpoint."""
-    with _lock:
-        latencies = list(_state.latencies_ms)
-        snap = {
-            "transcribe_total": _state.transcribe_total,
-            "transcribe_failures": _state.transcribe_failures,
-            "partial_total": _state.partial_total,
-            "partial_failures": _state.partial_failures,
-            "final_total": _state.final_total,
-            "final_failures": _state.final_failures,
-            "last_error_ts": _state.last_error_ts,
-            "last_error_message": _state.last_error_message,
-        }
+    # Take an immutable list copy of the deque so callers iterating
+    # (and ``_percentile`` sorting) can't observe mid-append state.
+    latencies = list(_state.latencies_ms)
+    snap = {
+        "transcribe_total": _state.transcribe_total,
+        "transcribe_failures": _state.transcribe_failures,
+        "partial_total": _state.partial_total,
+        "partial_failures": _state.partial_failures,
+        "final_total": _state.final_total,
+        "final_failures": _state.final_failures,
+        "last_error_ts": _state.last_error_ts,
+        "last_error_message": _state.last_error_message,
+    }
     snap["latency_count"] = len(latencies)
     snap["latency_p50_ms"] = _percentile(latencies, 50)
     snap["latency_p95_ms"] = _percentile(latencies, 95)
@@ -111,5 +125,4 @@ def snapshot() -> dict[str, Any]:
 
 def reset_for_tests() -> None:
     global _state
-    with _lock:
-        _state = _Counters()
+    _state = _Counters()
