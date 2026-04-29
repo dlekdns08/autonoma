@@ -502,6 +502,8 @@ FORWARDED_EVENTS = [
     "podcast.line_audio_end",
     "podcast.line_failed",
     "podcast.user_input",
+    "podcast.paused",
+    "podcast.resumed",
     "podcast.ended",
 ]
 
