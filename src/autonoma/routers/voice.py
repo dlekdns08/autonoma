@@ -628,8 +628,19 @@ async def voice_stream(ws: WebSocket) -> None:
             await ws.close(code=4400)
         return
 
+    # ISO-639-1 allowlist for the Cohere processor. Empty string means
+    # "auto-detect" and is also accepted. Anything else (e.g. injection
+    # attempts, accidental long strings) falls back to the default to
+    # avoid handing arbitrary text into the model's language hint slot.
+    _LANG_ALLOWED: frozenset[str] = frozenset({
+        "", "ko", "en", "ja", "zh", "es", "fr", "de", "it", "pt",
+        "ru", "ar", "hi", "vi", "id", "th", "tr", "pl", "nl",
+    })
+    raw_lang = str(first.get("language") or "").strip().lower()
+    if raw_lang not in _LANG_ALLOWED:
+        raw_lang = ""
     language = (
-        str(first.get("language") or "").strip()
+        raw_lang
         or _settings.voice_asr_default_language
         or "en"
     )
