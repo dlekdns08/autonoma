@@ -56,7 +56,10 @@ interface VoiceSlot {
   audio: HTMLAudioElement;
   analyser: AnalyserNode | null;
   source: MediaElementAudioSourceNode | null;
-  buf: Uint8Array | null;
+  // ``Uint8Array<ArrayBuffer>`` (not the looser ArrayBufferLike) so
+  // ``getByteTimeDomainData`` accepts the buffer under TS 5.7+'s
+  // tighter typed-array generics.
+  buf: Uint8Array<ArrayBuffer> | null;
   amp: number;
   // ``seq`` of the line currently feeding this slot (so out-of-order
   // chunks for a superseded line are dropped).
