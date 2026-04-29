@@ -9,7 +9,7 @@
  * above itself with the rolling partial transcript from the server.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   usePushToTalk,
   type PushToTalkMode,
@@ -79,40 +79,55 @@ export default function PushToTalkButton({
     void ptt.stop();
   }, [ptt]);
 
+  // Refs so the keydown/keyup listeners always invoke the latest
+  // begin/end without re-attaching on every render that flips ``ptt``
+  // identity. Without these the effect tears down + re-installs the
+  // window listeners between every keystroke that triggers a
+  // re-render — a keydown landing during the gap silently misfires.
+  const beginRef = useRef(beginPress);
+  const endRef = useRef(endPress);
+  beginRef.current = beginPress;
+  endRef.current = endPress;
+
   useEffect(() => {
     if (!spaceHotkey) return;
+    // Walk the ancestor chain so a contentEditable wrapper (e.g. a
+    // rich-text editor whose contenteditable lives on an outer div)
+    // also blocks the spacebar hijack — the previous version only
+    // matched the immediate ``e.target``.
+    const isEditableTarget = (el: EventTarget | null): boolean => {
+      let node = el as HTMLElement | null;
+      while (node) {
+        if (
+          node.tagName === "INPUT" ||
+          node.tagName === "TEXTAREA" ||
+          node.isContentEditable
+        ) {
+          return true;
+        }
+        node = node.parentElement;
+      }
+      return false;
+    };
+    // Track the keydown's initial target so a focus-shift between
+    // keydown and keyup doesn't release the recorder against a wrong
+    // target (e.g. user tabs into a textbox while holding space).
+    let pressTarget: EventTarget | null = null;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== HOTKEY) return;
-      // Don't hijack the spacebar inside text inputs / contenteditable
-      // — that would steal typing in the chat composer.
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      // Repeat events fire while the key is held — only the first one
-      // should kick off the recorder.
-      if (e.repeat) return;
+      if (isEditableTarget(e.target)) return;
+      if (e.repeat) return;  // already recording; ignore auto-repeat
       e.preventDefault();
-      beginPress();
+      pressTarget = e.target;
+      beginRef.current();
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key !== HOTKEY) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
+      // If the keydown was rejected (editable), do nothing on keyup.
+      if (pressTarget === null) return;
+      pressTarget = null;
       e.preventDefault();
-      endPress();
+      endRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -120,7 +135,7 @@ export default function PushToTalkButton({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [spaceHotkey, beginPress, endPress]);
+  }, [spaceHotkey]);
 
   if (!ptt.supported) return null;
 
