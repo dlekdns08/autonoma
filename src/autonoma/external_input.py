@@ -257,7 +257,33 @@ class ExternalInputRouter:
             if swarm is None:
                 return RouteResult(RouteAction.DROPPED_NO_SWARM, "no swarm bound")
 
-            display = f"[{message.source}:{message.user}] {text[:200]}"
+            # Format the display string so the LLM can naturally
+            # address the sender by name in its reply ("greet by name"
+            # is a recurring streamer-VTuber pattern). The previous
+            # ``[twitch:alice]`` shape was technically correct but
+            # read like a log line; agents would echo it back literally
+            # ("twitch:alice asked..."). The shapes below put the name
+            # in a more conversational frame so the agent's response
+            # tends toward "Alice asked ...".
+            user_label = message.user.strip() or "anonymous"
+            if message.source == "live_chat":
+                # Treat external chat (Twitch/YouTube/Discord) as a
+                # named viewer. The metadata may carry the original
+                # platform; keep it short so the LLM can still
+                # mention the channel if it wants ("Alice from
+                # Twitch asked...").
+                chat_origin = str(message.metadata.get("chat_source") or "")
+                origin_tag = f" ({chat_origin})" if chat_origin else ""
+                display = f"[viewer {user_label}{origin_tag}] {text[:200]}"
+            elif message.source == "voice":
+                # Voice utterances come from the same logged-in user
+                # the agent has been talking to — the in-room human.
+                # Mark them so a future ``viewer_name`` gating can
+                # distinguish "the streamer themselves" from a chat
+                # spectator.
+                display = f"[voice {user_label}] {text[:200]}"
+            else:
+                display = f"[{message.source}:{user_label}] {text[:200]}"
             ok = await swarm.inject_human_message(display, target=message.target)
             if not ok:
                 return RouteResult(RouteAction.DROPPED_NO_SWARM, "swarm not running")
