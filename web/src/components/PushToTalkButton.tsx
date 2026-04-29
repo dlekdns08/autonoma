@@ -178,6 +178,12 @@ export default function PushToTalkButton({
         onTouchStart={beginPress}
         onTouchEnd={endPress}
         title="버튼을 누르고 있는 동안 말하세요. (Space 키도 가능)"
+        aria-label={
+          spaceHotkey
+            ? "음성 입력 버튼. 누르고 있거나 스페이스바를 눌러 녹음하세요."
+            : "음성 입력 버튼. 누르고 있는 동안 녹음됩니다."
+        }
+        aria-pressed={ptt.recording}
         className={`select-none rounded-full border px-4 py-2 font-mono text-xs font-semibold backdrop-blur transition ${tone}`}
       >
         {label}
