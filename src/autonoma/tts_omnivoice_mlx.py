@@ -2,10 +2,13 @@
 
 Wraps any ``mlx_audio``-compatible TTS model behind the project's
 ``BaseTTSClient`` contract. Currently defaults to
-``mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16`` because the
-OmniVoice-bf16 conversion in mlx-community is missing the
-HiggsAudioTokenizer required for voice cloning, while Qwen3-TTS
-ships its full inference path in the same checkpoint.
+``aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit`` — a 4-bit quantised
+build of Qwen3-TTS-Base that drops resident memory to ~1 GB and
+roughly doubles inference speed compared to the bf16 build, at the
+cost of a small voice-cloning quality dip. We chose Qwen3-TTS over
+mlx-community/OmniVoice-bf16 because that OmniVoice conversion is
+missing the HiggsAudioTokenizer required for voice cloning, while
+Qwen3-TTS ships its full inference path in the same checkpoint.
 
 Roughly 1.5–3× faster than the PyTorch+MPS path on M-series Macs
 and uses noticeably less memory (bf16 weights), at the cost of a
@@ -52,7 +55,7 @@ from autonoma.tts_base import BaseTTSClient, TTSError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+DEFAULT_MODEL_ID = "aufklarer/Qwen3-TTS-12Hz-1.7B-Base-MLX-4bit"
 DEFAULT_SAMPLE_RATE = 24_000  # Qwen3-TTS-12Hz emits 24 kHz mono
 
 
