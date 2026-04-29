@@ -97,6 +97,11 @@ function pickCookieSpot(recipient: string): { x: number; y: number } {
   return { x, y };
 }
 
+// Module-scope monotonic event id. Lives across hook unmount/remount
+// so reconnects don't reset to 0 (which would risk colliding with
+// stragglers from the previous mount). The 53-bit ``Number`` ceiling
+// is unreachable in practice (would take ~285 thousand years at
+// 1 event/ms).
 let eventIdCounter = 0;
 
 function roleToColor(role: string): string {
@@ -268,10 +273,16 @@ export function useSwarm() {
   const reconnectAttemptsRef = useRef(0);
 
   const addToast = useCallback((type: ToastItem["type"], title: string, message: string, icon: string) => {
-    setToasts((prev) => [
-      ...prev.slice(-8),
-      { id: createToastId(), type, title, message, icon, timestamp: Date.now() },
-    ]);
+    setToasts((prev) => {
+      // Avoid an unnecessary slice + spread when we're nowhere near
+      // the cap. The previous version always allocated a new array
+      // even when ``prev.length < 8``.
+      const base = prev.length > 8 ? prev.slice(-8) : prev;
+      return [
+        ...base,
+        { id: createToastId(), type, title, message, icon, timestamp: Date.now() },
+      ];
+    });
   }, []);
 
   const dismissToast = useCallback((id: number) => {
