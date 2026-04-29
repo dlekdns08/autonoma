@@ -236,23 +236,20 @@ class VibeVoiceClient(BaseTTSClient):
             dtype,
         )
         try:
-            # ``trust_remote_code=True`` is required because VibeVoice
-            # ships its inference class on HF Hub rather than in the
-            # transformers main branch. Pinning a specific revision
-            # via env var is recommended for production so a model
-            # update can't silently change inference semantics.
+            # The VibeVoice package owns these classes — no
+            # ``trust_remote_code`` needed because the code lives in
+            # the installed package, not the HF repo. Revision pin is
+            # still useful when an operator wants reproducibility.
             revision = os.environ.get("VIBEVOICE_REVISION") or None
-            self._processor = AutoProcessor.from_pretrained(
-                self.model_id,
-                trust_remote_code=True,
-                revision=revision,
-            )
-            kwargs: dict[str, Any] = {"trust_remote_code": True}
+            proc_kwargs: dict[str, Any] = {}
+            model_kwargs: dict[str, Any] = {}
             if revision:
-                kwargs["revision"] = revision
+                proc_kwargs["revision"] = revision
+                model_kwargs["revision"] = revision
             if dtype is not None and device != "cpu":
-                kwargs["torch_dtype"] = dtype
-            model = AutoModel.from_pretrained(self.model_id, **kwargs)
+                model_kwargs["torch_dtype"] = dtype
+            self._processor = ProcessorCls.from_pretrained(self.model_id, **proc_kwargs)
+            model = ModelCls.from_pretrained(self.model_id, **model_kwargs)
             if device != "cpu":
                 try:
                     model = model.to(device)
