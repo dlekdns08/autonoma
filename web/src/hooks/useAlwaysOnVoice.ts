@@ -220,14 +220,14 @@ export function useAlwaysOnVoice(
         onSpeechStart: () => {
           setState("speaking");
           optsRef.current.onSpeakingChange?.(true);
-          // Barge-in: tell the caller to mute the agent immediately.
-          // We invoke this before any audio reaches the server so
-          // the cut-over is instantaneous in the user's ear.
-          try {
-            optsRef.current.onInterrupt?.();
-          } catch {
-            /* defensive */
-          }
+          // Barge-in disabled: silero-vad fires false-positives on the
+          // agent's own speaker output when the user isn't on
+          // headphones, which cut off TTS playback mid-sentence even
+          // when the user only typed (no real mic input). The
+          // ``onInterrupt`` callback is still threaded through the
+          // option API so the caller can re-enable when AEC quality
+          // is better — leave it unwired for now.
+          // optsRef.current.onInterrupt?.();
         },
         onSpeechEnd: (audio: Float32Array) => {
           optsRef.current.onSpeakingChange?.(false);
