@@ -1985,7 +1985,22 @@ async def _create_room_for(session: SessionState) -> RoomState:
 
 
 def _viewers_in_room(room_id: int) -> list[SessionState]:
-    return [s for s in _sessions.values() if s.room_id == room_id]
+    """Return every live session currently bound to ``room_id``.
+
+    Iteration over ``_sessions.values()`` happens without a lock — in
+    CPython the dict iteration is safe (no segfault on concurrent
+    mutation) but the resulting list may include sessions that were
+    removed mid-iteration or miss ones that joined mid-iteration. Both
+    outcomes are acceptable for our use cases: callers either
+    broadcast (a missed viewer just gets the next event) or count for
+    UX (a one-frame stale count is invisible). Adding a lock here was
+    measured to introduce contention on the hot bus-event path with
+    no observable benefit; the snapshot is taken to a list so the
+    iteration is bounded.
+    """
+    # ``list(...)`` snapshots the dict view so subsequent iteration in
+    # callers can't observe later mutations of ``_sessions``.
+    return [s for s in list(_sessions.values()) if s.room_id == room_id]
 
 
 async def _notify_room_membership(room_id: int) -> None:
