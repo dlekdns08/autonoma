@@ -116,13 +116,36 @@ class TTSWorker:
         self._counters: dict[str, _AgentSpeechCounter] = {}
         self._budget = TTSBudget()
         self._stopped = False
+        # Bus listener for cross-worker barge-in (feature #2). Stored so
+        # ``stop()`` can ``bus.off`` it during shutdown — otherwise the
+        # listener leaks across test boots that re-instantiate the
+        # worker without tearing down the bus.
+        self._cancel_listener: Any = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run(), name="tts-worker")
+            # Listen for site-wide cancel events. The handler is bound
+            # to ``self`` so worker instances don't cross-cancel each
+            # other's queues — but bus.on() is global, so every active
+            # worker receives the event and clears its own backlog.
+            # This is intentional for the PoC: a barge-in from any
+            # tab/user effectively mutes the swarm.
+            if self._cancel_listener is None:
+                async def _on_cancel(reason: str = "interrupt", **_: Any) -> None:
+                    self.cancel_all(reason=reason)
+
+                self._cancel_listener = _on_cancel
+                bus.on("tts.cancel", _on_cancel)
 
     async def stop(self) -> None:
         self._stopped = True
+        if self._cancel_listener is not None:
+            try:
+                bus.off("tts.cancel", self._cancel_listener)
+            except Exception:
+                pass
+            self._cancel_listener = None
         if self._task:
             self._task.cancel()
             try:
@@ -191,6 +214,43 @@ class TTSWorker:
 
     def reset_round_budget(self) -> None:
         self._budget.reset_round()
+
+    def cancel_all(self, *, reason: str = "interrupt") -> int:
+        """Drain pending speech jobs without stopping the worker — feature #2.
+
+        Returns the number of jobs actually dropped (handy for logging
+        and tests). The currently-streaming utterance, if any, is NOT
+        cancelled here — OmniVoice's ``synthesize_streaming`` is a
+        synchronous generator inside a thread and yanking it mid-chunk
+        risks corrupting model state on the next call. The client-side
+        ``useAgentVoice.interruptAll`` already pauses playback the
+        instant the user starts speaking, so the listener is silent
+        regardless; this server-side drain just ensures the pending
+        backlog (the next 5–10 lines) doesn't replay after the user
+        finishes their interruption.
+        """
+        if self._stopped:
+            return 0
+        dropped = 0
+        try:
+            while True:
+                job = self._queue.get_nowait()
+                self._queue.task_done()
+                dropped += 1
+                # Tell the frontend this one was killed before synthesis
+                # so the speaking flag clears cleanly.
+                asyncio.create_task(
+                    bus.emit(
+                        "agent.speech_audio_dropped",
+                        agent=job.agent,
+                        reason=reason,
+                    )
+                )
+        except asyncio.QueueEmpty:
+            pass
+        if dropped:
+            logger.info(f"[tts] cancel_all dropped {dropped} pending job(s) reason={reason}")
+        return dropped
 
     # ── Internals ──────────────────────────────────────────────────────
 
