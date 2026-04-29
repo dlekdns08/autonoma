@@ -784,11 +784,14 @@ async def voice_stream(ws: WebSocket) -> None:
                 if ftype == "stop":
                     break
                 if ftype == "interrupt":
-                    # Barge-in (feature #2). Drop pending TTS jobs
-                    # site-wide so the agent backlog doesn't replay
-                    # over the user's voice. The current chunk in
-                    # flight finishes — see ``cancel_all`` docstring.
-                    await bus.emit("tts.cancel", reason="user_barge_in")
+                    # Barge-in DISABLED — clients no longer send the
+                    # ``interrupt`` frame after open, but legacy clients
+                    # might. We accept the frame for forward-compat
+                    # (no protocol error) but skip the bus emit so
+                    # legitimate TTS replies don't get silently
+                    # cancelled by a phantom mic open. Re-enable by
+                    # un-commenting once AEC is verified.
+                    # await bus.emit("tts.cancel", reason="user_barge_in")
                     continue
                 # Unknown text frames are ignored (forward-compat).
     except WebSocketDisconnect:
