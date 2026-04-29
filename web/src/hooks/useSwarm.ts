@@ -1129,6 +1129,15 @@ export function useSwarm() {
     [addEvent, addToast],
   );
 
+  // Keep the WebSocket-bound dispatch ref in sync with the latest
+  // ``handleMessage`` closure. The WS handler at the bottom of
+  // ``connect`` reads through this ref instead of capturing
+  // ``handleMessage`` directly so a re-render that recreates the
+  // callback doesn't leave the socket pointing at stale state.
+  useEffect(() => {
+    handleMessageRef.current = handleMessage;
+  }, [handleMessage]);
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
