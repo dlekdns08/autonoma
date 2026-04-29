@@ -475,12 +475,31 @@ class VibeVoiceClient(BaseTTSClient):
         t0 = time.perf_counter()
         ref_array = self._decode_ref_audio(ref_audio, ref_audio_mime)
 
+        # VibeVoice is a multi-speaker dialogue model: its processor
+        # parses inputs as a "script" of lines like
+        #   ``Speaker 1: 안녕하세요\nSpeaker 2: 반갑습니다``
+        # — plain text without a ``Speaker N:`` label fails with
+        # ``ValueError: No valid speaker lines found in script``.
+        # All our call sites (swarm agents, podcast turns, /voice test
+        # bench) hand us a single utterance, so wrap it as a single
+        # ``Speaker 1`` line. If the caller already supplied a
+        # speaker-labeled script (e.g. a future multi-speaker batch
+        # synthesis), pass it through untouched.
+        text_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        already_scripted = any(
+            ln.lower().startswith(("speaker 1:", "speaker 2:", "speaker 3:",
+                                    "speaker 4:", "speaker 5:", "speaker 6:",
+                                    "speaker 7:", "speaker 8:", "speaker 9:"))
+            for ln in text_lines
+        )
+        script_text = text if already_scripted else f"Speaker 1: {text}"
+
         # Build the processor input. We try a few keyword shapes the
         # VibeVoice family is known to use, in priority order — first
         # match wins. ``voice_samples`` is the HF model-card name; the
         # HF ``audio`` kwarg is the transformers-canonical fallback.
         proc_kwargs: dict[str, Any] = {
-            "text": text,
+            "text": script_text,
             "return_tensors": "pt",
         }
         if ref_array is not None:

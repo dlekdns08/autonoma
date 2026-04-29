@@ -34,11 +34,17 @@ router = APIRouter(tags=["standup"])
 async def _synthesize_line(agent: str, text: str, profile_id: str | None) -> bytes:
     """Return WAV bytes for a single line. Falls back to 0.5s of silence
     when TTS is unavailable so the resulting file is still playable."""
-    if not profile_id or settings.tts_provider != "omnivoice":
+    # Standup synthesis follows the same factory path as the swarm
+    # worker and the podcast orchestrator — flipping
+    # ``settings.tts_provider`` swaps the backend everywhere. The old
+    # hard-coded ``tts_omnivoice`` import broke the moment the
+    # operator switched to vibevoice (omnivoice extra dropped in the
+    # same change).
+    if not profile_id or settings.tts_provider not in ("omnivoice", "vibevoice"):
         return _silence_wav_bytes(500)
     try:
         from autonoma import voice as voice_service
-        from autonoma.tts_omnivoice import get_shared_client
+        from autonoma.tts import create_tts_client, tts_config_from_settings
         from autonoma.tts_synth import synthesize_collected
     except ImportError:
         return _silence_wav_bytes(500)
@@ -46,7 +52,7 @@ async def _synthesize_line(agent: str, text: str, profile_id: str | None) -> byt
     profile = await voice_service.get_profile(profile_id)
     if profile is None:
         return _silence_wav_bytes(500)
-    client = get_shared_client()
+    client = create_tts_client(tts_config_from_settings())
     try:
         result = await synthesize_collected(
             client,
