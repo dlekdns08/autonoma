@@ -21,28 +21,39 @@ dependencies = [
     "greenlet>=3.0",
     "bcrypt>=4.0.0",
     "itsdangerous>=2.2.0",
+    # Pinned to the 4.51 line so vibevoice 1.0.0 imports cleanly —
+    # it depends on ``transformers.models.qwen2.tokenization_qwen2_fast``
+    # which was relocated/removed in transformers 5. Cohere ASR
+    # (``CohereAsrForConditionalGeneration``) requires 5.x but is
+    # disabled (``AUTONOMA_VOICE_ASR_PROVIDER=none``) for the same
+    # reason. Lift this pin once vibevoice ships transformers-5
+    # compatibility and we can flip ASR back on.
+    "transformers>=4.51,<5",
 ]
 
-# Optional heavy ML stack for OmniVoice zero-shot TTS.
+# Optional heavy ML stack for the TTS backends.
 #
-# Kept out of the base install because torch + torchaudio + librosa +
-# model weights add ~2GB to dev environments that never touch voice.
+# Kept out of the base install because torch + torchaudio + librosa
+# add ~2 GB to dev environments that never touch voice.
 # Enable with:  uv sync --extra tts
-# The Dockerfile.api stage adds this extra so the deployed API has
-# synthesis; the CLI-only build can skip it.
+#
+# IMPORTANT: ``omnivoice`` was removed from this extra. omnivoice
+# 0.1.4 requires ``transformers>=5.3``, which is incompatible with
+# vibevoice 1.0.0 (~4.51) — and the project's base now pins
+# transformers <5. If you want OmniVoice back, either downgrade to
+# an older omnivoice that allows transformers 4.x, or wait for a
+# vibevoice release that supports transformers 5 and lift the
+# transformers pin in [project.dependencies].
 [project.optional-dependencies]
 tts = [
-    "omnivoice>=0.1.4",
     "soundfile>=0.13",
     "numpy>=2.0",
     "torch>=2.1",
     "torchaudio>=2.1",
-    # omnivoice imports librosa lazily via lazy_loader but doesn't
-    # declare it in its own Requires-Dist, so uv won't pull it in.
-    # Without it, the first /test call on a voice profile dies with
-    # ``ModuleNotFoundError: No module named 'librosa.core'`` deep
-    # inside the OmniVoice ref-audio loader.  Pin it explicitly here
-    # so every fresh workspace resolves it.
+    # Audio I/O for the vibevoice path (ref-audio resample / WAV
+    # decode). omnivoice used to pull this transitively; now we
+    # depend on it directly so a future audio-only feature still
+    # has it without re-adding omnivoice.
     "librosa>=0.10",
 ]
 
