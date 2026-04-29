@@ -471,6 +471,24 @@ RECENT MESSAGES:
 {chr(10).join(f'  {m}' for m in recent_msgs) or '  None'}
 """
 
+        # Surface viewer / voice messages with a streamer-style nudge:
+        # if any recent inbox entry contains the ``[viewer NAME]`` or
+        # ``[voice NAME]`` prefix that ExternalInputRouter stamps onto
+        # external messages, tell the LLM to greet that person by
+        # name. ``inject_human_message`` wraps the body in
+        # ``[HUMAN FEEDBACK] ...`` so we substring-match instead of
+        # prefix-match. Without this nudge the agent tends to either
+        # ignore the sender or echo the bracket tag literally.
+        viewer_lines = [m for m in recent_msgs if "[viewer " in m or "[voice " in m]
+        if viewer_lines:
+            situation += (
+                "\nVIEWER INTERACTION:\n"
+                "  One or more of the messages above came from a live viewer or "
+                "voice user. When you respond to them, address them by their "
+                "name (drop the bracket tag, just say the name naturally) and "
+                "react personally — that's what makes the stream feel alive.\n"
+            )
+
         if relevant_diary_lines:
             situation += (
                 "\nRELEVANT PAST DIARY (your own memories — use these to stay "
