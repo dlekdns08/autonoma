@@ -1188,10 +1188,20 @@ async def lifespan(app: FastAPI):
     finally:
         bus.off("schedule.fire_requested", _on_schedule_fire_requested)
         await scheduler_runner.stop()
-        if warmup_task is not None:
-            warmup_task.cancel()
-        if asr_warmup_task is not None:
-            asr_warmup_task.cancel()
+        # Warmup tasks: cancel and await so the shutdown sequence is
+        # actually quiescent — bare ``cancel()`` returns immediately
+        # while the underlying HF model download (potentially
+        # multi-GB) is still mid-syscall, which would otherwise leave
+        # the cache in a partial state across container restarts.
+        # ``return_exceptions=True`` so any single warmup failure
+        # doesn't block the rest of the cleanup.
+        pending_warmups = [
+            t for t in (warmup_task, asr_warmup_task) if t is not None and not t.done()
+        ]
+        for t in pending_warmups:
+            t.cancel()
+        if pending_warmups:
+            await asyncio.gather(*pending_warmups, return_exceptions=True)
         _unregister_event_bridge()
 
 
