@@ -315,15 +315,11 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
           route: optsRef.current.route !== false,
         }),
       );
-      // Tell the server to drop any pending TTS jobs (barge-in #2).
-      // Sent right after ``start`` so the server has accepted the
-      // session before we start mutating its state. The server-side
-      // dispatcher ignores ``interrupt`` if it arrives pre-``start``.
-      try {
-        ws.send(JSON.stringify({ type: "interrupt" }));
-      } catch {
-        /* socket may already be closing */
-      }
+      // Server-side barge-in disabled: opening the mic no longer
+      // sends ``{type:"interrupt"}`` so the TTS worker keeps
+      // playing whatever is mid-flight. Re-enable along with the
+      // client-side onInterrupt call once AEC is verified.
+      // try { ws.send(JSON.stringify({ type: "interrupt" })); } catch {}
     };
 
     ws.onmessage = (ev) => {
@@ -482,15 +478,11 @@ export function usePushToTalk(options: UsePushToTalkOptions = {}): UsePushToTalk
       return;
     }
     if (recorderRef.current) return; // already recording
-    // Barge-in: pause any in-flight agent TTS *before* we open the
-    // mic so the user's voice doesn't fight the speaker. Sync call —
-    // a swallowed throw here would block the recorder, which is the
-    // bigger UX problem.
-    try {
-      optsRef.current.onInterrupt?.();
-    } catch {
-      /* defensive — caller bug shouldn't block recording */
-    }
+    // Barge-in disabled — see useAlwaysOnVoice.ts for the same
+    // rationale. The option is still part of the public hook API so
+    // a future operator can re-enable it after validating echo
+    // cancellation; until then the call site is a no-op.
+    // optsRef.current.onInterrupt?.();
     if (optsRef.current.mode === "stream") {
       await startStream();
     } else {
