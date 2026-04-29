@@ -84,6 +84,14 @@ class CohereAsrProvider(AsrProvider):
         self._device: str = "cpu"
         self._lock = threading.Lock()
         self._load_error: Exception | None = None
+        # Reusable scratch tempfile path for the ``transcribe`` audio
+        # spill. Created lazily on first call and overwritten in place
+        # on every subsequent call — avoids the "thousands of /tmp
+        # files per minute" pattern you'd get from a fresh
+        # NamedTemporaryFile per transcribe. Safe because ``self._lock``
+        # serialises all writers, and the API runs --workers=1 (see
+        # Dockerfile.api) so no other process shares the path.
+        self._scratch_path: str | None = None
 
     def is_ready(self) -> bool:
         return self._model is not None
@@ -169,25 +177,33 @@ class CohereAsrProvider(AsrProvider):
 
         # Newer transformers ``load_audio`` rejects file-like objects
         # ("Should be an url, a local path, or numpy array"). Spill the
-        # raw bytes to a temp file and hand it the path. The suffix
-        # doesn't matter for content sniffing — ffmpeg/librosa probe
-        # the actual container — but ``.bin`` keeps things explicit.
-        # ``delete=False`` so we control cleanup in ``finally`` (the
-        # default-delete contextmanager closes-and-deletes on exit,
-        # which races load_audio reopening it on some platforms).
-        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
-            tf.write(audio_bytes)
-            tmp_path = tf.name
-        try:
-            audio = load_audio(tmp_path, sampling_rate=self.DEFAULT_SAMPLING_RATE)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        # raw bytes to a *reusable* scratch file (created once by
+        # ``_ensure_loaded`` above) rather than a fresh
+        # NamedTemporaryFile per call — the latter creates and unlinks
+        # a file on every transcribe, which adds up under load (each
+        # WS partial pass = one transcribe = one file).
+        #
+        # The write + load_audio sequence is serialised by ``self._lock``
+        # below, which also serialises ``model.generate`` against
+        # concurrent transcribes — so we don't race on the scratch file
+        # contents.
 
         with self._lock:
             t0 = time.perf_counter()
+            # Lazily create the scratch path on first transcribe, under
+            # the same lock that serialises every transcribe. Subsequent
+            # calls overwrite the same file.
+            if self._scratch_path is None:
+                tf = tempfile.NamedTemporaryFile(
+                    suffix=".bin", prefix="autonoma_asr_", delete=False
+                )
+                tf.close()
+                self._scratch_path = tf.name
+            with open(self._scratch_path, "wb") as f:
+                f.write(audio_bytes)
+            audio = load_audio(
+                self._scratch_path, sampling_rate=self.DEFAULT_SAMPLING_RATE
+            )
             # Empty/whitespace language → omit the kwarg entirely so
             # the processor uses its built-in language detection. We
             # don't pass ``language=None`` because some processor
