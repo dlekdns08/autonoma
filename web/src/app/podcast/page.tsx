@@ -24,7 +24,6 @@ import { useVoiceProfiles } from "@/hooks/voice/useVoiceProfiles";
 import { StatusBox } from "@/components/StatusBox";
 import VRMCharacter from "@/components/vtuber/VRMCharacter";
 import { VRM_FILES, VRM_CREDITS } from "@/components/vtuber/vrmCredits";
-import PushToTalkButton from "@/components/PushToTalkButton";
 import type { AgentData } from "@/lib/types";
 
 // ── Local types mirroring the server's _public_view shape ───────────
@@ -831,11 +830,10 @@ export default function PodcastPage() {
                 >
                   보내기
                 </button>
-                <PushToTalkButton
-                  mode="batch"
-                  language={language}
-                  onResult={(r) => void onMicTranscript({ text: r.text })}
-                />
+                {/* Mic interrupt hidden while vibevoice TTS is in use
+                    — Cohere ASR (which transcribes the mic) is on a
+                    different transformers major version than vibevoice.
+                    Text interrupt above stays. */}
               </div>
             </div>
 
