@@ -284,25 +284,24 @@ class VibeVoiceClient(BaseTTSClient):
         # existed).
         import importlib
 
+        # vibevoice 1.0.0 actually exports
+        # ``VibeVoiceStreamingForConditionalGenerationInference`` (note
+        # the order: ``Streaming`` is the prefix, not a suffix). Both
+        # the streaming class and processor are available at the top
+        # level for convenience; the offline ``VibeVoiceForConditionalGeneration``
+        # lives only in the deeper module path.
         _model_candidates = [
+            ("vibevoice", "VibeVoiceStreamingForConditionalGenerationInference"),
             (
                 "vibevoice.modular.modeling_vibevoice_streaming_inference",
-                "VibeVoiceForConditionalGenerationStreamingInference",
+                "VibeVoiceStreamingForConditionalGenerationInference",
             ),
-            (
-                "vibevoice.modular.modeling_vibevoice_inference",
-                "VibeVoiceForConditionalGenerationInference",
-            ),
+            # Offline fallback if the streaming class is somehow
+            # unavailable on this build.
             (
                 "vibevoice.modular.modeling_vibevoice",
                 "VibeVoiceForConditionalGeneration",
             ),
-            (
-                "vibevoice",
-                "VibeVoiceForConditionalGenerationStreamingInference",
-            ),
-            ("vibevoice", "VibeVoiceForConditionalGenerationInference"),
-            ("vibevoice", "VibeVoiceForConditionalGeneration"),
         ]
         for mod_path, cls_name in _model_candidates:
             try:
@@ -318,9 +317,17 @@ class VibeVoiceClient(BaseTTSClient):
                 break
 
         _proc_candidates = [
-            ("vibevoice.modular.processing_vibevoice", "VibeVoiceProcessor"),
-            ("vibevoice.processor.processing_vibevoice", "VibeVoiceProcessor"),
-            ("vibevoice", "VibeVoiceProcessor"),
+            # Streaming processor preferred — paired with the
+            # streaming inference class above.
+            ("vibevoice", "VibeVoiceStreamingProcessor"),
+            ("vibevoice.processor", "VibeVoiceStreamingProcessor"),
+            (
+                "vibevoice.processor.vibevoice_streaming_processor",
+                "VibeVoiceStreamingProcessor",
+            ),
+            # Offline fallback.
+            ("vibevoice.processor", "VibeVoiceProcessor"),
+            ("vibevoice.processor.vibevoice_processor", "VibeVoiceProcessor"),
         ]
         for mod_path, cls_name in _proc_candidates:
             try:
