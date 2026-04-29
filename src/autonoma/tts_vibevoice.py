@@ -274,35 +274,66 @@ class VibeVoiceClient(BaseTTSClient):
             logger.error("[tts/vibevoice] %s", self._load_error)
             return
 
-        for name in (
-            "VibeVoiceForConditionalGenerationInference",
-            "VibeVoiceForConditionalGeneration",
-        ):
-            cls = getattr(vibevoice, name, None)
+        # Try a matrix of (module_path, class_name) pairs. The
+        # streaming inference class is preferred — the streamingtts
+        # extra ships it and our /podcast feature wants chunked audio
+        # output. Fall back to the offline class if streaming isn't
+        # available. Module paths use ``vibevoice.modular.*`` (the
+        # actual layout — earlier code referenced a flat
+        # ``vibevoice.modular_modeling_vibevoice`` which never
+        # existed).
+        import importlib
+
+        _model_candidates = [
+            (
+                "vibevoice.modular.modeling_vibevoice_streaming_inference",
+                "VibeVoiceForConditionalGenerationStreamingInference",
+            ),
+            (
+                "vibevoice.modular.modeling_vibevoice_inference",
+                "VibeVoiceForConditionalGenerationInference",
+            ),
+            (
+                "vibevoice.modular.modeling_vibevoice",
+                "VibeVoiceForConditionalGeneration",
+            ),
+            (
+                "vibevoice",
+                "VibeVoiceForConditionalGenerationStreamingInference",
+            ),
+            ("vibevoice", "VibeVoiceForConditionalGenerationInference"),
+            ("vibevoice", "VibeVoiceForConditionalGeneration"),
+        ]
+        for mod_path, cls_name in _model_candidates:
+            try:
+                mod = importlib.import_module(mod_path)
+            except ImportError:
+                continue
+            cls = getattr(mod, cls_name, None)
             if cls is not None:
                 ModelCls = cls
+                logger.info(
+                    "[tts/vibevoice] using %s from %s", cls_name, mod_path
+                )
                 break
-        if ModelCls is None:
-            try:
-                from vibevoice.modular_modeling_vibevoice import (  # type: ignore[import-not-found]
-                    VibeVoiceForConditionalGenerationInference as ModelCls,
-                )
-            except ImportError:
-                try:
-                    from vibevoice.modular_modeling_vibevoice import (  # type: ignore[import-not-found]
-                        VibeVoiceForConditionalGeneration as ModelCls,
-                    )
-                except ImportError:
-                    ModelCls = None
 
-        ProcessorCls = getattr(vibevoice, "VibeVoiceProcessor", None)
-        if ProcessorCls is None:
+        _proc_candidates = [
+            ("vibevoice.modular.processing_vibevoice", "VibeVoiceProcessor"),
+            ("vibevoice.processor.processing_vibevoice", "VibeVoiceProcessor"),
+            ("vibevoice", "VibeVoiceProcessor"),
+        ]
+        for mod_path, cls_name in _proc_candidates:
             try:
-                from vibevoice.modular_processing_vibevoice import (  # type: ignore[import-not-found]
-                    VibeVoiceProcessor as ProcessorCls,
-                )
+                mod = importlib.import_module(mod_path)
             except ImportError:
-                ProcessorCls = None
+                continue
+            cls = getattr(mod, cls_name, None)
+            if cls is not None:
+                ProcessorCls = cls
+                logger.info(
+                    "[tts/vibevoice] using %s from %s", cls_name, mod_path
+                )
+                break
 
         if ModelCls is None or ProcessorCls is None:
             self._load_error = (
