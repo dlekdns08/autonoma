@@ -55,6 +55,18 @@ memory-rag = [
     "sentence-transformers>=2.7",
 ]
 
+# Microsoft VibeVoice intentionally omitted from optional-dependencies
+# because uv struggles to resolve the upstream git source against our
+# requires-python matrix. Operators install it imperatively in the
+# venv that runs the API:
+#
+#   uv pip install \\
+#     'vibevoice[streamingtts] @ git+https://github.com/microsoft/VibeVoice.git@main'
+#
+# At runtime select via ``AUTONOMA_TTS_PROVIDER=vibevoice``. The TTS
+# factory falls back to StubTTSClient if the package isn't installed
+# (loud warning in the log), so leaving this out doesn't break boot.
+
 [project.scripts]
 autonoma = "autonoma.cli:cli"
 
