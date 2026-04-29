@@ -3474,7 +3474,24 @@ async def replay_session(
 
 
 @app.get("/api/health")
-async def health():
+async def health(request: Request):
+    """Liveness probe.
+
+    Always returns ``200 {"status": "ok"}`` so Docker's HEALTHCHECK
+    and external uptime monitors don't need to authenticate. Internal
+    detail (active swarms, TTS provider, sessions count) is exposed
+    only to logged-in users — anonymous callers couldn't use that
+    info for anything except recon.
+    """
+    # Probe the cookie inline rather than requiring auth, so Docker
+    # HEALTHCHECK + curl probes still get a 200. We just shed the
+    # detail payload for unauthenticated callers.
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+    user_id = read_session_token(cookie_token or "")
+    user = await get_user_by_id(user_id) if user_id else None
+    if user is None or user.status != "active":
+        return {"status": "ok"}
+
     active_swarms = sum(
         1 for s in _sessions.values()
         if s.task is not None and not s.task.done()
