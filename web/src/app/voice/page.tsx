@@ -30,6 +30,7 @@ import { useVoiceBindings } from "@/hooks/voice/useVoiceBindings";
 import { VRM_FILES, VRM_CREDITS } from "@/components/vtuber/vrmCredits";
 import { StatusBox } from "@/components/StatusBox";
 import PushToTalkButton from "@/components/PushToTalkButton";
+import ConversationModeToggle from "@/components/ConversationModeToggle";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -86,6 +87,9 @@ export default function VoicePage() {
   const [micError, setMicError] = useState<string | null>(null);
   // Empty string → server falls back to auto-detect via Cohere.
   const [micLanguage, setMicLanguage] = useState<string>("ko");
+  // Always-on conversation mode (Wave A). When on, silero-vad keeps
+  // the mic open and auto-segments speech.
+  const [convModeOn, setConvModeOn] = useState<boolean>(false);
 
   // Transcript history (feature #1). Lazy-loaded; shows the last 20
   // ASR results for the logged-in user across both batch and stream.
@@ -604,6 +608,25 @@ export default function VoicePage() {
               <span className="font-mono text-[10px] text-white/35">
                 Space 키도 길게 누르면 됩니다.
               </span>
+              {/* Always-on conversation toggle. Sits next to push-to-
+                  talk so the user can pick the interaction style.
+                  When the toggle is on it runs the silero-vad model in
+                  the browser and auto-sends each segment — no buttons. */}
+              <ConversationModeToggle
+                enabled={convModeOn}
+                onEnabledChange={setConvModeOn}
+                language={micLanguage}
+                onResult={(r) => onMicResult({ text: r.text, route: r.route })}
+                onError={(m) => setMicError(m)}
+                onInterrupt={() => {
+                  try {
+                    testAudioRef.current?.pause();
+                  } catch {
+                    /* element may not exist yet */
+                  }
+                }}
+                className="ml-auto"
+              />
             </div>
 
             <label className="flex flex-col gap-1 text-xs text-white/60">
