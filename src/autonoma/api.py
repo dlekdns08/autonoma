@@ -236,16 +236,16 @@ class _HeadlessWebSocket:
 
 
 # Synthetic session ids for headless runs come from a negative-ranged
-# counter so they can never collide with real ``id(WebSocket)`` values
-# (CPython ids are positive). Atomic int monotonic — single-process.
-_headless_session_counter: int = -1
+# counter so they can never collide with the positive ids issued by
+# ``_next_session_id`` for real WebSocket connections. We use
+# ``itertools.count`` (which is atomic in CPython) so concurrent
+# headless launches can't race the read-modify-write of a plain
+# ``int -= 1`` global. Step is -1 starting from -1.
+_headless_id_counter: itertools.count[int] = itertools.count(-1, -1)
 
 
 def _next_headless_session_id() -> int:
-    global _headless_session_counter
-    sid = _headless_session_counter
-    _headless_session_counter -= 1
-    return sid
+    return next(_headless_id_counter)
 _rooms: dict[int, RoomState] = {}
 # Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
 # misreads when someone reads it aloud).
