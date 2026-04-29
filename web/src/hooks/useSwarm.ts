@@ -782,10 +782,29 @@ export function useSwarm() {
               if (!Array.isArray(w.__autonoma_reactions)) {
                 w.__autonoma_reactions = [];
               }
-              w.__autonoma_reactions.push({ emoji, ts: Date.now() });
-              // Cap the buffer so a heavy raid doesn't eat memory.
-              if (w.__autonoma_reactions.length > 100) {
-                w.__autonoma_reactions.splice(0, w.__autonoma_reactions.length - 100);
+              const buf = w.__autonoma_reactions;
+              const now = Date.now();
+              // Time-based drain — drop entries older than the maximum
+              // reasonable burst-animation duration. Without a consumer
+              // attached, the cap-at-100 from the previous version
+              // still allowed a hot raid (10 reactions/s) to hold
+              // 10 s × 10 = 100 entries indefinitely. The TTL pass
+              // here ensures the buffer self-empties even if the
+              // Stage never reads from it.
+              const TTL_MS = 5_000;
+              const cutoff = now - TTL_MS;
+              // ``findIndex`` against an oldest-first array gives the
+              // first survivor; everything before it is expired.
+              let firstAlive = 0;
+              while (firstAlive < buf.length && buf[firstAlive].ts < cutoff) {
+                firstAlive++;
+              }
+              if (firstAlive > 0) buf.splice(0, firstAlive);
+              buf.push({ emoji, ts: now });
+              // Hard cap on top of the TTL — protects against a sub-
+              // TTL flood (200 reactions in 1 s).
+              if (buf.length > 100) {
+                buf.splice(0, buf.length - 100);
               }
             } catch {
               /* SSR or sandboxed iframe — ignore */
