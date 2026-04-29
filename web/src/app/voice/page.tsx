@@ -29,8 +29,6 @@ import {
 import { useVoiceBindings } from "@/hooks/voice/useVoiceBindings";
 import { VRM_FILES, VRM_CREDITS } from "@/components/vtuber/vrmCredits";
 import { StatusBox } from "@/components/StatusBox";
-import PushToTalkButton from "@/components/PushToTalkButton";
-import ConversationModeToggle from "@/components/ConversationModeToggle";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -561,62 +559,12 @@ export default function VoicePage() {
               </div>
             </div>
 
-            {/* ── Mic round-trip: speech → text → speech ─────────────── */}
-            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/5 px-3 py-2">
-              <PushToTalkButton
-                mode="stream"
-                language={micLanguage}
-                route={false}
-                onResult={onMicResult}
-                onError={(m) => setMicError(m)}
-                // ``onInterrupt`` removed: pausing testAudio every
-                // time the mic opened was cutting OmniVoice playback
-                // mid-sentence when always-on mode VAD-tripped.
-              />
-              <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
-                <span>언어</span>
-                <select
-                  value={micLanguage}
-                  onChange={(e) => setMicLanguage(e.target.value)}
-                  className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-500/60"
-                >
-                  <option value="">자동 감지</option>
-                  <option value="ko">한국어</option>
-                  <option value="en">영어</option>
-                  <option value="ja">日本語</option>
-                  <option value="zh">中文</option>
-                  <option value="es">Español</option>
-                </select>
-              </label>
-              <label className="flex items-center gap-1.5 font-mono text-[11px] text-white/60">
-                <input
-                  type="checkbox"
-                  checked={autoSynth}
-                  onChange={(e) => setAutoSynth(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-fuchsia-500"
-                />
-                녹음 끝나면 자동으로 합성·재생
-              </label>
-              <span className="font-mono text-[10px] text-white/35">
-                Space 키도 길게 누르면 됩니다.
-              </span>
-              {/* Always-on conversation toggle. Sits next to push-to-
-                  talk so the user can pick the interaction style.
-                  When the toggle is on it runs the silero-vad model in
-                  the browser and auto-sends each segment — no buttons. */}
-              <ConversationModeToggle
-                enabled={convModeOn}
-                onEnabledChange={setConvModeOn}
-                language={micLanguage}
-                onResult={(r) => onMicResult({ text: r.text, route: r.route })}
-                onError={(m) => setMicError(m)}
-                // ``onInterrupt`` removed: the always-on VAD was
-                // hearing the agent's own playback through the
-                // speaker and treating it as user speech, which
-                // chained into pausing the same playback.
-                className="ml-auto"
-              />
-            </div>
+            {/* Mic round-trip section is hidden while AUTONOMA_TTS_PROVIDER
+                is vibevoice. vibevoice 1.0.0 pins transformers~=4.51,
+                which is incompatible with Cohere ASR's transformers-5
+                dep, so the mic API would 503 if exposed. Re-mount the
+                <PushToTalkButton> + <ConversationModeToggle> here once
+                vibevoice ships a transformers-5 compatible release. */}
 
             <label className="flex flex-col gap-1 text-xs text-white/60">
               <span>테스트 문장 (1-500자)</span>
