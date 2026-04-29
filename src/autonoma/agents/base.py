@@ -494,32 +494,60 @@ RECENT MESSAGES:
         ``self.name``'s own past entries. Best-effort: every failure
         path returns an empty list so the situation report degrades
         gracefully when the diary index isn't available.
+
+        When ``settings.memory_rag_enabled`` is True and
+        sentence-transformers is installed we also pull the top
+        semantic matches from the agent's *own* in-process memory and
+        merge them with the keyword-indexed diary results — keyword
+        catches exact matches, embeddings catch synonyms / paraphrases.
         """
+        parts: list[str] = []
+        if self.current_task is not None:
+            parts.append(self.current_task.title)
+            parts.append(self.current_task.description[:140])
+        if project.description:
+            parts.append(project.description[:160])
+        if self.inbox:
+            parts.append(self.inbox[-1].content[:120])
+        query = " ".join(p for p in parts if p)
+        if not query.strip():
+            return []
+
+        results: list[str] = []
+
+        # Cross-agent keyword diary (existing behaviour).
         try:
             from autonoma.world.diary_search import diary_index
 
-            if len(diary_index) == 0:
-                return []
-            parts: list[str] = []
-            if self.current_task is not None:
-                parts.append(self.current_task.title)
-                parts.append(self.current_task.description[:140])
-            if project.description:
-                parts.append(project.description[:160])
-            if self.inbox:
-                parts.append(self.inbox[-1].content[:120])
-            query = " ".join(p for p in parts if p)
-            if not query.strip():
-                return []
-            return diary_index.search_text(
-                query, agent=self.persona.name, top_n=3
-            )
+            if len(diary_index) > 0:
+                results.extend(
+                    diary_index.search_text(query, agent=self.persona.name, top_n=3)
+                )
         except Exception:
             logger.debug(
-                "_recall_relevant_diary failed for agent=%s (best-effort)",
+                "_recall_relevant_diary keyword path failed for agent=%s",
                 self.persona.name, exc_info=True,
             )
-            return []
+
+        # Per-agent semantic recall (feature #5).
+        try:
+            from autonoma.config import settings as _settings
+
+            if getattr(_settings, "memory_rag_enabled", False):
+                semantic = self.memory.recall_semantic(query, k=3)
+                # Render a memory entry the same way ``__str__`` does so
+                # the prompt builder gets a consistent line shape.
+                for entry in semantic:
+                    line = str(entry)
+                    if line and line not in results:
+                        results.append(line)
+        except Exception:
+            logger.debug(
+                "_recall_relevant_diary semantic path failed for agent=%s",
+                self.persona.name, exc_info=True,
+            )
+
+        return results[:6]  # cap so the prompt doesn't bloat
 
     # Matches the start of the JSON "speech" value so we can begin emitting
     # typing tokens before the full response is assembled.
