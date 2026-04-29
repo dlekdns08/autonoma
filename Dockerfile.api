@@ -48,6 +48,41 @@ if total < 100 * 1024 * 1024:  # expect >100 MB for any real model
 print(f"[build] pre-downloaded {total // (1024 * 1024)} MB of weights to {path}")
 PY
 
+# Pre-download VibeVoice (alternative TTS backend). Skipped by default
+# so the existing image stays slim — flip with:
+#   docker build --build-arg VIBEVOICE_MODEL_ID=microsoft/VibeVoice-1.5B ...
+# At runtime select with ``AUTONOMA_TTS_PROVIDER=vibevoice``. The model
+# is currently not gated on HF, but if Microsoft flips that we already
+# accept ``hf_token`` as a build secret (see ASR layer below) and
+# huggingface_hub picks it up from there.
+ARG VIBEVOICE_MODEL_ID=
+ENV AUTONOMA_VIBEVOICE_MODEL_ID=${VIBEVOICE_MODEL_ID}
+RUN --mount=type=secret,id=hf_token,required=false \
+    /app/.venv/bin/python - <<'PY'
+import os, pathlib, sys
+
+model_id = os.environ.get("AUTONOMA_VIBEVOICE_MODEL_ID", "").strip()
+if not model_id:
+    print("[build] AUTONOMA_VIBEVOICE_MODEL_ID empty — skipping VibeVoice pre-download")
+    sys.exit(0)
+
+token_path = "/run/secrets/hf_token"
+if os.path.exists(token_path):
+    with open(token_path) as f:
+        tok = f.read().strip()
+    if tok:
+        os.environ["HF_TOKEN"] = tok
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = tok
+
+from huggingface_hub import snapshot_download
+path = snapshot_download(model_id)
+root = pathlib.Path(path)
+total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+if total < 100 * 1024 * 1024:
+    sys.exit(f"[build] HF snapshot for {model_id} is suspiciously small ({total} bytes)")
+print(f"[build] pre-downloaded {total // (1024 * 1024)} MB of VibeVoice weights to {path}")
+PY
+
 # Pre-download the gated Cohere ASR model. Pass ``HF_TOKEN`` as a build
 # secret — never as a build ARG/ENV, which would persist the token in
 # the image layers:
@@ -153,10 +188,12 @@ COPY --from=builder /app/pyproject.toml /app/
 # reads the same ID the builder snapshotted (single source of truth).
 ARG OMNIVOICE_MODEL_ID=k2-fsa/OmniVoice
 ARG ASR_MODEL_ID=CohereLabs/cohere-transcribe-03-2026
+ARG VIBEVOICE_MODEL_ID=
 COPY --from=builder /opt/hf-cache /opt/hf-cache
 ENV HF_HOME=/opt/hf-cache
 ENV AUTONOMA_OMNIVOICE_MODEL_ID=${OMNIVOICE_MODEL_ID}
 ENV AUTONOMA_VOICE_ASR_MODEL=${ASR_MODEL_ID}
+ENV AUTONOMA_VIBEVOICE_MODEL_ID=${VIBEVOICE_MODEL_ID}
 
 # Add .venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
