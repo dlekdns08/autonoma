@@ -171,8 +171,22 @@ async def play_cutscene(
                 logger.warning(f"[cutscenes] step emit failed: {exc}")
         await bus.emit("cutscene.finished", cutscene_id=cutscene.id)
 
-    asyncio.create_task(_runner())
+    # Strong-reference the task so the runtime can't GC it mid-run —
+    # bare ``asyncio.create_task`` results are eligible for collection
+    # if no caller holds them. ``discard`` clears the reference once
+    # the runner finishes naturally.
+    task = asyncio.create_task(_runner())
+    _active_cutscene_tasks.add(task)
+    task.add_done_callback(_active_cutscene_tasks.discard)
     return {"status": "started", "cutscene_id": cutscene.id}
+
+
+# Strong references for in-flight cutscene runner tasks. Without this
+# set, ``asyncio.create_task(_runner(...))`` returns a task the runtime
+# can collect mid-await once nothing references it — a classic source
+# of "the cutscene started but never finished" reports. Tasks remove
+# themselves on completion via ``add_done_callback``.
+_active_cutscene_tasks: set[asyncio.Task[None]] = set()
 
 
 # ── Trigger wiring ────────────────────────────────────────────────────
@@ -238,7 +252,9 @@ async def _on_bus_event(event_name: str, data: dict[str, Any]) -> None:
                 )
             await bus.emit("cutscene.finished", cutscene_id=cs.id)
 
-        asyncio.create_task(_runner(cutscene))
+        task = asyncio.create_task(_runner(cutscene))
+        _active_cutscene_tasks.add(task)
+        task.add_done_callback(_active_cutscene_tasks.discard)
 
 
 # Subscribe once on module import — the tap is global so we don't
