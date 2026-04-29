@@ -34,6 +34,9 @@ export interface PushToTalkButtonProps {
    *  on the server. Useful on the /voice studio page where there is no
    *  swarm to route into. */
   route?: boolean;
+  /** Barge-in handler — fired the moment the user starts recording,
+   *  so the caller can pause TTS playback. */
+  onInterrupt?: () => void;
   /** Hold-to-talk also fires on Spacebar. Set false to disable hotkey. */
   spaceHotkey?: boolean;
   /** Override the default top-right placement for callers that want to
@@ -51,6 +54,7 @@ export default function PushToTalkButton({
   onError,
   onPartial,
   route,
+  onInterrupt,
   spaceHotkey = true,
   className = "",
 }: PushToTalkButtonProps) {
@@ -62,6 +66,7 @@ export default function PushToTalkButton({
     onError,
     onPartial,
     route,
+    onInterrupt,
   });
 
   const beginPress = useCallback(() => {
