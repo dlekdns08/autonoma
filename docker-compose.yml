@@ -19,8 +19,11 @@ services:
         ASR_MODEL_ID: ${ASR_MODEL_ID-CohereLabs/cohere-transcribe-03-2026}
         OMNIVOICE_MODEL_ID: ${OMNIVOICE_MODEL_ID-k2-fsa/OmniVoice}
         # Empty by default — VibeVoice pre-download is opt-in.
-        # Set to ``microsoft/VibeVoice-1.5B`` to bake the weights into
-        # the runtime image at build time.
+        # Set to ``microsoft/VibeVoice-Realtime-0.5B`` to bake the
+        # weights into the runtime image at build time. The offline
+        # 1.5B variant is NOT compatible with our inference path (see
+        # tts_vibevoice.py for the gory details) — stick with the
+        # Realtime line.
         VIBEVOICE_MODEL_ID: ${VIBEVOICE_MODEL_ID-}
       # Build secret wired into the ASR pre-download step. The token is
       # never written into an image layer — BuildKit mounts it as a
