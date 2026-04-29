@@ -55,6 +55,12 @@ def _is_private_host(host: str) -> bool:
 
     Resolved on every call so a DNS rebind can't trick us — we re-resolve
     after redirects too.
+
+    Timeout: ``socket.getaddrinfo`` doesn't expose a per-call timeout
+    on stock CPython; we rely on the OS resolver's own timeout
+    (typically 5 s on glibc/musl, configurable in /etc/resolv.conf).
+    The httpx client below also enforces a connect timeout so a
+    pathologically slow DNS will be bounded by the smaller of the two.
     """
     try:
         # ``getaddrinfo`` returns every A/AAAA record; reject if ANY is
@@ -121,8 +127,17 @@ def fetch_url(
     cap = max(1, min(max_chars, MAX_MAX_CHARS))
 
     try:
+        # Per-phase timeouts. ``connect`` covers DNS + TCP handshake +
+        # TLS — bounded tighter than the overall ``timeout_s`` so a
+        # slow resolver doesn't hold an agent's turn for 10 s.
+        timeouts = httpx.Timeout(
+            connect=min(3.0, timeout_s),
+            read=timeout_s,
+            write=timeout_s,
+            pool=timeout_s,
+        )
         with httpx.Client(
-            timeout=timeout_s,
+            timeout=timeouts,
             follow_redirects=True,
             max_redirects=3,
             headers={
