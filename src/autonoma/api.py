@@ -4029,6 +4029,7 @@ from autonoma.routers import (  # noqa: E402
     live as _live_router,
     personas as _personas_router,
     playback as _playback_router,
+    podcast as _podcast_router,
     sign as _sign_router,
     standup as _standup_router,
     swarm_battle as _battle_router,
@@ -4175,4 +4176,5 @@ app.include_router(_playback_router.router)
 app.include_router(_sign_router.router)
 app.include_router(_standup_router.router)
 app.include_router(_battle_router.router)
+app.include_router(_podcast_router.router)
 app.include_router(_vision_router.router)
