@@ -77,6 +77,15 @@ export interface UseAgentVoiceResult {
   /** Tear down everything (call on unmount or hard reset). */
   reset: () => void;
   /**
+   * Barge-in (feature #2). Immediately silences every speaking agent
+   * — pauses its <audio>, drops accumulated chunks, clears the
+   * speaking flag — so the user's own voice doesn't have to compete
+   * with TTS playback. Cheaper than ``reset`` (keeps the AudioContext
+   * + slot map alive) so subsequent agent.speech_audio_start events
+   * resume normal playback without re-creating the analyser graph.
+   */
+  interruptAll: () => void;
+  /**
    * TTS-independent "this agent is speaking" flag driven purely by the
    * text of the line. Sets ``speakingAgents`` true, oscillates fake
    * amplitude for lip-sync, and clears after a duration derived from
@@ -438,6 +447,33 @@ export function useAgentVoice(): UseAgentVoiceResult {
     });
   }, []);
 
+  const interruptAll = useCallback(() => {
+    // Pause every active agent without dismantling the slot map or
+    // the AudioContext — those are expensive to rebuild and we expect
+    // playback to resume right after the user finishes speaking.
+    for (const [agentName, slot] of slotsRef.current) {
+      try {
+        if (!slot.audio.paused) {
+          slot.audio.pause();
+        }
+      } catch {
+        /* element may already be paused */
+      }
+      slot.chunks = [];
+      slot.speaking = false;
+      slot.amp = 0;
+      // Clear any text-driven fake-speak in flight so the lip-sync
+      // doesn't keep oscillating after we mute.
+      const fb = fallbackTimersRef.current.get(agentName);
+      if (fb) {
+        clearInterval(fb.amp);
+        clearTimeout(fb.clear);
+        fallbackTimersRef.current.delete(agentName);
+      }
+    }
+    setSpeakingAgents((prev) => (prev.size === 0 ? prev : new Set()));
+  }, []);
+
   const reset = useCallback(() => {
     for (const slot of slotsRef.current.values()) {
       try {
@@ -479,6 +515,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
       getMouthAmplitude,
       speakingAgents,
       reset,
+      interruptAll,
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
@@ -488,6 +525,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
       getMouthAmplitude,
       speakingAgents,
       reset,
+      interruptAll,
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
