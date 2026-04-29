@@ -1138,21 +1138,30 @@ def _log_startup_summary() -> None:
 
 
 async def _warmup_omnivoice() -> None:
-    """Kick off OmniVoice model load in the background at startup.
+    """Kick off the configured TTS model load at startup.
 
-    On CPU the first ``_ensure_model`` call takes 30–60s. Without this
-    warmup the first admin /test request pays that cost and nginx cuts
-    it at its default 60s ``proxy_read_timeout`` (504 Gateway Timeout).
-    Gated on ``settings.tts_provider`` so deployments with TTS disabled
-    don't pay the 2–3 GB resident memory cost.
+    Multi-GB models otherwise pay the first-request 30–60 s cold-load
+    cost in front of nginx's default 60 s read timeout, which surfaces
+    as a 504 to the user. Gated on ``settings.tts_provider`` so a
+    TTS-disabled deploy avoids the resident-memory cost.
+
+    Renamed-but-not-renamed: the function is still ``_warmup_omnivoice``
+    so the existing ``lifespan`` callsite doesn't churn, but it now
+    dispatches by provider so VibeVoice gets the same treatment.
     """
-    if settings.tts_provider != "omnivoice":
-        return
-    try:
-        from autonoma.tts_omnivoice import warmup_shared_client
-    except ImportError:
-        return
-    await warmup_shared_client()
+    provider = settings.tts_provider
+    if provider == "omnivoice":
+        try:
+            from autonoma.tts_omnivoice import warmup_shared_client
+        except ImportError:
+            return
+        await warmup_shared_client()
+    elif provider == "vibevoice":
+        try:
+            from autonoma.tts_vibevoice import warmup_shared_client
+        except ImportError:
+            return
+        await warmup_shared_client()
 
 
 async def _warmup_asr() -> None:
@@ -1183,7 +1192,7 @@ async def lifespan(app: FastAPI):
     from autonoma.routers.live import register_autoclip_hooks
     register_autoclip_hooks()
     warmup_task: asyncio.Task[None] | None = None
-    if settings.tts_provider == "omnivoice":
+    if settings.tts_provider in ("omnivoice", "vibevoice"):
         warmup_task = asyncio.create_task(_warmup_omnivoice())
     asr_warmup_task: asyncio.Task[None] | None = None
     if getattr(settings, "voice_asr_provider", "cohere") != "none":
@@ -3538,7 +3547,7 @@ async def health(request: Request):
     # from "synthesis really failed". Cheap — no model load triggered.
     tts_info: dict[str, object] = {
         "provider": settings.tts_provider,
-        "ready": settings.tts_provider != "omnivoice",
+        "ready": settings.tts_provider not in ("omnivoice", "vibevoice"),
         "device": "",
         "dtype": "",
     }
@@ -3546,6 +3555,15 @@ async def health(request: Request):
         try:
             from autonoma.tts_omnivoice import shared_client_status
             status_snap = shared_client_status()
+            tts_info["ready"] = bool(status_snap["loaded"])
+            tts_info["device"] = status_snap["device"]
+            tts_info["dtype"] = status_snap["dtype"]
+        except ImportError:
+            tts_info["ready"] = False
+    elif settings.tts_provider == "vibevoice":
+        try:
+            from autonoma.tts_vibevoice import shared_client_status as vv_status
+            status_snap = vv_status()
             tts_info["ready"] = bool(status_snap["loaded"])
             tts_info["device"] = status_snap["device"]
             tts_info["dtype"] = status_snap["dtype"]
