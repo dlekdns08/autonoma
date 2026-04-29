@@ -59,10 +59,14 @@ jobs:
           # time someone holds push-to-talk, leaving everything else
           # (TTS, dashboard) functional.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          # ASR knobs are non-secret — hardcoded here so flipping them
-          # is a deploy.yml diff (visible in PRs) rather than a silent
-          # GitHub secret edit. Override at the .env layer if needed.
-          AUTONOMA_VOICE_ASR_PROVIDER: 'cohere'
+          # ASR provider is now a secret-with-fallback because the
+          # vibevoice TTS rollout pulls transformers ~4.51, which is
+          # incompatible with Cohere ASR's transformers-5 dependency.
+          # Default 'none' so a fresh deploy stays silent (no broken
+          # mic UI, no model download). Set the secret to 'cohere'
+          # only when the venv is on transformers 5.x and ASR is
+          # actually wanted.
+          AUTONOMA_VOICE_ASR_PROVIDER: ${{ secrets.AUTONOMA_VOICE_ASR_PROVIDER || 'none' }}
           AUTONOMA_VOICE_ASR_DEFAULT_LANGUAGE: 'ko'
         run: |
           printf 'AUTONOMA_ADMIN_PASSWORD=%s\n'      "$AUTONOMA_ADMIN_PASSWORD"      >> .env
