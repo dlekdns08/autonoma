@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -133,6 +134,22 @@ class OmniVoiceMlxClient(BaseTTSClient):
         # device. Serialise calls.
         self._gen_lock = asyncio.Lock()
         self._load_error: str | None = None
+        # Pinned single-thread executor for ALL MLX work. Load and
+        # every subsequent ``model.generate`` must execute on the
+        # SAME OS thread because:
+        #   * MLX streams are thread-local — a fresh worker thread
+        #     has no default ``Stream(gpu, 0)``.
+        #   * Model parameters (mx.array) are bound to the stream
+        #     they were materialised on; using them from another
+        #     thread raises ``RuntimeError: There is no Stream(...)``.
+        # ``asyncio.to_thread`` defaults to a multi-worker pool, so
+        # successive calls would scatter across threads. Dedicating
+        # one thread keeps the model + every generate on a single
+        # stream and cleanly serialises the MLX ops without an
+        # extra lock.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="autonoma-mlx"
+        )
 
     def is_loaded(self) -> bool:
         return self._model is not None
@@ -145,7 +162,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
         async with self._load_lock:
             if self._model is not None:
                 return self._model
-            await asyncio.to_thread(self._load_blocking)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._executor, self._load_blocking)
             if self._load_error is not None:
                 raise TTSError(self._load_error)
             return self._model
@@ -161,20 +179,35 @@ class OmniVoiceMlxClient(BaseTTSClient):
             )
             logger.error("[tts/omnivoice-mlx] %s: %s", self._load_error, exc)
             return
-        # Pin the default device for this thread before load_model
+        # Create + bind a stream on this thread before load_model
         # touches anything — load_model evaluates weights and that
         # eval has the same thread-local stream requirement as
-        # ``model.generate`` does at inference time.
+        # ``model.generate`` does at inference time. ``set_default_device``
+        # alone is not enough: it updates only the device pointer;
+        # the worker thread still has no stream to dispatch ops on.
         try:
-            mx.set_default_device(mx.gpu)
-        except Exception:
+            stream = mx.new_stream(mx.gpu)
+        except Exception as exc:
+            logger.warning(
+                "[tts/omnivoice-mlx] new_stream(gpu) failed: %s; trying cpu",
+                exc,
+            )
             try:
-                mx.set_default_device(mx.cpu)
-            except Exception:
-                pass
+                stream = mx.new_stream(mx.cpu)
+            except Exception as exc2:
+                self._load_error = f"OmniVoice MLX stream init failed: {exc2}"
+                logger.error("[tts/omnivoice-mlx] %s", self._load_error)
+                return
+        try:
+            mx.set_default_stream(stream)
+        except Exception as exc:
+            logger.debug(
+                "[tts/omnivoice-mlx] set_default_stream skipped: %s", exc,
+            )
         try:
             logger.info("[tts/omnivoice-mlx] loading %s …", self.model_id)
-            self._model = load_model(self.model_id)
+            with mx.stream(stream):
+                self._model = load_model(self.model_id)
             logger.info("[tts/omnivoice-mlx] %s loaded", self.model_id)
         except Exception as exc:
             self._load_error = f"OmniVoice MLX load failed: {exc}"
@@ -195,14 +228,17 @@ class OmniVoiceMlxClient(BaseTTSClient):
             return
         await self._ensure_model()
         async with self._gen_lock:
-            wav_bytes = await asyncio.to_thread(
-                self._run_inference,
-                text=text,
-                voice=voice,
-                ref_audio=ref_audio,
-                ref_audio_mime=ref_audio_mime,
-                ref_text=ref_text,
-                language=language,
+            loop = asyncio.get_running_loop()
+            wav_bytes = await loop.run_in_executor(
+                self._executor,
+                lambda: self._run_inference(
+                    text=text,
+                    voice=voice,
+                    ref_audio=ref_audio,
+                    ref_audio_mime=ref_audio_mime,
+                    ref_text=ref_text,
+                    language=language,
+                ),
             )
         if not wav_bytes:
             return
@@ -275,31 +311,48 @@ class OmniVoiceMlxClient(BaseTTSClient):
         t0 = time.perf_counter()
         try:
             # MLX streams are *thread-local*. ``asyncio.to_thread`` ran
-            # us on a worker thread that has no default stream — calls
-            # like ``mx.eval(ref_codes)`` deep inside the model raise
+            # us on a worker thread that does NOT inherit the main
+            # thread's default stream — and unlike ``set_default_device``
+            # (which only updates a thread-local device pointer),
+            # ``mx.stream(mx.gpu)`` tries to *look up* an existing
+            # default stream on the current thread and raises
             # ``RuntimeError: There is no Stream(gpu, 0) in current
-            # thread`` until we attach one explicitly. Setting the
-            # default device on this thread + wrapping the generate
-            # call in ``mx.stream(mx.gpu)`` gives mlx_audio a GPU
-            # stream to dispatch on. ``set_default_device`` is a
-            # cheap idempotent op so re-running on every synth is
-            # fine.
+            # thread`` when none exists. The fix is to *create* a
+            # stream explicitly via ``new_stream`` and bind it as the
+            # active stream for this call. We also set it as the
+            # thread's default so any lazy ``mx.eval`` that fires
+            # *outside* our ``with`` block (e.g. when ``np.array()``
+            # forces evaluation of an mx.array post-context-exit) has
+            # a stream to dispatch on.
             import mlx.core as mx  # type: ignore[import-not-found]
+            import numpy as np
 
             try:
-                mx.set_default_device(mx.gpu)
+                stream = mx.new_stream(mx.gpu)
             except Exception as exc:
-                # On a Mac without Metal (very rare on the deploy
-                # target) we'd fall through here. Continue with cpu —
-                # mlx_audio still works on CPU just slower.
+                # Macs without Metal (very rare on the deploy target)
+                # fall back to CPU — mlx_audio still works there, just
+                # ~3-5× slower.
                 logger.warning(
-                    "[tts/omnivoice-mlx] mx.set_default_device(gpu) failed: %s; "
-                    "trying cpu", exc,
+                    "[tts/omnivoice-mlx] new_stream(gpu) failed: %s; trying cpu",
+                    exc,
                 )
                 try:
-                    mx.set_default_device(mx.cpu)
-                except Exception:
-                    pass
+                    stream = mx.new_stream(mx.cpu)
+                except Exception as exc2:
+                    raise TTSError(
+                        f"mlx stream init failed: {exc2}"
+                    ) from exc2
+
+            try:
+                mx.set_default_stream(stream)
+            except Exception as exc:
+                # Some MLX builds expose set_default_stream only on
+                # newer wheels — non-fatal, the ``with`` block below
+                # still binds the stream for the generate path.
+                logger.debug(
+                    "[tts/omnivoice-mlx] set_default_stream skipped: %s", exc,
+                )
 
             kwargs: dict[str, Any] = {"text": text}
             if ref_path is not None:
@@ -310,60 +363,61 @@ class OmniVoiceMlxClient(BaseTTSClient):
             # ``model.generate`` is a generator; collect everything
             # into a list so we get the full utterance up front. For
             # short text (single line agent / podcast turn) this is
-            # one or two yields and a few-hundred-ms wall clock.
+            # one or two yields and a few-hundred-ms wall clock. We
+            # also materialise the audio arrays into numpy WHILE the
+            # stream is bound so any lazy eval finishes here, not on
+            # context exit when the stream is gone.
+            audio_chunks: list[Any] = []
             try:
-                with mx.stream(mx.gpu):
-                    results = list(self._model.generate(**kwargs))
+                with mx.stream(stream):
+                    try:
+                        results = list(self._model.generate(**kwargs))
+                    except TypeError as exc:
+                        # The Qwen3-TTS family takes the kwargs above;
+                        # older OmniVoice-style models didn't. Fall
+                        # back to text-only so the caller still gets
+                        # *something* back instead of a hard fail.
+                        logger.warning(
+                            "[tts/omnivoice-mlx] generate kwargs rejected "
+                            "(%s); retrying with text-only call", exc,
+                        )
+                        results = list(self._model.generate(text))
+                    for r in results:
+                        audio = getattr(r, "audio", None)
+                        if audio is None:
+                            # Some builds return raw mx.array directly.
+                            audio = r
+                        # Force eval before leaving the stream context.
+                        if hasattr(audio, "shape"):
+                            try:
+                                mx.eval(audio)
+                            except Exception:
+                                pass
+                            np_chunk = np.array(audio)
+                        else:
+                            np_chunk = np.asarray(audio, dtype=np.float32)
+                        # Squeeze leading batch / channel dim so chunks
+                        # concat cleanly along the sample axis.
+                        while np_chunk.ndim > 1 and np_chunk.shape[0] == 1:
+                            np_chunk = np_chunk[0]
+                        if np_chunk.ndim > 1:
+                            # Multichannel → mono by mean.
+                            np_chunk = np_chunk.mean(axis=0)
+                        audio_chunks.append(np_chunk.astype(np.float32))
             except ValueError as exc:
                 raise TTSError(f"mlx model.generate failed: {exc}") from exc
-            except TypeError as exc:
-                # The Qwen3-TTS family takes the kwargs above; older
-                # OmniVoice-style models didn't. If we hit a kwarg
-                # mismatch fall through to a positional + minimal
-                # call so the caller still gets *something* back.
-                logger.warning(
-                    "[tts/omnivoice-mlx] generate kwargs rejected (%s); "
-                    "retrying with text-only call", exc,
-                )
-                try:
-                    with mx.stream(mx.gpu):
-                        results = list(self._model.generate(text))
-                except Exception as exc2:
-                    raise TTSError(
-                        f"mlx model.generate failed (retry): {exc2}"
-                    ) from exc2
+            except RuntimeError as exc:
+                # Stream / device errors land here. Surface as TTSError
+                # so the podcast orchestrator emits ``line_failed``
+                # cleanly instead of crashing into the generic
+                # exception path.
+                raise TTSError(f"mlx model.generate failed: {exc}") from exc
 
             if not results:
                 logger.warning(
                     "[tts/omnivoice-mlx] generate produced no results"
                 )
                 return b""
-
-            # Each result is a small object with an ``.audio``
-            # attribute that's an mx.array of float32 samples at the
-            # model's native sample rate (24 kHz for Qwen3-TTS-12Hz).
-            # Concatenate across yields so multi-segment utterances
-            # come out as one WAV.
-            import numpy as np
-
-            audio_chunks: list[Any] = []
-            for r in results:
-                audio = getattr(r, "audio", None)
-                if audio is None:
-                    # Some builds return raw mx.array directly.
-                    audio = r
-                if hasattr(audio, "shape"):
-                    np_chunk = np.array(audio)
-                else:
-                    np_chunk = np.asarray(audio, dtype=np.float32)
-                # Squeeze leading batch / channel dim so chunks
-                # concat cleanly along the sample axis.
-                while np_chunk.ndim > 1 and np_chunk.shape[0] == 1:
-                    np_chunk = np_chunk[0]
-                if np_chunk.ndim > 1:
-                    # Multichannel → mono by mean.
-                    np_chunk = np_chunk.mean(axis=0)
-                audio_chunks.append(np_chunk.astype(np.float32))
 
             if not audio_chunks:
                 return b""
