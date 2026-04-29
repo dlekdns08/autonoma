@@ -609,7 +609,11 @@ function Dashboard() {
           <PushToTalkButton
             mode="stream"
             language="ko"
-            onInterrupt={interruptAgentVoice}
+            // ``onInterrupt`` removed: the barge-in path was cutting
+            // off legitimate TTS replies whenever the mic happened
+            // to be open (or always-on VAD false-tripped on the
+            // agent's own speaker output). Re-add ``onInterrupt={
+            // interruptAgentVoice}`` once AEC is verified.
           />
         </div>
         <ChatInput onSend={sendMessage} connected={connected} />
