@@ -95,6 +95,12 @@ interface Props {
    *  fetched lazily via ``clipCache``; while it loads the character
    *  keeps using its procedural pose. */
   mocapClipId?: string | null;
+  /** Override the auto-derived VRM file. By default the file is hashed
+   *  from ``agent.name`` so the same name always loads the same model;
+   *  callers (notably the podcast stage) need to pin a specific VRM
+   *  per participant regardless of name. Empty/undefined → fall back
+   *  to the hashed default. */
+  vrmFileOverride?: string;
 }
 
 // ── Mocap playback crossfade ─────────────────────────────────────────
@@ -1748,8 +1754,15 @@ export default function VRMCharacter({
   state,
   emote,
   mocapClipId,
+  vrmFileOverride,
 }: Props) {
-  const file = useMemo(() => vrmFileForAgent(agent.name), [agent.name]);
+  // ``vrmFileOverride`` wins when set so the podcast page can pin
+  // arbitrary VRMs per participant. Fall back to the name-hashed
+  // default for the swarm dashboard, which never sets the override.
+  const file = useMemo(
+    () => vrmFileOverride || vrmFileForAgent(agent.name),
+    [vrmFileOverride, agent.name],
+  );
   const url = `/vrm/${file}`;
   const [loadError, setLoadError] = useState<string | null>(null);
 
