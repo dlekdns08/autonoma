@@ -134,6 +134,49 @@ class VibeVoiceClient(BaseTTSClient):
             return "mps", torch.float16
         return "cpu", torch.float32
 
+    # ── transformers register patch (vibevoice import workaround) ──
+    @staticmethod
+    def _patch_transformers_register_idempotent() -> None:
+        """Make every ``AutoXxx.register`` classmethod swallow the
+        duplicate-class ``ValueError`` so vibevoice's import-side-
+        effect doesn't crash on the second registration pass.
+
+        Idempotent — re-applying the patch is a no-op.
+        """
+        try:
+            from transformers.models.auto import auto_factory  # type: ignore[import-not-found]
+        except ImportError:
+            return
+        base = getattr(auto_factory, "_BaseAutoModelClass", None)
+        if base is None:
+            return
+        if getattr(base.register, "_autonoma_idempotent", False):
+            return  # already patched
+        original = base.register
+
+        def idempotent_register(cls, config_class, model_class, exist_ok=False):
+            try:
+                # Try the original call. If it raises a duplicate-key
+                # ValueError we treat it as success (the registry
+                # already has a mapping equivalent enough for our
+                # downstream lookup).
+                return original.__func__(
+                    cls, config_class, model_class, exist_ok=exist_ok
+                )
+            except ValueError as exc:
+                msg = str(exc)
+                if "already used by a Transformers model" in msg:
+                    logger.debug(
+                        "[tts/vibevoice] swallowed duplicate AutoModel.register "
+                        "for %r (vibevoice bug)",
+                        config_class,
+                    )
+                    return None
+                raise
+
+        idempotent_register._autonoma_idempotent = True  # type: ignore[attr-defined]
+        base.register = classmethod(idempotent_register)  # type: ignore[assignment]
+
     # ── Model lifecycle ─────────────────────────────────────────────
     async def _ensure_model(self) -> Any:
         if self._model is not None:
@@ -176,6 +219,26 @@ class VibeVoiceClient(BaseTTSClient):
         # streamingtts extra exposes.
         ModelCls: Any = None
         ProcessorCls: Any = None
+
+        # vibevoice 1.0.0 has an import-side-effect bug: it calls
+        # ``AutoModel.register(config, model)`` for each of its
+        # tokenizer classes WITHOUT ``exist_ok=True``. On a fresh
+        # interpreter the first registration succeeds, but vibevoice's
+        # own modular submodules import several entry points that
+        # each re-register the same class — so the second pass throws
+        #
+        #   ValueError: '<class ...VibeVoiceAcousticTokenizerConfig>'
+        #     is already used by a Transformers model.
+        #
+        # We monkey-patch the BaseAutoModelClass.register classmethod
+        # to silently accept duplicate registrations BEFORE importing
+        # vibevoice. The patch is in-process only and reverts to the
+        # strict behaviour for any caller that explicitly passes
+        # ``exist_ok=False``. Upstream fix tracked at
+        # https://github.com/microsoft/VibeVoice (we apply this
+        # workaround so production isn't blocked on their merge).
+        self._patch_transformers_register_idempotent()
+
         try:
             import vibevoice  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -185,6 +248,10 @@ class VibeVoiceClient(BaseTTSClient):
                 "git+https://github.com/microsoft/VibeVoice.git@main'"
             )
             logger.error("[tts/vibevoice] %s: %s", self._load_error, exc)
+            return
+        except ValueError as exc:
+            self._load_error = f"vibevoice import failed: {exc}"
+            logger.error("[tts/vibevoice] %s", self._load_error)
             return
 
         for name in (
