@@ -2656,8 +2656,15 @@ async def download_zip(
 
 
 @app.get("/api/templates")
-async def list_templates() -> dict[str, Any]:
-    """Return all scaffold templates (name, description, file count)."""
+async def list_templates(
+    _user: User = Depends(require_active_user),
+) -> dict[str, Any]:
+    """Return all scaffold templates (name, description, file count).
+
+    Auth-gated so the template list isn't leaked to anonymous probes —
+    pairs with ``apply_template`` below which writes into a running
+    session and therefore *must* be authenticated.
+    """
     from autonoma.templates import SCAFFOLD_TEMPLATES
 
     return {
@@ -2677,11 +2684,18 @@ async def list_templates() -> dict[str, Any]:
 async def apply_template(
     template_id: str,
     payload: dict[str, Any],
+    user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     """Apply a scaffold template to a running session.
 
     Queues placeholder file tasks for Coder agents to fill in.
     ``payload`` must include ``session_id`` of the running session.
+
+    Authorisation: the caller must own the target session
+    (``session.owner_user_id == user.id``) — without this gate, any
+    authenticated user could inject placeholder files into an admin's
+    swarm, which Coder agents would then execute. Admins can target any
+    session (matches the pattern used by ``/api/workspace/export``).
     """
     from autonoma.templates import SCAFFOLD_TEMPLATES
 
@@ -2694,6 +2708,15 @@ async def apply_template(
 
     session_id = payload.get("session_id")
     session = _sessions.get(session_id) if isinstance(session_id, int) else None
+    # Ownership check — refuse cross-tenant template injection. We
+    # 404 (not 403) so a probing client can't enumerate which session
+    # ids exist by watching for the auth-vs-not-found split.
+    if session is not None and user.role != "admin":
+        if session.owner_user_id is not None and session.owner_user_id != user.id:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Session not found",
+            )
 
     created: list[str] = []
     if session is not None and session.project is not None:
