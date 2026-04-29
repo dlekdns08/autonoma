@@ -39,7 +39,6 @@ import hashlib
 import io
 import logging
 import os
-import tempfile
 import wave
 from pathlib import Path
 from typing import Any, AsyncIterator, Protocol
@@ -47,7 +46,7 @@ from typing import Any, AsyncIterator, Protocol
 import numpy as np
 
 from autonoma.config import settings
-from autonoma.tts_base import BaseTTSClient, TTSError
+from autonoma.tts_base import BaseTTSClient, TTSError, trim_ref_cache
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +217,14 @@ class OmniVoiceTTSClient(BaseTTSClient):
         # profile's ref audio gets re-uploaded.
         self._prompt_cache: dict[tuple[str, str], Any] = {}
         self._prompt_lock = asyncio.Lock()
-        self._cache_dir: Path = Path(tempfile.mkdtemp(prefix="autonoma_tts_ref_"))
+        # Stable cache dir under ``data_dir`` instead of ``mkdtemp`` —
+        # the latter created a fresh ``/var/folders/.../T/autonoma_tts_ref_<rand>/``
+        # on every client init and never cleaned it up, so launchd
+        # unload/load cycles accumulated dozens of empty dirs in
+        # ``$TMPDIR``. Re-using the same path lets writes overwrite in
+        # place via the deterministic ``<profile_id>.<ext>`` naming.
+        self._cache_dir: Path = Path(settings.data_dir) / "tts_ref_cache"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def _ensure_model(self) -> _OmniVoiceModel:
         if self._model is not None:
@@ -278,6 +284,9 @@ class OmniVoiceTTSClient(BaseTTSClient):
         out = self._cache_dir / f"{profile_id}{suffix}"
         out.write_bytes(ref_audio)
         self._ref_cache[profile_id] = out
+        # Cap on-disk cache size after every fresh write — see
+        # ``trim_ref_cache`` for the keep-most-recent policy.
+        trim_ref_cache(self._cache_dir)
         return out
 
     async def _get_voice_clone_prompt(
