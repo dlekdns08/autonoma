@@ -132,32 +132,14 @@ class TTSWorker:
         if self._task is not None and not self._task.done():
             return
         self._task = asyncio.create_task(self._run(), name="tts-worker")
-        # Register the bus listener AFTER the task is created so a
-        # cancel event arriving instantly (e.g. from a saved replay)
-        # has a worker to act on. Idempotent — only registers once
-        # per instance even across start/stop/start cycles.
-        # Listen for site-wide cancel events. The handler is bound
-        # to ``self`` so worker instances don't cross-cancel each
-        # other's queues — but bus.on() is global, so every active
-        # worker receives the event and clears its own backlog.
-        # This is intentional for the PoC: a barge-in from any
-        # tab/user effectively mutes the swarm.
-        if self._cancel_listener is None:
-            async def _on_cancel(reason: str = "interrupt", **_: Any) -> None:
-                self.cancel_all(reason=reason)
-
-            try:
-                bus.on("tts.cancel", _on_cancel)
-                # Only retain the reference *after* successful
-                # registration so ``stop()``'s ``bus.off`` path won't
-                # try to deregister a listener that never landed.
-                self._cancel_listener = _on_cancel
-            except Exception:
-                logger.warning(
-                    "[tts] failed to register tts.cancel listener; "
-                    "barge-in will not drain queue",
-                    exc_info=True,
-                )
+        # Bus listener DISABLED — registering a ``tts.cancel`` handler
+        # here meant any false-positive barge-in (or stale legacy
+        # client) would drain the queue mid-sentence. The
+        # ``cancel_all`` method below is still callable directly if a
+        # future operator wires it back in; we just don't subscribe
+        # to a global event that's hard to gate per-session.
+        # Re-enable along with the client-side onInterrupt + WS
+        # interrupt frame once AEC quality is validated.
 
     async def stop(self) -> None:
         self._stopped = True
