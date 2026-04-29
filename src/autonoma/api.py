@@ -1156,6 +1156,12 @@ async def _warmup_omnivoice() -> None:
         except ImportError:
             return
         await warmup_shared_client()
+    elif provider == "omnivoice-mlx":
+        try:
+            from autonoma.tts_omnivoice_mlx import warmup_shared_client
+        except ImportError:
+            return
+        await warmup_shared_client()
     elif provider == "vibevoice":
         try:
             from autonoma.tts_vibevoice import warmup_shared_client
@@ -1192,7 +1198,7 @@ async def lifespan(app: FastAPI):
     from autonoma.routers.live import register_autoclip_hooks
     register_autoclip_hooks()
     warmup_task: asyncio.Task[None] | None = None
-    if settings.tts_provider in ("omnivoice", "vibevoice"):
+    if settings.tts_provider in ("omnivoice", "omnivoice-mlx", "vibevoice"):
         warmup_task = asyncio.create_task(_warmup_omnivoice())
     asr_warmup_task: asyncio.Task[None] | None = None
     if getattr(settings, "voice_asr_provider", "cohere") != "none":
@@ -3547,7 +3553,11 @@ async def health(request: Request):
     # from "synthesis really failed". Cheap — no model load triggered.
     tts_info: dict[str, object] = {
         "provider": settings.tts_provider,
-        "ready": settings.tts_provider not in ("omnivoice", "vibevoice"),
+        "ready": settings.tts_provider not in (
+            "omnivoice",
+            "omnivoice-mlx",
+            "vibevoice",
+        ),
         "device": "",
         "dtype": "",
     }
@@ -3555,6 +3565,15 @@ async def health(request: Request):
         try:
             from autonoma.tts_omnivoice import shared_client_status
             status_snap = shared_client_status()
+            tts_info["ready"] = bool(status_snap["loaded"])
+            tts_info["device"] = status_snap["device"]
+            tts_info["dtype"] = status_snap["dtype"]
+        except ImportError:
+            tts_info["ready"] = False
+    elif settings.tts_provider == "omnivoice-mlx":
+        try:
+            from autonoma.tts_omnivoice_mlx import shared_client_status as mlx_status
+            status_snap = mlx_status()
             tts_info["ready"] = bool(status_snap["loaded"])
             tts_info["device"] = status_snap["device"]
             tts_info["dtype"] = status_snap["dtype"]
