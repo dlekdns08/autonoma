@@ -1,32 +1,42 @@
-"""OmniVoice TTS via MLX — Apple-Silicon-native inference path.
+"""TTS via MLX — Apple-Silicon-native inference path.
 
-Uses ``mlx-community/OmniVoice-bf16`` through the ``mlx_audio`` helper
-package, which is a pure-MLX rewrite of OmniVoice's PyTorch inference.
-Roughly 1.5–3× faster than the PyTorch+MPS path on M-series Macs and
-uses noticeably less memory (bf16 weights), at the cost of a separate
-operator-side install:
+Wraps any ``mlx_audio``-compatible TTS model behind the project's
+``BaseTTSClient`` contract. Currently defaults to
+``mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16`` because the
+OmniVoice-bf16 conversion in mlx-community is missing the
+HiggsAudioTokenizer required for voice cloning, while Qwen3-TTS
+ships its full inference path in the same checkpoint.
 
-    uv pip install --python .venv/bin/python mlx mlx-lm mlx-audio
+Roughly 1.5–3× faster than the PyTorch+MPS path on M-series Macs
+and uses noticeably less memory (bf16 weights), at the cost of a
+separate operator-side install (already wired via the
+``omnivoice-mlx`` extra in pyproject):
+
+    uv sync --extra tts --extra omnivoice-mlx
 
 Selected at runtime via ``AUTONOMA_TTS_PROVIDER=omnivoice-mlx``. The
-original ``omnivoice`` provider stays in place for fallback.
+PyTorch ``omnivoice`` provider stays in place for fallback.
 
-Inference contract (from the model card example):
+Inference contract (from the model-card example we follow):
 
     from mlx_audio.tts.utils import load_model
-    from mlx_audio.tts.generate import generate_audio
-    model = load_model("mlx-community/OmniVoice-bf16")
-    generate_audio(
-        model=model,
+    model = load_model("mlx-community/Qwen3-TTS-...-bf16")
+    results = list(model.generate(
         text="...",
         ref_audio="path_to_ref.wav",
-        file_prefix="out",
-    )
+        ref_text="레퍼런스 오디오의 전사 텍스트",
+    ))
+    audio = results[0].audio  # mx.array, 24 kHz mono float32
 
-``generate_audio`` writes a WAV (or several) to disk under
-``file_prefix``. We feed it a private temp directory, then read the
-resulting WAV bytes back so the rest of the pipeline (event bus,
-worker, browser playback) doesn't need to know it came from a file.
+We call ``model.generate`` directly (not the higher-level
+``generate_audio`` helper) so we get the raw mx.array back, convert
+to a 16-bit WAV in memory, and yield it as a single chunk to the
+worker — no temp files, no STT round-trip on every call.
+
+The class name is kept as ``OmniVoiceMlxClient`` for backwards
+compatibility with the factory's ``omnivoice-mlx`` provider key,
+even though the default model is now Qwen3-TTS. Changing the
+provider name would force every operator to re-edit ``.env``.
 """
 
 from __future__ import annotations
@@ -42,7 +52,30 @@ from autonoma.tts_base import BaseTTSClient, TTSError
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_ID = "mlx-community/OmniVoice-bf16"
+DEFAULT_MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+DEFAULT_SAMPLE_RATE = 24_000  # Qwen3-TTS-12Hz emits 24 kHz mono
+
+
+def _float32_to_wav(samples: Any, sample_rate: int) -> bytes:
+    """16-bit PCM WAV from a 1-D float32 array in [-1, 1].
+
+    Same encoder shape we use in ``tts_vibevoice`` — kept local to
+    this module so the MLX backend has no cross-backend imports.
+    """
+    import io
+    import wave
+
+    import numpy as np  # type: ignore[import-not-found]
+
+    clamped = np.clip(samples, -1.0, 1.0)
+    pcm16 = (clamped * 32767.0).astype(np.int16).tobytes()
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm16)
+    return buf.getvalue()
 
 _shared_client: "OmniVoiceMlxClient | None" = None
 
@@ -170,46 +203,29 @@ class OmniVoiceMlxClient(BaseTTSClient):
         ref_text: str = "",
         language: str = "ko",
     ) -> bytes:
-        """Bridge to ``mlx_audio.tts.generate.generate_audio``.
+        """Direct ``model.generate`` call — bypass ``generate_audio``.
 
-        Inspected signature (mlx-audio 0.4.3):
+        The ``mlx_audio.tts.generate.generate_audio`` helper handles
+        file IO + a built-in whisper STT step that we don't want
+        (we already have ref_text in the voice profile, and writing
+        to disk just to read it back wastes time). The model's own
+        ``generate`` method returns an mx.array generator we can
+        convert to WAV bytes in memory.
 
-            generate_audio(
-                text: str,
-                model: Module | str | None = None,
-                max_tokens: int = 1200,
-                voice: str = 'af_heart',
-                ref_audio: str | None = None,
-                ref_text: str | None = None,
-                stt_model: str | Module | None = 'mlx-community/whisper-...',
-                output_path: str | None = None,
-                file_prefix: str = 'audio',
-                audio_format: str = 'wav',
-                lang_code: str = 'en',
-                save: bool = False,        # ← critical: defaults to NOT writing files
-                ...
-            )
+        Reference call from the Qwen3-TTS model card:
 
-        Three quirks the docs didn't telegraph and we have to handle:
-
-        1. ``save=False`` is the default. Without ``save=True`` no file
-           is ever written, regardless of ``output_path`` /
-           ``file_prefix``. Our caller wants WAV bytes back, so we
-           have to flip it.
-        2. ``ref_text`` lets us bypass the built-in STT step. Voice
-           profiles already carry the transcript, so passing it makes
-           the call deterministic and skips the multi-second whisper
-           round trip.
-        3. ``lang_code`` defaults to English. We pass through the
-           caller's language so Korean / Japanese profiles get the
-           right tokenizer.
+            results = list(model.generate(
+                text="...",
+                ref_audio="path/to/ref.wav",
+                ref_text="레퍼런스 오디오의 전사 텍스트",
+            ))
+            audio = results[0].audio  # mx.array, 24 kHz mono float32
         """
-        from mlx_audio.tts.generate import generate_audio  # type: ignore[import-not-found]
+        import time
 
-        # Spill the reference audio to a temp file ``mlx_audio`` can
-        # open by path. Ref-audio guides voice cloning; if the caller
-        # didn't supply one (only the swarm's stub flow does that)
-        # we pass ``None`` and let the model use its default voice.
+        # Spill the reference audio to a temp file the model can open
+        # by path. Skipped when the caller has no profile attached —
+        # the model then uses its default voice.
         ref_path: str | None = None
         if ref_audio:
             suffix = ".wav"
@@ -225,62 +241,86 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 tf.write(ref_audio)
                 ref_path = tf.name
 
+        t0 = time.perf_counter()
         try:
-            with tempfile.TemporaryDirectory(prefix="autonoma_mlx_out_") as outdir:
-                output_path = os.path.join(outdir, "out.wav")
-                kwargs: dict[str, Any] = {
-                    "text": text,
-                    "model": self._model,
-                    "output_path": output_path,
-                    "file_prefix": "out",
-                    "audio_format": "wav",
-                    "lang_code": language or "en",
-                    # ``save=True`` is mandatory — without it
-                    # generate_audio runs inference, throws away the
-                    # tensor, and returns ``None`` with no file written.
-                    "save": True,
-                    # Quiet the per-call progress logging; we already
-                    # log start/end ourselves.
-                    "verbose": False,
-                }
-                if ref_path is not None:
-                    kwargs["ref_audio"] = ref_path
-                # ``ref_text`` makes the synth deterministic and skips
-                # the built-in whisper STT step. The processor accepts
-                # an empty string as "use STT instead" so we only set
-                # it when the caller actually has the transcript.
-                if ref_text:
-                    kwargs["ref_text"] = ref_text
-                generate_audio(**kwargs)
+            kwargs: dict[str, Any] = {"text": text}
+            if ref_path is not None:
+                kwargs["ref_audio"] = ref_path
+            if ref_text:
+                kwargs["ref_text"] = ref_text
 
-                # ``output_path`` is what we asked for, but mlx_audio
-                # also occasionally emits ``{file_prefix}_NNN.wav`` for
-                # chunked output. Prefer the explicit path, fall back
-                # to a glob.
-                if os.path.exists(output_path):
-                    with open(output_path, "rb") as f:
-                        wav_bytes = f.read()
-                else:
-                    wav_paths = sorted(
-                        os.path.join(outdir, n)
-                        for n in os.listdir(outdir)
-                        if n.lower().endswith(".wav")
-                    )
-                    if not wav_paths:
-                        logger.warning(
-                            "[tts/omnivoice-mlx] generate_audio produced no "
-                            "WAV files under %s",
-                            outdir,
-                        )
-                        return b""
-                    with open(wav_paths[0], "rb") as f:
-                        wav_bytes = f.read()
-                logger.info(
-                    "[tts/omnivoice-mlx] synth ok text_len=%d bytes=%d",
-                    len(text),
-                    len(wav_bytes),
+            # ``model.generate`` is a generator; collect everything
+            # into a list so we get the full utterance up front. For
+            # short text (single line agent / podcast turn) this is
+            # one or two yields and a few-hundred-ms wall clock.
+            try:
+                results = list(self._model.generate(**kwargs))
+            except ValueError as exc:
+                raise TTSError(f"mlx model.generate failed: {exc}") from exc
+            except TypeError as exc:
+                # The Qwen3-TTS family takes the kwargs above; older
+                # OmniVoice-style models didn't. If we hit a kwarg
+                # mismatch fall through to a positional + minimal
+                # call so the caller still gets *something* back.
+                logger.warning(
+                    "[tts/omnivoice-mlx] generate kwargs rejected (%s); "
+                    "retrying with text-only call", exc,
                 )
-                return wav_bytes
+                try:
+                    results = list(self._model.generate(text))
+                except Exception as exc2:
+                    raise TTSError(
+                        f"mlx model.generate failed (retry): {exc2}"
+                    ) from exc2
+
+            if not results:
+                logger.warning(
+                    "[tts/omnivoice-mlx] generate produced no results"
+                )
+                return b""
+
+            # Each result is a small object with an ``.audio``
+            # attribute that's an mx.array of float32 samples at the
+            # model's native sample rate (24 kHz for Qwen3-TTS-12Hz).
+            # Concatenate across yields so multi-segment utterances
+            # come out as one WAV.
+            import numpy as np
+
+            audio_chunks: list[Any] = []
+            for r in results:
+                audio = getattr(r, "audio", None)
+                if audio is None:
+                    # Some builds return raw mx.array directly.
+                    audio = r
+                if hasattr(audio, "shape"):
+                    np_chunk = np.array(audio)
+                else:
+                    np_chunk = np.asarray(audio, dtype=np.float32)
+                # Squeeze leading batch / channel dim so chunks
+                # concat cleanly along the sample axis.
+                while np_chunk.ndim > 1 and np_chunk.shape[0] == 1:
+                    np_chunk = np_chunk[0]
+                if np_chunk.ndim > 1:
+                    # Multichannel → mono by mean.
+                    np_chunk = np_chunk.mean(axis=0)
+                audio_chunks.append(np_chunk.astype(np.float32))
+
+            if not audio_chunks:
+                return b""
+            np_audio = np.concatenate(audio_chunks, axis=0)
+            sr = getattr(settings, "vibevoice_sample_rate", 0) or DEFAULT_SAMPLE_RATE
+            wav_bytes = _float32_to_wav(np_audio, sr)
+
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            logger.info(
+                "[tts/omnivoice-mlx] synth ok text_len=%d samples=%d bytes=%d sr=%d ms=%d",
+                len(text),
+                np_audio.shape[0],
+                len(wav_bytes),
+                sr,
+                elapsed_ms,
+            )
+            return wav_bytes
         finally:
             if ref_path:
                 try:
