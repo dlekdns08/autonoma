@@ -619,3 +619,61 @@ voice_bindings = Table(
         server_default=func.current_timestamp(),
     ),
 )
+
+
+# ── voice_transcripts ─────────────────────────────────────────────────────
+# Append-only log of every successful ASR transcription. Distinct from
+# voice_bindings/voice_profiles (which manage TTS assets) — this is the
+# user→agent direction of the voice round-trip.
+#
+# Why log? Three concrete uses:
+#   1. Audit / replay — operators can see what utterances drove which
+#      swarm decisions when reviewing a stream after the fact.
+#   2. Debugging — when a transcript looks garbled the operator wants to
+#      compare partial→final convergence and the ASR error rate.
+#   3. Future ML — re-transcribing with a better model later requires
+#      we kept the original text + timing.
+#
+# We *don't* persist the raw audio bytes by default — those are large
+# and the user already consented to a transient transcription, not to
+# audio retention. ``audio_path`` is reserved for a future opt-in.
+voice_transcripts = Table(
+    "voice_transcripts",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column(
+        "user_id",
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    # session id this transcript came from. ``None`` for /voice studio
+    # round-trips that aren't tied to a swarm session. Indexed so the
+    # dashboard can show "what did people say in run X".
+    Column("session_id", Integer, nullable=True, index=True),
+    # ``stage`` differentiates batch (POST /api/voice/command) from the
+    # final pass of streaming (POST-equivalent close on /api/voice/stream).
+    # Partials are NOT logged — they're throwaway intermediates.
+    Column("stage", String(16), nullable=False),
+    Column("text", String(4096), nullable=False),
+    # detected/hinted language (ISO 639-1 or empty for auto-detect).
+    Column("language", String(8), nullable=False, server_default=""),
+    # Transcription wall-clock cost in milliseconds. Useful for the
+    # /api/voice/metrics dashboard query.
+    Column("duration_ms", Integer, nullable=False, server_default="0"),
+    # ``model`` snapshot so a future model rollover doesn't make old
+    # rows ambiguous about which weights produced them.
+    Column("model", String(128), nullable=False, server_default=""),
+    # When the request was *routed* to an agent, this captures the
+    # action — empty for studio testing where ``route=false`` was set.
+    Column("route_action", String(32), nullable=False, server_default=""),
+    Column("route_target", String(64), nullable=True),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        index=True,
+    ),
+)
