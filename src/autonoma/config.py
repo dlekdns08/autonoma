@@ -193,6 +193,18 @@ class Settings(BaseSettings):
     slack_signing_secret: str = ""     # Slack Events API verification
     discord_webhook_secret: str = ""   # shared secret for inbound Discord
 
+    # ── Memory RAG (feature #5) ──
+    # When True and ``sentence-transformers`` is installed, AgentMemory
+    # exposes ``recall_semantic`` for embedding-based retrieval; the
+    # diary recall in ``agents/base.py`` opts in via this flag. When
+    # False or the package is missing we silently fall back to keyword
+    # substring search (the historical behaviour).
+    memory_rag_enabled: bool = True
+    # Override the multilingual default if a deployment cares about a
+    # specific language or wants a smaller/larger model. Empty → uses
+    # the default declared in ``autonoma.memory.embeddings``.
+    memory_rag_model: str = ""
+
     # ── Live chat moderation ──
     # Comma-separated list of substrings (case-insensitive). Any
     # incoming chat message whose lowercased text contains one of these
