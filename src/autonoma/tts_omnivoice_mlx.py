@@ -48,12 +48,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import tempfile
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from autonoma.config import settings
-from autonoma.tts_base import BaseTTSClient, TTSError
+from autonoma.tts_base import BaseTTSClient, TTSError, trim_ref_cache
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +198,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
             wav_bytes = await asyncio.to_thread(
                 self._run_inference,
                 text=text,
+                voice=voice,
                 ref_audio=ref_audio,
                 ref_audio_mime=ref_audio_mime,
                 ref_text=ref_text,
@@ -215,6 +215,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
         self,
         *,
         text: str,
+        voice: str,
         ref_audio: bytes | None,
         ref_audio_mime: str,
         ref_text: str = "",
@@ -240,9 +241,15 @@ class OmniVoiceMlxClient(BaseTTSClient):
         """
         import time
 
-        # Spill the reference audio to a temp file the model can open
-        # by path. Skipped when the caller has no profile attached —
-        # the model then uses its default voice.
+        # Spill the reference audio onto a STABLE per-profile path the
+        # model can open by name. Previously we used
+        # ``tempfile.NamedTemporaryFile`` per call — but ``$TMPDIR`` on
+        # macOS isn't auto-cleaned, and any path that didn't reach the
+        # finally-unlink (e.g. cancellation, OS crash) leaked into
+        # ``/var/folders/.../T/``. The stable path overwrites in place,
+        # so re-uploads of the same profile replace the file and any
+        # given inference run leaves at most one file per profile_id
+        # behind on disk.
         ref_path: str | None = None
         if ref_audio:
             suffix = ".wav"
@@ -252,11 +259,18 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 suffix = ".mp3"
             elif "webm" in ref_audio_mime:
                 suffix = ".webm"
-            with tempfile.NamedTemporaryFile(
-                prefix="autonoma_mlx_ref_", suffix=suffix, delete=False
-            ) as tf:
-                tf.write(ref_audio)
-                ref_path = tf.name
+            cache_dir = Path(settings.data_dir) / "tts_ref_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            # Fall back to a generic name when the caller didn't pass a
+            # profile id — keeps the stable-path invariant intact.
+            stem = voice or "mlx_default"
+            target = cache_dir / f"{stem}{suffix}"
+            target.write_bytes(ref_audio)
+            ref_path = str(target)
+            # Keep at most ~10 most-recent ref files. The trim runs
+            # AFTER write so the file we're about to hand to MLX is
+            # always the freshest on disk (top of the keep list).
+            trim_ref_cache(cache_dir)
 
         t0 = time.perf_counter()
         try:
@@ -368,8 +382,6 @@ class OmniVoiceMlxClient(BaseTTSClient):
             )
             return wav_bytes
         finally:
-            if ref_path:
-                try:
-                    os.unlink(ref_path)
-                except OSError:
-                    pass
+            # No unlink — the stable cache dir ``{data_dir}/tts_ref_cache``
+            # survives across calls and re-uploads overwrite in place.
+            pass
