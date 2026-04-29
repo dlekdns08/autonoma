@@ -303,14 +303,33 @@ _reaction_buckets: dict[str, list[float]] = {}
 
 
 def _check_reaction_rate(user_id: str) -> bool:
-    """Sliding-window rate check; True means allowed."""
+    """Sliding-window rate check; True means allowed.
+
+    Also opportunistically prunes empty buckets from other users so the
+    dict doesn't grow unbounded across thousands of viewers over a long
+    deploy. We sweep on every Nth call rather than running a separate
+    timer task — keeps the module dependency-free at the cost of a
+    handful of extra dict operations per N calls.
+    """
     import time as _time
 
     now = _time.time()
-    bucket = _reaction_buckets.setdefault(user_id, [])
     cutoff = now - REACTION_RATE_WINDOW_S
-    # Drop expired entries in place rather than rebuilding so steady-
-    # state cost is O(1).
+
+    # Periodic sweep: drop any user whose entire bucket has expired.
+    # ``len(...) % 100 == 0`` triggers ~once per 100 reactions across
+    # all users, keeping the amortised cost negligible.
+    if len(_reaction_buckets) % 100 == 0 and _reaction_buckets:
+        stale = [
+            uid for uid, b in _reaction_buckets.items()
+            if not b or b[-1] < cutoff
+        ]
+        for uid in stale:
+            _reaction_buckets.pop(uid, None)
+
+    bucket = _reaction_buckets.setdefault(user_id, [])
+    # Drop this user's expired entries in place rather than rebuilding
+    # so steady-state cost is O(1).
     while bucket and bucket[0] < cutoff:
         bucket.pop(0)
     if len(bucket) >= REACTION_RATE_LIMIT:
