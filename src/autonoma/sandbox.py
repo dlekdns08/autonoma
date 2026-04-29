@@ -281,6 +281,12 @@ class CodeSandbox:
                 language=language.value, error="interpreter_missing",
             )
 
+        # ``mkdtemp`` on POSIX creates the directory with mode 0o700
+        # atomically (per the Python docs and CPython implementation),
+        # so there is no TOCTOU window where another local user could
+        # observe or hardlink before the chmod below. The explicit
+        # chmod is kept as a defence-in-depth no-op for platforms whose
+        # mkdtemp implementation might evolve.
         workdir = Path(tempfile.mkdtemp(prefix=f"autonoma-sbx-{uuid.uuid4().hex[:6]}-"))
         try:
             try:
