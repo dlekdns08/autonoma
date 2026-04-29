@@ -22,14 +22,57 @@ Security:
 
 from __future__ import annotations
 
+import atexit
 import ipaddress
 import logging
 import re
 import socket
+import threading
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# Shared httpx client. Each fetch used to construct + tear down its own
+# Client, which meant agents calling ``fetch_url`` in a tight sequence
+# burned through TCP sockets and forced a fresh TLS handshake on every
+# call. ``httpx.Client`` is thread-safe and reuses keep-alive
+# connections in its pool, so a single shared instance is faster and
+# kinder to FD limits under bursts.
+_shared_client: Any = None  # httpx.Client when initialised
+_client_lock = threading.Lock()
+
+
+def _get_shared_client() -> Any:
+    """Lazy-initialise the shared httpx Client.
+
+    Lazy because httpx is imported lazily inside ``fetch_url`` to keep
+    test boots fast; calling ``import httpx`` here at module top would
+    move the cost up. Synchronisation via double-checked locking so
+    only one thread pays the construction cost.
+    """
+    global _shared_client
+    if _shared_client is not None:
+        return _shared_client
+    with _client_lock:
+        if _shared_client is not None:
+            return _shared_client
+        import httpx  # local import to keep boot lean
+
+        _shared_client = httpx.Client(
+            follow_redirects=True,
+            max_redirects=3,
+            headers={
+                "User-Agent": "autonoma-agent/1.0 (+https://github.com/letskoala/autonoma)",
+                "Accept": "text/html,text/plain,application/json;q=0.9,*/*;q=0.5",
+            },
+        )
+        # Best-effort cleanup — if the process exits cleanly we close
+        # the pool so connections are TLS-shutdown gracefully. atexit
+        # is fine here because httpx.Client.close() is idempotent.
+        atexit.register(_shared_client.close)
+    return _shared_client
 
 # Tight ceilings — agents only need a paragraph or two to inform a
 # follow-up decision. Anything bigger is almost always wasted tokens.
@@ -136,16 +179,8 @@ def fetch_url(
             write=timeout_s,
             pool=timeout_s,
         )
-        with httpx.Client(
-            timeout=timeouts,
-            follow_redirects=True,
-            max_redirects=3,
-            headers={
-                "User-Agent": "autonoma-agent/1.0 (+https://github.com/letskoala/autonoma)",
-                "Accept": "text/html,text/plain,application/json;q=0.9,*/*;q=0.5",
-            },
-        ) as client:
-            resp = client.get(url)
+        client = _get_shared_client()
+        resp = client.get(url, timeout=timeouts)
     except httpx.TimeoutException:
         return FetchResult(ok=False, url=url, reason="timeout")
     except httpx.HTTPError as exc:
