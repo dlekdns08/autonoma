@@ -1427,6 +1427,13 @@ export function useSwarm() {
       if (!current.has(name)) voiceRef.current.cleanupAgent(name);
     }
     knownAgentNamesRef.current = current;
+    // ``voiceRef`` is intentionally omitted from deps: it's a stable
+    // ref whose ``.current`` we read at call time, so listing it
+    // would either force a re-run on every voice-object identity
+    // change (defeating the ref pattern) or be a tautology if React
+    // ever optimises ref deps. ESLint rule disabled inline so the
+    // intent doesn't get auto-"fixed" by a future PR.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.agents]);
 
   // Drop cookies ~1.2s after they open, so Stage has time to play the poof.
