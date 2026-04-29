@@ -2292,7 +2292,19 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             # (?room=ABCXYZ) or shows it for read-aloud copy.
             elif cmd == "join_room":
                 code = (msg.get("code") or "").strip().upper()
-                if not code:
+                # Per-WS throttle: refuse further attempts once the
+                # caller has burned through ``_JOIN_ROOM_MAX_ATTEMPTS``
+                # failures inside the rolling window. Mirrors the admin
+                # auth guard above. Reset whenever the window expires.
+                _now = time.time()
+                if (
+                    session.failed_join_attempts >= _JOIN_ROOM_MAX_ATTEMPTS
+                    and (_now - session.last_failed_join_at) < _JOIN_ROOM_WINDOW_SECONDS
+                ):
+                    await manager.send_to_ws(ws, "room.join_failed", {
+                        "message": "Too many join attempts. Wait a moment and try again.",
+                    })
+                elif not code:
                     await manager.send_to_ws(ws, "room.join_failed", {
                         "message": "Room code required.",
                     })
@@ -2302,6 +2314,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         _rooms.get(target_room_id) if target_room_id else None
                     )
                     if target_room is None:
+                        # Bump the failure counter so brute-forcers hit
+                        # the throttle quickly. ``last_failed_join_at``
+                        # establishes the window's right edge.
+                        session.failed_join_attempts += 1
+                        session.last_failed_join_at = _now
                         await manager.send_to_ws(ws, "room.join_failed", {
                             "message": "Room not found or already ended.",
                         })
@@ -2310,6 +2327,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             "message": "You're already the host of this room.",
                         })
                     else:
+                        # Successful join — reset the counter so a user
+                        # who joins a room legitimately isn't penalised
+                        # for typos earlier in the session.
+                        session.failed_join_attempts = 0
+                        session.last_failed_join_at = 0.0
                         # Fetch the snapshot BEFORE joining the room so the
                         # client receives a consistent state baseline before
                         # any live events from the room can reach it.
