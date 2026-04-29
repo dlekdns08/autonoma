@@ -423,7 +423,6 @@ async def voice_transcribe(
 
     lang = (language or _settings.voice_asr_default_language or "").strip()
     provider = get_asr_provider()
-    from autonoma.voice import metrics as _asr_metrics
 
     try:
         # Heavy CPU/GPU work — push to a worker thread so the event loop
@@ -434,30 +433,33 @@ async def voice_transcribe(
             lambda: provider.transcribe(raw, language=lang)
         )
     except RuntimeError as exc:
-        # Most likely the ASR extras aren't installed.
-        logger.error(f"[voice] transcribe failed: {exc}")
+        # Most likely the ASR extras aren't installed. Log internally
+        # but don't echo the exception text to the client — a stack
+        # fragment in the response body is information leakage.
+        logger.exception("[voice] transcribe failed (asr_unavailable)")
         _asr_metrics.record_transcribe(stage="batch", ok=False, duration_ms=0, error=str(exc))
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "asr_unavailable",
-                "message": str(exc),
+                "message": "음성 인식 서비스를 사용할 수 없습니다.",
             },
         ) from exc
     except Exception as exc:
-        logger.exception(f"[voice] transcribe crashed: {exc}")
+        logger.exception("[voice] transcribe crashed")
         _asr_metrics.record_transcribe(stage="batch", ok=False, duration_ms=0, error=str(exc))
         raise HTTPException(
             status_code=500,
-            detail={"code": "asr_error", "message": str(exc)},
+            detail={
+                "code": "asr_error",
+                "message": "전사 처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
+            },
         ) from exc
 
     _asr_metrics.record_transcribe(stage="batch", ok=True, duration_ms=result.duration_ms)
 
     # Audit log — best-effort, swallows DB errors so a transient outage
     # doesn't break a transcribe response.
-    from autonoma.voice import transcripts_store as _ts
-
     await _ts.record(
         user_id=str(user.id),
         text=result.text,
@@ -535,10 +537,30 @@ async def voice_command(
 # Browser timeslice is 500ms so even chatty captures land well below
 # this. The cap is anti-OOM, not a feature limit.
 MAX_STREAM_AUDIO_BYTES = 16 * 1024 * 1024
+# Per-frame size cap. A normal client sends ~8 KB / 500 ms; anything
+# above this is either a misconfigured client or a probe trying to
+# OOM the worker by jamming a single huge binary frame in. We refuse
+# at frame ingest, before the buffer-extend allocation.
+MAX_STREAM_FRAME_BYTES = 1 * 1024 * 1024
 # How often the partial transcribe loop fires. Cohere on MPS takes
 # 0.5–1.0s per pass over a few seconds of audio, so 1.5s gives the
 # previous pass time to finish before the next tick.
 PARTIAL_INTERVAL_S = 1.5
+# Minimum number of NEW bytes since the last partial pass before we'll
+# fire another one. Prevents the quadratic cost where a 30 s utterance
+# would otherwise re-transcribe its growing buffer 20+ times. With
+# 8 KB ≈ 0.5 s of Opus, partials only fire when there's meaningfully
+# new audio — sustained silence or short pauses just reuse the prior
+# partial text.
+PARTIAL_MIN_DELTA_BYTES = 8 * 1024
+# Cap on the buffer size we'll re-transcribe for partials. Beyond this,
+# we stop emitting partials (the user keeps seeing the last one) and
+# wait for the final pass on stop. WebM is not sliceable mid-stream
+# without re-muxing — the header lives at byte 0 and clusters depend
+# on prior data — so we can't simply transcribe the tail. ~384 KB ≈
+# 24 s of typical Opus, which exceeds nearly every push-to-talk; long
+# captures are uncommon and sacrificing partials for them is fine.
+MAX_PARTIAL_BUFFER_BYTES = 384 * 1024
 # Hard cap on WS lifetime — push-to-talk should be seconds, not minutes.
 MAX_STREAM_DURATION_S = 120.0
 
@@ -576,8 +598,7 @@ async def voice_stream(ws: WebSocket) -> None:
         return
 
     # ── ASR provider readiness ────────────────────────────────────
-    from autonoma.config import settings as _settings
-    from autonoma.voice.asr import get_asr_provider
+    _settings = _voice_settings
 
     if getattr(_settings, "voice_asr_provider", "cohere") == "none":
         try:
@@ -626,25 +647,40 @@ async def voice_stream(ws: WebSocket) -> None:
     buffer = bytearray()
     transcribe_busy = False
     last_partial_text = ""
+    last_partial_at_bytes = 0  # buffer length the last time we tried a partial
     closed = False
+    import anyio  # local module-level import alternative would force a hard dep at boot
 
     async def _transcribe_snapshot(snapshot: bytes) -> Any:
         # Cohere is sync + thread-unsafe internally; the provider's own
         # lock serialises, so a background ``run_sync`` keeps the event
         # loop responsive without us reaching into provider internals.
-        import anyio
-
         return await anyio.to_thread.run_sync(
             lambda: provider.transcribe(snapshot, language=language)
         )
 
-    from autonoma.voice import metrics as _asr_metrics
-
     async def _maybe_partial() -> None:
-        nonlocal transcribe_busy, last_partial_text, closed
+        """Fire a partial transcribe when meaningful new audio has accumulated.
+
+        Skip conditions (no transcribe call):
+          1. socket closed / no buffer / a transcribe is already in flight
+          2. fewer than ``PARTIAL_MIN_DELTA_BYTES`` new bytes since the
+             last attempt — avoids burning CPU on a buffer that hasn't
+             grown (silence / short pause)
+          3. buffer larger than ``MAX_PARTIAL_BUFFER_BYTES`` — a long
+             capture would otherwise spend N×O(N) CPU on partials; we
+             stop emitting them and let ``final`` cover the closing
+             pass. The caller's UI keeps showing the last partial.
+        """
+        nonlocal transcribe_busy, last_partial_text, last_partial_at_bytes, closed
         if closed or transcribe_busy or not buffer:
             return
+        if len(buffer) - last_partial_at_bytes < PARTIAL_MIN_DELTA_BYTES:
+            return
+        if len(buffer) > MAX_PARTIAL_BUFFER_BYTES:
+            return
         transcribe_busy = True
+        last_partial_at_bytes = len(buffer)
         snapshot = bytes(buffer)
         try:
             result = await _transcribe_snapshot(snapshot)
@@ -656,7 +692,7 @@ async def voice_stream(ws: WebSocket) -> None:
                 last_partial_text = text
                 await ws.send_json({"type": "partial", "text": text})
         except Exception as exc:
-            logger.warning(f"[voice/stream] partial transcribe failed: {exc}")
+            logger.warning("[voice/stream] partial transcribe failed: %s", exc)
             _asr_metrics.record_transcribe(
                 stage="partial", ok=False, duration_ms=0, error=str(exc)
             )
@@ -705,6 +741,17 @@ async def voice_stream(ws: WebSocket) -> None:
             payload_bytes = msg.get("bytes")
             payload_text = msg.get("text")
             if payload_bytes:
+                # Reject pathologically large single frames before the
+                # buffer-extend allocates. Normal client (MediaRecorder
+                # @500 ms) sends ~8 KB/frame; anything beyond
+                # ``MAX_STREAM_FRAME_BYTES`` is hostile or buggy.
+                if len(payload_bytes) > MAX_STREAM_FRAME_BYTES:
+                    error_payload = {
+                        "type": "error",
+                        "code": "frame_too_large",
+                        "message": "단일 프레임 크기 한도를 넘었습니다.",
+                    }
+                    break
                 if len(buffer) + len(payload_bytes) > MAX_STREAM_AUDIO_BYTES:
                     error_payload = {
                         "type": "error",
@@ -778,13 +825,19 @@ async def voice_stream(ws: WebSocket) -> None:
             stage="final", ok=True, duration_ms=final_result.duration_ms
         )
     except Exception as exc:
-        logger.exception(f"[voice/stream] final transcribe failed: {exc}")
+        # Log internally with traceback; respond with a generic message
+        # so we don't echo internal exception text out to the WS client.
+        logger.exception("[voice/stream] final transcribe failed")
         _asr_metrics.record_transcribe(
             stage="final", ok=False, duration_ms=0, error=str(exc)
         )
         try:
             await ws.send_json(
-                {"type": "error", "code": "asr_error", "message": str(exc)}
+                {
+                    "type": "error",
+                    "code": "asr_error",
+                    "message": "전사 처리 중 오류가 발생했습니다.",
+                }
             )
         finally:
             await ws.close()
@@ -795,6 +848,9 @@ async def voice_stream(ws: WebSocket) -> None:
         "detail": "empty transcript",
     }
     if final_text and route_enabled:
+        # Imported lazily to avoid an import cycle: external_input
+        # registers its own bus listeners at module load that touch the
+        # voice router, so we defer until the very first stream final.
         from autonoma.external_input import ExternalMessage, router as ext_router
 
         ext_msg = ExternalMessage(
@@ -861,16 +917,12 @@ async def voice_metrics(
     user account, but unauthenticated scraping isn't useful and gives
     away that the model is loaded.
     """
-    from autonoma.voice import metrics as _asr_metrics
-
     snap = _asr_metrics.snapshot()
     # Operator hint surfaced inline so the dashboard can show a banner
     # when the provider is disabled (otherwise an empty metrics page is
     # confusing).
-    from autonoma.config import settings as _settings
-
-    snap["provider"] = getattr(_settings, "voice_asr_provider", "cohere")
-    snap["model"] = getattr(_settings, "voice_asr_model", "")
+    snap["provider"] = getattr(_voice_settings, "voice_asr_provider", "cohere")
+    snap["model"] = getattr(_voice_settings, "voice_asr_model", "")
     return snap
 
 
@@ -888,8 +940,6 @@ async def list_voice_transcripts(
     Non-admins are scoped to their own rows. ``session_id`` further
     narrows to a specific swarm run when set.
     """
-    from autonoma.voice import transcripts_store as _ts
-
     rows = await _ts.list_recent(
         user_id=str(user.id),
         session_id=session_id,
