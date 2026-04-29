@@ -93,8 +93,10 @@ class Settings(BaseSettings):
 
     # ── VibeVoice-specific knobs ──
     # Override the model id when you want a different size or fork.
-    # Empty → falls back to ``microsoft/VibeVoice-1.5B`` declared in
-    # ``autonoma.tts_vibevoice``.
+    # Empty → falls back to ``microsoft/VibeVoice-Realtime-0.5B``
+    # declared in ``autonoma.tts_vibevoice``. Note: the offline 1.5B
+    # variant is NOT a drop-in replacement — see the long comment in
+    # tts_vibevoice for why; pick a Realtime/streaming fork instead.
     vibevoice_model_id: str = ""
     # Output sample rate VibeVoice produces. The 1.5B model emits
     # 24 kHz mono; if you swap to a variant with a different rate,
