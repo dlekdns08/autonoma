@@ -67,27 +67,14 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # Sync deps (idempotent, fast when the lock is unchanged).  ``--extra
-# tts`` pulls MPS-capable torch + OmniVoice on arm64 Macs.  We do NOT
-# pass ``--frozen`` so a fresh checkout on a new machine can resolve
-# platform-specific wheels that weren't in the original lock entry.
-uv sync --no-dev --extra tts
-
-# OmniVoice-MLX ships ``mlx-audio`` from PyPI but we deliberately keep
-# it out of pyproject's optional-dependencies because the mlx-* wheels
-# are macOS arm64 only — including them in the lockfile breaks any
-# Linux CI / container build that runs ``uv sync``. Restore here only
-# when the operator opted into ``omnivoice-mlx`` and the venv is
-# missing the package. First boot pays a few seconds of git/PyPI cost,
-# every subsequent boot is a no-op import check. Fail open so a
-# transient install failure doesn't take the whole API down (the TTS
-# factory falls back to StubTTSClient).
-if [ "${AUTONOMA_TTS_PROVIDER:-}" = "omnivoice-mlx" ]; then
-  if ! .venv/bin/python -c "import mlx_audio" 2>/dev/null; then
-    echo "[run_api_native] mlx-audio missing — installing from PyPI…"
-    uv pip install --python .venv/bin/python --quiet mlx-audio || \
-      echo "[run_api_native] WARN: mlx-audio install failed; TTS will fall back" >&2
-  fi
-fi
+# tts`` pulls MPS-capable torch + OmniVoice on arm64 Macs.
+# ``--extra omnivoice-mlx`` adds the MLX inference path; the mlx-*
+# wheels carry platform markers (macOS arm64 only) so this is a
+# no-op on Linux / x86_64.
+# We do NOT pass ``--frozen`` so a fresh checkout on a new machine
+# can resolve platform-specific wheels that weren't in the original
+# lock entry.
+uv sync --no-dev --extra tts --extra omnivoice-mlx
 
 # VibeVoice ships from a git repo that we deliberately keep out of
 # pyproject's optional-dependencies (uv's lock resolver can't keep

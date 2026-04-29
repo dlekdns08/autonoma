@@ -46,6 +46,16 @@ tts = [
     "librosa>=0.10",
 ]
 
+# OmniVoice via MLX (Apple-Silicon-native inference). The mlx-* wheel
+# matrix only ships macOS arm64 builds, so every dependency carries a
+# platform marker — running ``uv sync --extra omnivoice-mlx`` on Linux
+# / x86_64 resolves to an empty set rather than failing. Enable with:
+#     uv sync --extra tts --extra omnivoice-mlx
+# At runtime select via ``AUTONOMA_TTS_PROVIDER=omnivoice-mlx``.
+omnivoice-mlx = [
+    "mlx-audio>=0.4.3 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
 # Memory RAG (feature #5) — optional embedding backend for AgentMemory.
 # Without this extra ``recall_semantic`` silently falls back to keyword
 # substring search (the historical behaviour). Enable with:

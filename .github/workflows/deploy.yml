@@ -135,12 +135,16 @@ jobs:
           export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
           # Build prod's own .venv so bin/*/python shebangs are absolute
           # paths into $HOME/autonoma-prod/.venv (survives future CI
-          # checkouts that would otherwise strip .venv files). --extra
-          # tts pulls OmniVoice + MPS-capable arm64 torch. Warm uv
-          # cache at $HOME/.cache/uv/ makes this 10-30s on repeat
-          # deploys; cold first-install is a few minutes.
+          # checkouts that would otherwise strip .venv files).
+          # ``--extra tts`` pulls OmniVoice + MPS-capable arm64 torch.
+          # ``--extra omnivoice-mlx`` adds the MLX inference path; the
+          # mlx-* wheels carry platform markers (macOS arm64 only) so
+          # this is a no-op when the runner ever moves off Apple
+          # Silicon. Warm uv cache at $HOME/.cache/uv/ makes this
+          # 10-30s on repeat deploys; cold first-install is a few
+          # minutes.
           cd "$HOME/autonoma-prod"
-          uv sync --no-dev --extra tts
+          uv sync --no-dev --extra tts --extra omnivoice-mlx
 
       - name: Install/refresh launchd agent for the API
         run: |
