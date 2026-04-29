@@ -46,6 +46,15 @@ tts = [
     "librosa>=0.10",
 ]
 
+# Memory RAG (feature #5) — optional embedding backend for AgentMemory.
+# Without this extra ``recall_semantic`` silently falls back to keyword
+# substring search (the historical behaviour). Enable with:
+#     uv sync --extra memory-rag
+# Reuses the torch already pulled by ``tts`` if both extras are on.
+memory-rag = [
+    "sentence-transformers>=2.7",
+]
+
 [project.scripts]
 autonoma = "autonoma.cli:cli"
 
