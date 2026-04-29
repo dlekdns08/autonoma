@@ -1411,6 +1411,10 @@ export function useSwarm() {
     emotes,
     getMouthAmplitude: voice.getMouthAmplitude,
     speakingAgents: voice.speakingAgents,
+    // Barge-in entry point for the dashboard's push-to-talk button —
+    // pauses every speaking agent on press without tearing down the
+    // analyser graph.
+    interruptAgentVoice: voice.interruptAll,
     room,
     chat,
     sendChat,
