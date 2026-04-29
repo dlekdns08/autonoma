@@ -89,7 +89,13 @@ class Settings(BaseSettings):
     #   OmniVoice — drop-in replacement for the /podcast feature.
     # - ``none``: stub that emits audio-start/end events without bytes —
     #   keeps the UI flowing while the model isn't available.
-    tts_provider: Literal["omnivoice", "vibevoice", "none"] = "none"
+    tts_provider: Literal["omnivoice", "omnivoice-mlx", "vibevoice", "none"] = "none"
+
+    # ── OmniVoice-MLX-specific knobs ──
+    # Override the model id for the MLX variant. Empty → falls back
+    # to ``mlx-community/OmniVoice-bf16`` declared in
+    # ``autonoma.tts_omnivoice_mlx``.
+    omnivoice_mlx_model_id: str = ""
 
     # ── VibeVoice-specific knobs ──
     # Override the model id when you want a different size or fork.
