@@ -126,6 +126,11 @@ class SessionState:
     # single WS.
     failed_auth_attempts: int = 0
     last_failed_auth_at: float = 0.0
+    # Same shape but for ``join_room`` short-code probes — without this
+    # an attacker can enumerate live rooms by spamming codes on a
+    # single WS. Same per-connection scope as the admin guard above.
+    failed_join_attempts: int = 0
+    last_failed_join_at: float = 0.0
     # ── Compatibility shims (read-through to the room) ──
     @property
     def swarm(self) -> Any:
@@ -277,6 +282,14 @@ _next_session_id: itertools.count[int] = itertools.count(1)
 # that belongs on the reverse proxy.
 _ADMIN_AUTH_MAX_ATTEMPTS = 5
 _ADMIN_AUTH_WINDOW_SECONDS = 60.0
+
+# Room-code probe guardrails. 6-character short codes are 34^6 ≈ 1.5 B
+# combinations so brute-force is infeasible, but a determined probe
+# could still enumerate every live room over time. Match the admin
+# auth limits — 5 failures per minute per WS — to keep the surface
+# area uniform.
+_JOIN_ROOM_MAX_ATTEMPTS = 5
+_JOIN_ROOM_WINDOW_SECONDS = 60.0
 
 
 def _build_admin_llm_config() -> LLMConfig | None:
