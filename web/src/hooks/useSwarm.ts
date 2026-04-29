@@ -288,6 +288,13 @@ export function useSwarm() {
     }));
   }, []);
 
+  // Forward declaration of the ref so the WebSocket onmessage handler
+  // can dispatch against the latest closure without listing
+  // ``handleMessage`` in ``connect``'s deps (which would force a
+  // socket teardown on every render that changed addEvent/addToast).
+  // The effect below keeps ``.current`` in sync.
+  const handleMessageRef = useRef<(raw: string) => void>(() => {});
+
   const handleMessage = useCallback(
     (raw: string) => {
       try {
@@ -1193,8 +1200,14 @@ export function useSwarm() {
       reconnectRef.current = setTimeout(connect, Math.round(base + jitter));
     };
     ws.onerror = () => ws.close();
-    ws.onmessage = (e) => handleMessage(e.data);
-  }, [handleMessage]);
+    // Read ``handleMessage`` through a ref so the WebSocket always
+    // dispatches against the latest closure, not the one captured at
+    // socket-open time. Without this, a re-render that recreates
+    // ``handleMessage`` (e.g. ``addEvent``/``addToast`` identity
+    // change) leaves the bound socket holding a stale reference,
+    // and events route through it to outdated state.
+    ws.onmessage = (e) => handleMessageRef.current(e.data);
+  }, []);
 
   /** Send authentication credentials to the backend. */
   const authenticate = useCallback((credentials: UserCredentials) => {
