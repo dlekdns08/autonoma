@@ -401,8 +401,7 @@ async def voice_transcribe(
     ``language`` is forwarded to the processor as a hint. When empty we
     fall back to ``settings.voice_asr_default_language``.
     """
-    from autonoma.config import settings as _settings
-    from autonoma.voice.asr import get_asr_provider
+    _settings = _voice_settings
 
     if getattr(_settings, "voice_asr_provider", "cohere") == "none":
         raise _asr_disabled_error()
