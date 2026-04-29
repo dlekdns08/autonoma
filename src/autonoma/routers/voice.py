@@ -792,14 +792,21 @@ async def voice_stream(ws: WebSocket) -> None:
                     continue
                 # Unknown text frames are ignored (forward-compat).
     except WebSocketDisconnect:
-        pass
+        # Expected — the client closed the recording. Use debug, not
+        # warning, so this isn't noise in the log.
+        logger.debug("[voice/stream] client disconnected")
     finally:
         closed = True
         pl_task.cancel()
         try:
             await pl_task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
+            # Normal — we cancelled it on the line above.
             pass
+        except Exception:
+            # Unexpected error from the partial loop. Log so a regression
+            # is visible instead of silently swallowed.
+            logger.warning("[voice/stream] partial loop raised on shutdown", exc_info=True)
 
     if error_payload is not None:
         try:
