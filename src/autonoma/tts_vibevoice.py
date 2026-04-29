@@ -157,13 +157,73 @@ class VibeVoiceClient(BaseTTSClient):
         """
         try:
             import torch  # type: ignore[import-not-found]
-            from transformers import AutoModel, AutoProcessor  # type: ignore[import-not-found]
+        except ImportError as exc:
+            self._load_error = "torch is required for VibeVoice"
+            logger.error("[tts/vibevoice] %s: %s", self._load_error, exc)
+            return
+
+        # VibeVoice ships as its own git package — *not* upstream in
+        # transformers. The Cohere ASR fork running in production
+        # also drops top-level ``AutoModel``, so trying to load
+        # VibeVoice via ``transformers.AutoModel`` will fail there
+        # regardless. Operator install:
+        #
+        #   uv pip install 'vibevoice[streamingtts] @ \
+        #       git+https://github.com/microsoft/VibeVoice.git@main'
+        #
+        # Class names have shifted across releases; we try the
+        # canonical exports first, then the submodule paths the
+        # streamingtts extra exposes.
+        ModelCls: Any = None
+        ProcessorCls: Any = None
+        try:
+            import vibevoice  # type: ignore[import-not-found]
         except ImportError as exc:
             self._load_error = (
-                f"transformers + torch are required for {self.model_id}. "
-                "Install with: uv sync --extra tts"
+                "vibevoice package not installed. Run: "
+                "uv pip install 'vibevoice[streamingtts] @ "
+                "git+https://github.com/microsoft/VibeVoice.git@main'"
             )
             logger.error("[tts/vibevoice] %s: %s", self._load_error, exc)
+            return
+
+        for name in (
+            "VibeVoiceForConditionalGenerationInference",
+            "VibeVoiceForConditionalGeneration",
+        ):
+            cls = getattr(vibevoice, name, None)
+            if cls is not None:
+                ModelCls = cls
+                break
+        if ModelCls is None:
+            try:
+                from vibevoice.modular_modeling_vibevoice import (  # type: ignore[import-not-found]
+                    VibeVoiceForConditionalGenerationInference as ModelCls,
+                )
+            except ImportError:
+                try:
+                    from vibevoice.modular_modeling_vibevoice import (  # type: ignore[import-not-found]
+                        VibeVoiceForConditionalGeneration as ModelCls,
+                    )
+                except ImportError:
+                    ModelCls = None
+
+        ProcessorCls = getattr(vibevoice, "VibeVoiceProcessor", None)
+        if ProcessorCls is None:
+            try:
+                from vibevoice.modular_processing_vibevoice import (  # type: ignore[import-not-found]
+                    VibeVoiceProcessor as ProcessorCls,
+                )
+            except ImportError:
+                ProcessorCls = None
+
+        if ModelCls is None or ProcessorCls is None:
+            self._load_error = (
+                "vibevoice installed but VibeVoiceForConditionalGeneration"
+                " / VibeVoiceProcessor not exposed. Update from "
+                "https://github.com/microsoft/VibeVoice."
+            )
+            logger.error("[tts/vibevoice] %s", self._load_error)
             return
 
         device, dtype = self._select_device_and_dtype()
