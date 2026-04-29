@@ -492,6 +492,17 @@ FORWARDED_EVENTS = [
     # viewer in the originating room so the floating-emoji animation
     # plays for everyone, not just the sender.
     "live.reaction",
+    # Multi-character podcast (Wave C). Same broadcast model as the
+    # swarm's agent.speech_audio_* events — the /podcast page subscribes
+    # to these to render captions + drive playback.
+    "podcast.started",
+    "podcast.line_started",
+    "podcast.line_audio_start",
+    "podcast.line_audio_chunk",
+    "podcast.line_audio_end",
+    "podcast.line_failed",
+    "podcast.user_input",
+    "podcast.ended",
 ]
 
 
