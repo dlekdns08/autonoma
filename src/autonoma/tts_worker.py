@@ -121,22 +121,43 @@ class TTSWorker:
         # listener leaks across test boots that re-instantiate the
         # worker without tearing down the bus.
         self._cancel_listener: Any = None
+        # Track fire-and-forget ``bus.emit`` tasks. Without a strong
+        # reference, ``asyncio.create_task`` results are eligible for
+        # GC mid-execution per CPython's task lifecycle docs, which
+        # silently drops bus events that listeners depended on. Tasks
+        # remove themselves on completion via the done-callback below.
+        self._pending_emits: set[asyncio.Task[Any]] = set()
 
     def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._run(), name="tts-worker")
-            # Listen for site-wide cancel events. The handler is bound
-            # to ``self`` so worker instances don't cross-cancel each
-            # other's queues — but bus.on() is global, so every active
-            # worker receives the event and clears its own backlog.
-            # This is intentional for the PoC: a barge-in from any
-            # tab/user effectively mutes the swarm.
-            if self._cancel_listener is None:
-                async def _on_cancel(reason: str = "interrupt", **_: Any) -> None:
-                    self.cancel_all(reason=reason)
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._run(), name="tts-worker")
+        # Register the bus listener AFTER the task is created so a
+        # cancel event arriving instantly (e.g. from a saved replay)
+        # has a worker to act on. Idempotent — only registers once
+        # per instance even across start/stop/start cycles.
+        # Listen for site-wide cancel events. The handler is bound
+        # to ``self`` so worker instances don't cross-cancel each
+        # other's queues — but bus.on() is global, so every active
+        # worker receives the event and clears its own backlog.
+        # This is intentional for the PoC: a barge-in from any
+        # tab/user effectively mutes the swarm.
+        if self._cancel_listener is None:
+            async def _on_cancel(reason: str = "interrupt", **_: Any) -> None:
+                self.cancel_all(reason=reason)
 
-                self._cancel_listener = _on_cancel
+            try:
                 bus.on("tts.cancel", _on_cancel)
+                # Only retain the reference *after* successful
+                # registration so ``stop()``'s ``bus.off`` path won't
+                # try to deregister a listener that never landed.
+                self._cancel_listener = _on_cancel
+            except Exception:
+                logger.warning(
+                    "[tts] failed to register tts.cancel listener; "
+                    "barge-in will not drain queue",
+                    exc_info=True,
+                )
 
     async def stop(self) -> None:
         self._stopped = True
@@ -144,15 +165,23 @@ class TTSWorker:
             try:
                 bus.off("tts.cancel", self._cancel_listener)
             except Exception:
-                pass
+                logger.warning("[tts] failed to deregister tts.cancel listener", exc_info=True)
             self._cancel_listener = None
         if self._task:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.warning("[tts] worker task raised on shutdown", exc_info=True)
             self._task = None
+        # Drain pending bus emits so listeners aren't left mid-await.
+        # ``return_exceptions=True`` so a single emit failure doesn't
+        # block the shutdown of the rest.
+        if self._pending_emits:
+            await asyncio.gather(*self._pending_emits, return_exceptions=True)
+            self._pending_emits.clear()
 
     def enqueue(
         self,
@@ -201,12 +230,12 @@ class TTSWorker:
             self._queue.put_nowait(job)
         except asyncio.QueueFull:
             logger.debug("tts queue full; dropping %r for %s", text[:40], agent)
-            asyncio.create_task(
-                bus.emit(
-                    "agent.speech_audio_dropped",
-                    agent=agent,
-                    reason="queue_full",
-                )
+            # Strong-reference the emit so the runtime can't collect it
+            # before the bus delivers (per ``_spawn_emit`` docstring).
+            self._spawn_emit(
+                "agent.speech_audio_dropped",
+                agent=agent,
+                reason="queue_full",
             )
             return False
         self.start()
@@ -214,6 +243,16 @@ class TTSWorker:
 
     def reset_round_budget(self) -> None:
         self._budget.reset_round()
+
+    def _spawn_emit(self, event: str, **kwargs: Any) -> None:
+        """Schedule a ``bus.emit`` and hold a strong reference until it
+        completes. Replaces bare ``asyncio.create_task(bus.emit(...))``
+        which the runtime can GC mid-flight when no caller holds the
+        task.
+        """
+        task = asyncio.create_task(bus.emit(event, **kwargs))
+        self._pending_emits.add(task)
+        task.add_done_callback(self._pending_emits.discard)
 
     def cancel_all(self, *, reason: str = "interrupt") -> int:
         """Drain pending speech jobs without stopping the worker — feature #2.
@@ -238,13 +277,12 @@ class TTSWorker:
                 self._queue.task_done()
                 dropped += 1
                 # Tell the frontend this one was killed before synthesis
-                # so the speaking flag clears cleanly.
-                asyncio.create_task(
-                    bus.emit(
-                        "agent.speech_audio_dropped",
-                        agent=job.agent,
-                        reason=reason,
-                    )
+                # so the speaking flag clears cleanly. Tracked task so
+                # the emit isn't GC'd mid-await.
+                self._spawn_emit(
+                    "agent.speech_audio_dropped",
+                    agent=job.agent,
+                    reason=reason,
                 )
         except asyncio.QueueEmpty:
             pass
