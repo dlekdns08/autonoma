@@ -79,13 +79,31 @@ class Settings(BaseSettings):
     # ── TTS (agent voices) ──
     # Master kill-switch. When False no TTS module runs; agents are silent.
     tts_enabled: bool = False
-    # Which backend to use: "omnivoice" | "none"
+    # Which backend to use: "omnivoice" | "vibevoice" | "none"
     # - ``omnivoice``: zero-shot cloning via k2-fsa/OmniVoice. Requires
     #   the ``omnivoice`` + ``torch`` packages installed. Device auto-
     #   detected: cuda > mps (Apple Silicon) > cpu.
+    # - ``vibevoice``: Microsoft VibeVoice-1.5B via transformers
+    #   (``trust_remote_code=True``). Multi-speaker dialogue model
+    #   with the same zero-shot reference-audio cloning interface as
+    #   OmniVoice — drop-in replacement for the /podcast feature.
     # - ``none``: stub that emits audio-start/end events without bytes —
     #   keeps the UI flowing while the model isn't available.
-    tts_provider: Literal["omnivoice", "none"] = "none"
+    tts_provider: Literal["omnivoice", "vibevoice", "none"] = "none"
+
+    # ── VibeVoice-specific knobs ──
+    # Override the model id when you want a different size or fork.
+    # Empty → falls back to ``microsoft/VibeVoice-1.5B`` declared in
+    # ``autonoma.tts_vibevoice``.
+    vibevoice_model_id: str = ""
+    # Output sample rate VibeVoice produces. The 1.5B model emits
+    # 24 kHz mono; if you swap to a variant with a different rate,
+    # set this so the WAV header matches.
+    vibevoice_sample_rate: int = 24_000
+    # Hard cap on generation length. VibeVoice's max-new-tokens window
+    # roughly maps to total audio duration; ~4096 covers a ~30 s line
+    # which is more than any single podcast turn we ever script.
+    vibevoice_max_new_tokens: int = 4096
     # Budgets: soft caps per round / per session. When exceeded the
     # worker drops the line and emits ``agent.speech_audio_dropped``.
     #
