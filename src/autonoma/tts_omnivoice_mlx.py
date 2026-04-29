@@ -149,6 +149,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
     def _load_blocking(self) -> None:
         try:
             from mlx_audio.tts.utils import load_model  # type: ignore[import-not-found]
+            import mlx.core as mx  # type: ignore[import-not-found]
         except ImportError as exc:
             self._load_error = (
                 "mlx_audio package not installed. Run:\n"
@@ -156,6 +157,17 @@ class OmniVoiceMlxClient(BaseTTSClient):
             )
             logger.error("[tts/omnivoice-mlx] %s: %s", self._load_error, exc)
             return
+        # Pin the default device for this thread before load_model
+        # touches anything — load_model evaluates weights and that
+        # eval has the same thread-local stream requirement as
+        # ``model.generate`` does at inference time.
+        try:
+            mx.set_default_device(mx.gpu)
+        except Exception:
+            try:
+                mx.set_default_device(mx.cpu)
+            except Exception:
+                pass
         try:
             logger.info("[tts/omnivoice-mlx] loading %s …", self.model_id)
             self._model = load_model(self.model_id)
@@ -243,6 +255,33 @@ class OmniVoiceMlxClient(BaseTTSClient):
 
         t0 = time.perf_counter()
         try:
+            # MLX streams are *thread-local*. ``asyncio.to_thread`` ran
+            # us on a worker thread that has no default stream — calls
+            # like ``mx.eval(ref_codes)`` deep inside the model raise
+            # ``RuntimeError: There is no Stream(gpu, 0) in current
+            # thread`` until we attach one explicitly. Setting the
+            # default device on this thread + wrapping the generate
+            # call in ``mx.stream(mx.gpu)`` gives mlx_audio a GPU
+            # stream to dispatch on. ``set_default_device`` is a
+            # cheap idempotent op so re-running on every synth is
+            # fine.
+            import mlx.core as mx  # type: ignore[import-not-found]
+
+            try:
+                mx.set_default_device(mx.gpu)
+            except Exception as exc:
+                # On a Mac without Metal (very rare on the deploy
+                # target) we'd fall through here. Continue with cpu —
+                # mlx_audio still works on CPU just slower.
+                logger.warning(
+                    "[tts/omnivoice-mlx] mx.set_default_device(gpu) failed: %s; "
+                    "trying cpu", exc,
+                )
+                try:
+                    mx.set_default_device(mx.cpu)
+                except Exception:
+                    pass
+
             kwargs: dict[str, Any] = {"text": text}
             if ref_path is not None:
                 kwargs["ref_audio"] = ref_path
@@ -254,7 +293,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
             # short text (single line agent / podcast turn) this is
             # one or two yields and a few-hundred-ms wall clock.
             try:
-                results = list(self._model.generate(**kwargs))
+                with mx.stream(mx.gpu):
+                    results = list(self._model.generate(**kwargs))
             except ValueError as exc:
                 raise TTSError(f"mlx model.generate failed: {exc}") from exc
             except TypeError as exc:
@@ -267,7 +307,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
                     "retrying with text-only call", exc,
                 )
                 try:
-                    results = list(self._model.generate(text))
+                    with mx.stream(mx.gpu):
+                        results = list(self._model.generate(text))
                 except Exception as exc2:
                     raise TTSError(
                         f"mlx model.generate failed (retry): {exc2}"
