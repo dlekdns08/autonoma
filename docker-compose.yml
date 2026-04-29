@@ -18,6 +18,10 @@ services:
       args:
         ASR_MODEL_ID: ${ASR_MODEL_ID-CohereLabs/cohere-transcribe-03-2026}
         OMNIVOICE_MODEL_ID: ${OMNIVOICE_MODEL_ID-k2-fsa/OmniVoice}
+        # Empty by default — VibeVoice pre-download is opt-in.
+        # Set to ``microsoft/VibeVoice-1.5B`` to bake the weights into
+        # the runtime image at build time.
+        VIBEVOICE_MODEL_ID: ${VIBEVOICE_MODEL_ID-}
       # Build secret wired into the ASR pre-download step. The token is
       # never written into an image layer — BuildKit mounts it as a
       # tmpfs file under ``/run/secrets/hf_token`` for the duration of
