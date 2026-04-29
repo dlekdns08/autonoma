@@ -20,7 +20,6 @@ import AgentModal from "@/components/AgentModal";
 import RelationshipWeb from "@/components/RelationshipWeb";
 import ChatInput from "@/components/ChatInput";
 import ChatPanel from "@/components/ChatPanel";
-import PushToTalkButton from "@/components/PushToTalkButton";
 import Starfield from "@/components/Starfield";
 import Minimap from "@/components/Minimap";
 import VTuberStage from "@/components/vtuber/VTuberStage";
@@ -169,7 +168,7 @@ function Dashboard() {
     state, connected, connectionFailed, toasts, dismissToast,
     sendMessage, sendToAgent, startSwarm, resetSwarm, collectCookie,
     authState, authenticate, logout, sessionId,
-    emotes, getMouthAmplitude, interruptAgentVoice,
+    emotes, getMouthAmplitude,
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
     lastRunFieldPaths,
@@ -598,26 +597,12 @@ function Dashboard() {
         </div>
       </main>
 
-      {/* Chat Input + push-to-talk row.
-          The mic button sits in a thin row immediately above the chat
-          composer so the live-caption bubble it raises overlaps the
-          stage area instead of the keyboard / input itself. */}
-      <div className="relative">
-        <div
-          className="flex items-center justify-end gap-2 px-3 py-1 border-t border-white/5 bg-slate-950/60 backdrop-blur-sm"
-        >
-          <PushToTalkButton
-            mode="stream"
-            language="ko"
-            // ``onInterrupt`` removed: the barge-in path was cutting
-            // off legitimate TTS replies whenever the mic happened
-            // to be open (or always-on VAD false-tripped on the
-            // agent's own speaker output). Re-add ``onInterrupt={
-            // interruptAgentVoice}`` once AEC is verified.
-          />
-        </div>
-        <ChatInput onSend={sendMessage} connected={connected} />
-      </div>
+      {/* Chat input — push-to-talk row is hidden while VibeVoice TTS
+          is in use, because vibevoice 1.0.0 pins transformers~=4.51
+          and Cohere ASR (which powers the mic) requires transformers
+          5.x. Re-mount <PushToTalkButton/> here once ASR and TTS can
+          share a transformers version again. */}
+      <ChatInput onSend={sendMessage} connected={connected} />
 
       {/* Status bar */}
       <footer
