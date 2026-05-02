@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import logging
 import secrets
+import uuid
+from datetime import UTC, datetime
 from typing import Final
 
 import bcrypt
@@ -38,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME: Final[str] = "autonoma_session"
 _SESSION_SALT: Final[str] = "autonoma.auth.session.v1"
+
+# Guest sessions are signed cookies whose embedded ``user_id`` starts with
+# this prefix. They never hit the ``users`` table — the synthetic ``User``
+# returned by ``current_user`` / ``require_active_user`` is built on the
+# fly so guests can pass cookie auth on protected endpoints without
+# polluting the DB. ``role="user"`` keeps ``require_admin`` rejecting them
+# automatically.
+GUEST_USER_PREFIX: Final[str] = "guest:"
 
 
 def _resolve_session_secret() -> str:
@@ -134,6 +144,40 @@ def read_session_token(token: str) -> str | None:
     return user_id
 
 
+# ── Guest sessions ────────────────────────────────────────────────────
+
+
+def is_guest_user_id(user_id: str | None) -> bool:
+    """True iff ``user_id`` is a guest session marker."""
+    return bool(user_id) and user_id.startswith(GUEST_USER_PREFIX)
+
+
+def new_guest_user_id() -> str:
+    """Mint a fresh guest user_id. Goes straight into the session cookie."""
+    return f"{GUEST_USER_PREFIX}{uuid.uuid4()}"
+
+
+def make_guest_user(user_id: str) -> User:
+    """Build a synthetic ``User`` for a guest session.
+
+    No DB row backs this — guests don't get persistent state. The id is
+    the cookie-embedded UUID so per-user namespacing (presets, files,
+    etc.) still works. Role is ``"user"`` so ``require_admin`` rejects
+    guests by the same rule that gates regular signed-up users.
+    """
+    short = user_id.removeprefix(GUEST_USER_PREFIX).split("-", 1)[0]
+    now = datetime.now(UTC)
+    return User(
+        id=user_id,
+        username=f"guest-{short}",
+        password_hash="",
+        role="user",
+        status="active",
+        created_at=now,
+        updated_at=now,
+    )
+
+
 # ── FastAPI deps ──────────────────────────────────────────────────────
 
 
@@ -151,6 +195,8 @@ async def current_user(request: Request) -> User | None:
     user_id = read_session_token(token)
     if not user_id:
         return None
+    if is_guest_user_id(user_id):
+        return make_guest_user(user_id)
     return await get_user_by_id(user_id)
 
 
@@ -169,6 +215,8 @@ async def require_active_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="authentication_required",
         )
+    if is_guest_user_id(user_id):
+        return make_guest_user(user_id)
     user = await get_user_by_id(user_id)
     if user is None:
         raise HTTPException(
