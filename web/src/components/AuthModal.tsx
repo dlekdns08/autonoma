@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useAuth, type AuthUser, type LoginReason, type SignupReason } from "@/hooks/useAuth";
+import {
+  useAuth,
+  type AuthUser,
+  type GuestProvider,
+  type GuestReason,
+  type LoginReason,
+  type SignupReason,
+} from "@/hooks/useAuth";
 import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AuthState, UserCredentials } from "@/lib/types";
 import { STRINGS } from "@/lib/strings";
@@ -23,7 +30,7 @@ interface Props {
   onAuthSuccess?: (user: AuthUser) => void;
 }
 
-type Tab = "login" | "signup" | "legacy";
+type Tab = "login" | "signup" | "guest" | "legacy";
 
 // Client-side username rule hints. The server is authoritative; these just
 // keep submit disabled until the input is at least plausibly valid so we
@@ -31,8 +38,17 @@ type Tab = "login" | "signup" | "legacy";
 const USERNAME_RE = /^[a-z0-9_-]{3,32}$/;
 const MIN_PASSWORD_LEN = 8;
 
+// Reasonable defaults the user can override. Picked per provider so the
+// "fill in API key, hit enter" path works without forcing the visitor to
+// know the exact model id.
+const GUEST_DEFAULT_MODEL: Record<GuestProvider, string> = {
+  anthropic: "claude-sonnet-4-6",
+  openai: "gpt-4o-mini",
+  vllm: "",
+};
+
 function reasonToMessage(
-  reason: LoginReason | SignupReason,
+  reason: LoginReason | SignupReason | GuestReason,
 ): string {
   switch (reason) {
     case "bad_credentials":
@@ -54,7 +70,7 @@ export default function AuthModal({
   onAuthenticate,
   onAuthSuccess,
 }: Props) {
-  const { login, signup } = useAuth();
+  const { login, signup, guestLogin } = useAuth();
   const dialogRef = useModalA11y<HTMLDivElement>();
 
   const [tab, setTab] = useState<Tab>("login");
@@ -72,6 +88,18 @@ export default function AuthModal({
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupSubmitting, setSignupSubmitting] = useState(false);
   const [signupDone, setSignupDone] = useState(false);
+
+  // ── Guest tab ────────────────────────────────────────────────────────
+  // Lets a visitor try the app with their own LLM API key — no signup,
+  // no admin approval. The key never leaves the browser session: the
+  // backend issues a guest cookie, and the WS reads the key out of
+  // sessionStorage on its first ``auth.status`` event.
+  const [guestProvider, setGuestProvider] = useState<GuestProvider>("anthropic");
+  const [guestApiKey, setGuestApiKey] = useState("");
+  const [guestModel, setGuestModel] = useState(GUEST_DEFAULT_MODEL.anthropic);
+  const [guestBaseUrl, setGuestBaseUrl] = useState("");
+  const [guestError, setGuestError] = useState<string | null>(null);
+  const [guestSubmitting, setGuestSubmitting] = useState(false);
 
   // ── Legacy admin tab ─────────────────────────────────────────────────
   const [adminPassword, setAdminPassword] = useState("");
@@ -135,14 +163,54 @@ export default function AuthModal({
     onAuthenticate({ type: "admin", password: adminPassword });
   }, [adminPassword, onAuthenticate]);
 
+  const guestReady = useMemo(() => {
+    if (!guestModel.trim()) return false;
+    if (guestProvider === "vllm") return guestBaseUrl.trim().length > 0;
+    return guestApiKey.trim().length > 0;
+  }, [guestProvider, guestApiKey, guestModel, guestBaseUrl]);
+
+  const handleGuestLogin = useCallback(async () => {
+    if (!guestReady) return;
+    setGuestError(null);
+    setGuestSubmitting(true);
+    try {
+      const result = await guestLogin({
+        provider: guestProvider,
+        apiKey: guestApiKey,
+        model: guestModel,
+        baseUrl: guestBaseUrl,
+      });
+      if (result.ok) {
+        // Scrub the key from the controlled input — it's been handed
+        // off to sessionStorage for the WS replay; keeping it in React
+        // state would let it survive re-renders unnecessarily.
+        setGuestApiKey("");
+        onAuthSuccess?.(result.user);
+      } else {
+        setGuestError(reasonToMessage(result.reason));
+      }
+    } finally {
+      setGuestSubmitting(false);
+    }
+  }, [
+    guestReady,
+    guestLogin,
+    guestProvider,
+    guestApiKey,
+    guestModel,
+    guestBaseUrl,
+    onAuthSuccess,
+  ]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key !== "Enter") return;
       if (tab === "login") void handleLogin();
       else if (tab === "signup") void handleSignup();
+      else if (tab === "guest") void handleGuestLogin();
       else if (tab === "legacy") handleLegacyAdminLogin();
     },
-    [tab, handleLogin, handleSignup, handleLegacyAdminLogin],
+    [tab, handleLogin, handleSignup, handleGuestLogin, handleLegacyAdminLogin],
   );
 
   // ── Render ───────────────────────────────────────────────────────────
@@ -200,7 +268,7 @@ export default function AuthModal({
           </div>
         ) : (
           <>
-            {/* Tab switcher (login / signup) */}
+            {/* Tab switcher (login / signup / guest) */}
             {tab !== "legacy" && (
               <div className="mb-5 flex gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
                 <button
@@ -224,6 +292,17 @@ export default function AuthModal({
                   }`}
                 >
                   회원가입
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("guest")}
+                  className={`flex-1 rounded-md py-1.5 text-xs font-mono font-bold transition-all ${
+                    tab === "guest"
+                      ? "bg-emerald-600/60 text-white shadow"
+                      : "text-white/40 hover:text-white/60"
+                  }`}
+                >
+                  게스트
                 </button>
               </div>
             )}
@@ -366,6 +445,109 @@ export default function AuthModal({
                 <p className="text-center text-[10px] font-mono text-white/30">
                   신규 계정은 관리자 승인 후 활성화됩니다.
                 </p>
+              </div>
+            )}
+
+            {/* ── Guest tab ── */}
+            {tab === "guest" && (
+              <div className="flex flex-col gap-3">
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[10px] font-mono text-emerald-200/80 leading-relaxed">
+                  본인의 LLM API 키로 즉시 체험할 수 있습니다.
+                  <br />
+                  키는 서버에 저장되지 않으며, 브라우저 세션 종료 시 사라집니다.
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-mono text-white/50">
+                    프로바이더
+                  </label>
+                  <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+                    {(["anthropic", "openai", "vllm"] as GuestProvider[]).map(
+                      (p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => {
+                            setGuestProvider(p);
+                            setGuestModel(GUEST_DEFAULT_MODEL[p]);
+                          }}
+                          className={`flex-1 rounded-md py-1.5 text-[11px] font-mono font-bold transition-all ${
+                            guestProvider === p
+                              ? "bg-emerald-600/60 text-white shadow"
+                              : "text-white/40 hover:text-white/60"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+                {guestProvider !== "vllm" && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-mono text-white/50">
+                      API 키
+                    </label>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={guestApiKey}
+                      onChange={(e) => setGuestApiKey(e.target.value)}
+                      placeholder={
+                        guestProvider === "anthropic"
+                          ? "sk-ant-..."
+                          : "sk-..."
+                      }
+                      autoFocus
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-mono text-white placeholder:text-white/20 outline-none focus:border-emerald-500/60 transition-colors"
+                    />
+                  </div>
+                )}
+                {guestProvider === "vllm" && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-mono text-white/50">
+                      vLLM 서버 URL
+                    </label>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={guestBaseUrl}
+                      onChange={(e) => setGuestBaseUrl(e.target.value)}
+                      placeholder="http://localhost:8000"
+                      autoFocus
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-mono text-white placeholder:text-white/20 outline-none focus:border-emerald-500/60 transition-colors"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1.5 block text-xs font-mono text-white/50">
+                    모델
+                  </label>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    value={guestModel}
+                    onChange={(e) => setGuestModel(e.target.value)}
+                    placeholder={
+                      guestProvider === "vllm"
+                        ? "model-name"
+                        : GUEST_DEFAULT_MODEL[guestProvider]
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-mono text-white placeholder:text-white/20 outline-none focus:border-emerald-500/60 transition-colors"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGuestLogin}
+                  disabled={guestSubmitting || !guestReady}
+                  className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 py-3 text-sm font-bold font-mono text-white hover:from-emerald-500 hover:to-cyan-500 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  {guestSubmitting ? "접속 중..." : "게스트로 시작"}
+                </button>
+                {guestError && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-mono text-red-300">
+                    {guestError}
+                  </div>
+                )}
               </div>
             )}
 
