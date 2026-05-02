@@ -24,12 +24,15 @@ export interface AuthUser {
   status: UserStatus;
   created_at: string;
   updated_at: string;
+  /** Synthetic user backed by the guest cookie (no DB row). */
+  is_guest?: boolean;
 }
 
 // ── Result discriminated unions ───────────────────────────────────────────
 
 export type LoginReason = "bad_credentials" | "not_active" | "network";
 export type SignupReason = "username_taken" | "invalid" | "network";
+export type GuestReason = "invalid" | "network";
 
 export type LoginResult =
   | { ok: true; user: AuthUser }
@@ -39,15 +42,39 @@ export type SignupResult =
   | { ok: true }
   | { ok: false; reason: SignupReason };
 
+export type GuestLoginResult =
+  | { ok: true; user: AuthUser }
+  | { ok: false; reason: GuestReason };
+
+/** LLM provider name accepted by the WebSocket ``type=user`` handler. */
+export type GuestProvider = "anthropic" | "openai" | "vllm";
+
+export interface GuestCredentials {
+  provider: GuestProvider;
+  apiKey: string;
+  model: string;
+  /** Required iff provider === "vllm". */
+  baseUrl?: string;
+}
+
 export interface UseAuthReturn {
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
   login: (username: string, password: string) => Promise<LoginResult>;
   signup: (username: string, password: string) => Promise<SignupResult>;
+  guestLogin: (creds: GuestCredentials) => Promise<GuestLoginResult>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
+
+// ── Guest credential bridge to useSwarm ───────────────────────────────────
+// useSwarm reads this sessionStorage key when the WS sends ``auth.status``
+// and auto-replays the stored ``type=user`` authenticate command. By
+// writing it here BEFORE the page transitions to <Dashboard /> (which is
+// where useSwarm mounts and opens the socket), the guest's API key flows
+// straight into the WS without requiring any extra UI step.
+const SESSION_KEY = "autonoma_auth";
 
 const JSON_HEADERS: HeadersInit = { "Content-Type": "application/json" };
 
@@ -142,6 +169,57 @@ function useAuthStore(): UseAuthReturn {
     [],
   );
 
+  const guestLogin = useCallback(
+    async (creds: GuestCredentials): Promise<GuestLoginResult> => {
+      // Client-side input gate. The WS server validates again, but
+      // surfacing the error here avoids round-tripping obviously empty
+      // payloads and keeps the modal's error UX local.
+      const provider = creds.provider;
+      const apiKey = creds.apiKey.trim();
+      const model = creds.model.trim();
+      const baseUrl = (creds.baseUrl ?? "").trim();
+      if (!model) return { ok: false, reason: "invalid" };
+      if (provider !== "vllm" && !apiKey) return { ok: false, reason: "invalid" };
+      if (provider === "vllm" && !baseUrl) return { ok: false, reason: "invalid" };
+
+      setError(null);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/guest`, {
+          method: "POST",
+          credentials: "include",
+          headers: JSON_HEADERS,
+        });
+        if (res.status !== 200) {
+          return { ok: false, reason: "network" };
+        }
+        const data = (await res.json()) as { user: AuthUser };
+
+        // Stash the WS credentials BEFORE flipping app state to
+        // <Dashboard/> — useSwarm reads this on its first auth.status
+        // event. ``type: "user"`` is what the backend's WS authenticate
+        // handler at api.py:2218 expects.
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(
+            SESSION_KEY,
+            JSON.stringify({
+              type: "user",
+              provider,
+              api_key: apiKey,
+              model,
+              ...(provider === "vllm" ? { base_url: baseUrl } : {}),
+            }),
+          );
+        }
+
+        setUser(data.user ?? null);
+        return { ok: true, user: data.user };
+      } catch {
+        return { ok: false, reason: "network" };
+      }
+    },
+    [],
+  );
+
   const logout = useCallback(async (): Promise<void> => {
     try {
       await fetch(`${API_BASE_URL}/api/auth/logout`, {
@@ -152,11 +230,17 @@ function useAuthStore(): UseAuthReturn {
       // Network-level failures shouldn't trap the user in a logged-in UI;
       // the server cookie will expire on its own.
     } finally {
+      // Drop the guest WS credential bridge too — otherwise a subsequent
+      // signed-up login would carry the previous guest's API key into
+      // the new WS session.
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(SESSION_KEY);
+      }
       setUser(null);
     }
   }, []);
 
-  return { user, loading, error, login, signup, logout, refresh };
+  return { user, loading, error, login, signup, guestLogin, logout, refresh };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
