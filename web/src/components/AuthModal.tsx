@@ -52,12 +52,14 @@ function reasonToMessage(
 ): string {
   switch (reason) {
     case "bad_credentials":
+    case "invalid_credentials":
       return STRINGS.auth.invalidCredentials;
     case "not_active":
       return STRINGS.auth.notActivated;
     case "username_taken":
       return STRINGS.auth.usernameTaken;
     case "invalid":
+    case "invalid_input":
       return STRINGS.auth.invalidInput;
     case "network":
     default:
@@ -187,7 +189,12 @@ export default function AuthModal({
         setGuestApiKey("");
         onAuthSuccess?.(result.user);
       } else {
-        setGuestError(reasonToMessage(result.reason));
+        // Prefer the server's localized message ("API 키가 올바르지
+        // 않거나 권한이 없습니다.", "프로바이더 응답 시간 초과", etc.)
+        // because it carries the actual diagnostic; the generic
+        // ``reasonToMessage`` copy is only a fallback when the server
+        // didn't supply one (e.g. fetch threw before reaching it).
+        setGuestError(result.message ?? reasonToMessage(result.reason));
       }
     } finally {
       setGuestSubmitting(false);
@@ -541,7 +548,7 @@ export default function AuthModal({
                   disabled={guestSubmitting || !guestReady}
                   className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 py-3 text-sm font-bold font-mono text-white hover:from-emerald-500 hover:to-cyan-500 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  {guestSubmitting ? "접속 중..." : "게스트로 시작"}
+                  {guestSubmitting ? "API 키 검증 중..." : "게스트로 시작"}
                 </button>
                 {guestError && (
                   <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-mono text-red-300">
