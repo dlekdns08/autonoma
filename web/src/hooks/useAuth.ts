@@ -32,7 +32,11 @@ export interface AuthUser {
 
 export type LoginReason = "bad_credentials" | "not_active" | "network";
 export type SignupReason = "username_taken" | "invalid" | "network";
-export type GuestReason = "invalid" | "network";
+export type GuestReason =
+  | "invalid"
+  | "invalid_credentials"
+  | "invalid_input"
+  | "network";
 
 export type LoginResult =
   | { ok: true; user: AuthUser }
@@ -44,7 +48,11 @@ export type SignupResult =
 
 export type GuestLoginResult =
   | { ok: true; user: AuthUser }
-  | { ok: false; reason: GuestReason };
+  // ``message`` is populated when the server returned a Korean error
+  // string the modal should surface verbatim (e.g. "API 키가 올바르지
+  // 않거나 권한이 없습니다."). Local validation paths leave it null so
+  // the modal falls back to its generic copy.
+  | { ok: false; reason: GuestReason; message?: string };
 
 /** LLM provider name accepted by the WebSocket ``type=user`` handler. */
 export type GuestProvider = "anthropic" | "openai" | "vllm";
@@ -188,10 +196,38 @@ function useAuthStore(): UseAuthReturn {
           method: "POST",
           credentials: "include",
           headers: JSON_HEADERS,
+          // The backend pre-validates the key against the provider's
+          // /v1/models endpoint before issuing the cookie, so we send
+          // the same payload the WS would otherwise receive.
+          body: JSON.stringify({
+            provider,
+            api_key: apiKey,
+            model,
+            ...(provider === "vllm" ? { base_url: baseUrl } : {}),
+          }),
         });
+
         if (res.status !== 200) {
-          return { ok: false, reason: "network" };
+          // Backend returns ``{ detail: { reason, message } }`` on 4xx
+          // (FastAPI HTTPException convention). We surface the message
+          // verbatim so provider-specific errors ("API 키가 올바르지
+          // 않거나 권한이 없습니다.") reach the user unfiltered.
+          let reason: GuestReason = "network";
+          let message: string | undefined;
+          try {
+            const body = (await res.json()) as {
+              detail?: { reason?: string; message?: string };
+            };
+            const r = body.detail?.reason;
+            if (r === "invalid_input") reason = "invalid_input";
+            else if (r === "invalid_credentials") reason = "invalid_credentials";
+            message = body.detail?.message;
+          } catch {
+            /* non-JSON error body — fall through to network reason */
+          }
+          return { ok: false, reason, message };
         }
+
         const data = (await res.json()) as { user: AuthUser };
 
         // Stash the WS credentials BEFORE flipping app state to
