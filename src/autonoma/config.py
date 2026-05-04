@@ -254,6 +254,73 @@ class Settings(BaseSettings):
     # multilingual but performs best when the source language is given.
     voice_asr_default_language: str = "ko"
 
+    # ── 2026-05 feature pack ──────────────────────────────────────────
+    # #1 Swarm-vs-swarm coordinator. When set, a coordinator service URL
+    # other Autonoma instances dial into for matchmaking + scoring.
+    coordinator_url: str = ""
+    coordinator_token: str = ""
+
+    # #3 Memoir compaction — every N rounds, agents whose journal grew
+    # past the threshold get an LLM-summarised "memoir v+1" written to
+    # ``character_memoirs``. Falsy values disable the loop.
+    memoir_compact_every_rounds: int = 25
+    memoir_compact_min_journal_chars: int = 4000
+
+    # #2 Retirement / ghost lifecycle. Characters retire honourably
+    # after surviving this many runs at level >= the threshold; their
+    # condensed memoir lives on as ghost_appearances entries.
+    retirement_min_runs: int = 12
+    retirement_min_level: int = 8
+    retirement_enabled: bool = True
+
+    # #5 Auto highlight reel — when True, session-end emits a list of
+    # candidate clip windows (boss kills, first PR, raid victories,
+    # large donations). The frontend records the actual MP4.
+    highlights_enabled: bool = True
+    highlights_max_clips: int = 8
+
+    # #8 MCP server. When True, the FastAPI app mounts an MCP /mcp
+    # endpoint exposing core swarm tools.
+    mcp_server_enabled: bool = False
+
+    # #9 CI loop. When True, file artifacts trigger a sandboxed
+    # ruff/pytest pass and failures are folded back into the agent's
+    # next-round inbox as a fix-task.
+    ci_loop_enabled: bool = False
+    ci_loop_command: str = ""  # empty → auto-detect (ruff for .py, tsc for .ts)
+    ci_loop_timeout_sec: float = 30.0
+
+    # #10 OpenTelemetry exporter. When set, swarm round metrics go to
+    # this OTLP endpoint in addition to the in-process tracer.
+    otel_endpoint: str = ""
+    otel_service_name: str = "autonoma"
+    prometheus_metrics_enabled: bool = True
+
+    # #11 Goal recommender — gates /api/inspire which calls the LLM to
+    # suggest goals from a repo URL or file tree.
+    inspire_enabled: bool = True
+
+    # #15 Voice consent — require a recorded consent phrase before a
+    # voice profile is usable as a TTS source.
+    voice_consent_required: bool = False
+    voice_consent_phrase_ko: str = "나는 이 음성을 Autonoma에서 사용하는 것에 동의합니다."
+    voice_consent_phrase_en: str = "I consent to using this voice in Autonoma."
+
+    # #16 VMC/OSC bridge — enable to broadcast bone/blendshape state to
+    # a VRChat / VMC4U receiver over OSC UDP.
+    vmc_bridge_enabled: bool = False
+    vmc_host: str = "127.0.0.1"
+    vmc_port: int = 39539
+
+    # #18 Anomaly detection — emits ``session.anomaly`` events when a
+    # round trips one of the heuristics (repetition, mood drift, file
+    # churn). Persisted to session_anomalies for the AB compare view.
+    anomaly_detection_enabled: bool = True
+
+    # #4 Viewer betting — channel-points style. Disabled by default
+    # because it interacts with chat moderation policy in some regions.
+    viewer_betting_enabled: bool = False
+
     def model_post_init(self, __context: object) -> None:
         """Accept bare ANTHROPIC_API_KEY / OPENAI_API_KEY without the AUTONOMA_ prefix."""
         import os
