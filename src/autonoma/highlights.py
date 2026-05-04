@@ -57,6 +57,14 @@ _DONATION_USD_THRESHOLD = 5.0
 _RECENCY_BOOST_STEP = 0.001
 _RECENCY_BOOST_MAX = 0.5
 
+# Per-session in-memory buffer cap (I11). Distinct from
+# ``settings.highlights_max_clips`` — that one bounds the *snapshot*
+# return; this one bounds how many candidates we hold internally so a
+# long-running session can't grow the buffer without limit. When the
+# cap is exceeded we keep the highest-scoring candidates (with the
+# usual recency tie-break) and drop the rest.
+MAX_BUFFER_PER_SESSION = 500
+
 
 @dataclass
 class HighlightCandidate:
