@@ -2682,6 +2682,49 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     for v in _viewers_in_room(session.room_id):
                         await manager.send_to_ws(v.ws, "viewer.chat", payload)
 
+            # ── viewer_overlay (cursors + stickers, feature #6) ──
+            # Multi-viewer overlay broadcast: spectators publish their
+            # mouse position (kind="cursor") or fling an emoji sticker
+            # (kind="sticker"); we relay to every other viewer in the
+            # same room. Self-echo is excluded. Coordinates are
+            # normalised 0..1 by the client; we trust+clamp here so a
+            # malformed sender can't push payloads off-screen for
+            # everyone else. The kind enum is whitelisted so future
+            # additions need a server-side decision before they fan out.
+            elif cmd == "viewer_overlay":
+                kind = str(msg.get("kind") or "")
+                if kind not in ("cursor", "sticker"):
+                    pass
+                else:
+                    def _clamp(v: object) -> float:
+                        try:
+                            f = float(v)  # type: ignore[arg-type]
+                        except (TypeError, ValueError):
+                            return 0.5
+                        return max(0.0, min(1.0, f))
+
+                    sender_id = (
+                        str(msg.get("viewerId"))
+                        if msg.get("viewerId") is not None
+                        else f"sess-{session.session_id}"
+                    )
+                    payload = {
+                        "kind": kind,
+                        "viewerId": sender_id[:64],
+                        "displayName": (
+                            session.display_name
+                            or str(msg.get("displayName") or "")
+                        )[:32],
+                        "x": _clamp(msg.get("x")),
+                        "y": _clamp(msg.get("y")),
+                    }
+                    if kind == "sticker":
+                        payload["emoji"] = str(msg.get("emoji") or "✨")[:8]
+                    for v in _viewers_in_room(session.room_id):
+                        if v.session_id == session.session_id:
+                            continue  # don't echo back to sender
+                        await manager.send_to_ws(v.ws, "viewer_overlay", payload)
+
             # ── stop ──────────────────────────────────────────────────
             elif cmd == "stop":
                 if session.task is not None and not session.task.done():
