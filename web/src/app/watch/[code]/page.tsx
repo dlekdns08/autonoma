@@ -21,13 +21,15 @@
  * existing TTS pipeline so phone viewers hear agents the same way.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
 import VTuberStage from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import Stage from "@/components/Stage";
+import ViewerOverlay from "@/components/ViewerOverlay";
+import { useViewerOverlay } from "@/hooks/useViewerOverlay";
 
 export default function WatchPage() {
   const params = useParams<{ code: string }>();
@@ -66,6 +68,38 @@ export default function WatchPage() {
     if (room?.code === code) return;
     joinRoom(code);
   }, [connected, code, room?.code, joinRoom]);
+
+  // ── Viewer-overlay (cursors + stickers) ──────────────────────────
+  // ``useSwarm`` does not expose its WebSocket (the socket lives in a
+  // private ``wsRef`` inside the hook), and the wiring brief forbids
+  // editing ``useSwarm.ts``. So we feed the overlay a ``null`` socket:
+  // the hook is null-safe (it bails out of its message-listener effect
+  // when ``ws == null``) and our ``sendCommand`` is a no-op. The result
+  // is that the sticker bar still renders and reacts locally, but
+  // remote cursors/stickers won't fan out until the swarm hook gains
+  // a public WS handle. See the deliverable note for details.
+  const overlayWs: WebSocket | null = null;
+  const { state: overlayState } = useViewerOverlay(overlayWs);
+  // Stable per-mount viewer id. ``useState`` with a lazy initializer
+  // is the canonical "compute once at mount" hatch — and it's the only
+  // place React's purity rule lets us call ``crypto.randomUUID`` /
+  // ``Date.now`` / ``Math.random`` without complaint, since the
+  // initializer runs once before render. SSR returns ``"viewer"`` so
+  // hydration matches; the client overrides it on the first paint.
+  const [viewerId] = useState<string>(() => {
+    if (typeof window === "undefined") return "viewer";
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+      return crypto.randomUUID();
+    }
+    return `viewer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  });
+  const overlaySendCommand = useMemo(
+    () => () => {
+      // No-op while we don't have a WS handle. The signature still
+      // matches the component's contract so type-checking passes.
+    },
+    [],
+  );
 
   const idle = state.agents.length === 0;
 
@@ -132,6 +166,18 @@ export default function WatchPage() {
         {/* Chat overlay floats on top of the map; tap-through is fine
             because there are no other interactive elements here. */}
         <ChatOverlay messages={chat} />
+
+        {/* Viewer overlay — cursors + sticker bar. Sits on top of every
+            other element in the viewing area (last child of <main>) so
+            its absolute-positioned children can capture mouse moves and
+            sticker clicks without fighting z-index with the chat
+            overlay. */}
+        <ViewerOverlay
+          viewerId={viewerId}
+          displayName={room?.code ?? "viewer"}
+          sendCommand={overlaySendCommand}
+          remote={overlayState}
+        />
       </main>
     </div>
   );
