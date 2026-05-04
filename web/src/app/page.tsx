@@ -27,6 +27,15 @@ import { vrmFileForAgent } from "@/components/vtuber/vrmCredits";
 import KeyboardHelpModal from "@/components/KeyboardHelpModal";
 import ReviewQueue from "@/components/ReviewQueue";
 import ExecutionTimeline from "@/components/ExecutionTimeline";
+import AchievementsTicker, {
+  type TickerEntry,
+} from "@/components/AchievementsTicker";
+import LiveQuestPanel from "@/components/LiveQuestPanel";
+import {
+  fetchRecentAchievements,
+  type RecentAchievement,
+} from "@/lib/achievements";
+import type { QuestEvent } from "@/lib/quests";
 import type { AgentData, AgentEmote } from "@/lib/types";
 
 // How long a manual-trigger override holds before the agent falls
@@ -296,6 +305,165 @@ function Dashboard() {
   // A viewer is in spectator mode when they joined via a shared URL (not owner)
   const isSpectator = !room.isOwner;
 
+  // ── Achievements ticker ─────────────────────────────────────────────
+  // Initial list comes from the REST endpoint; live additions are
+  // forwarded from the swarm event stream below. ``liveAchievement``
+  // is a single slot — the ticker appends each new reference into its
+  // own internal queue, so we just need to hand it the *latest* match.
+  const [tickerRecent, setTickerRecent] = useState<TickerEntry[]>([]);
+  const [liveAchievement, setLiveAchievement] = useState<TickerEntry | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRecentAchievements(20)
+      .then((rows: RecentAchievement[]) => {
+        if (cancelled) return;
+        setTickerRecent(
+          rows.map((r) => ({
+            achievement_id: r.achievement_id,
+            title: r.title,
+            tier: r.tier,
+            character_name: r.character_name,
+            species_emoji: r.species_emoji,
+            earned_at: r.earned_at,
+          })),
+        );
+      })
+      .catch(() => {
+        // Empty ticker is the desired fallback when the REST call
+        // fails (e.g. backend not yet up). Live events will start
+        // populating it as the WS stream comes online.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Live event subscription ─────────────────────────────────────────
+  // ``useSwarm`` doesn't expose its raw WebSocket, but every event the
+  // socket receives is appended to ``state.events``. Watch the tail of
+  // that list for the events we care about and forward the latest
+  // matching event into the per-feature ``live*`` state slot. The
+  // ticker component dedupes by reference identity, so emitting a new
+  // object only when we actually see a new event keeps it from re-
+  // pushing the same row on every unrelated dashboard re-render.
+  //
+  // ``react-hooks/set-state-in-effect`` is suppressed below because
+  // this is the canonical "subscribe to an external system" case
+  // (the WS-driven event stream that lives inside useSwarm) — exactly
+  // what the rule's documentation calls out as a legitimate use of
+  // setState within an effect.
+  const lastSeenEventIdRef = useRef<number>(-1);
+  const [liveQuestEvent, setLiveQuestEvent] = useState<QuestEvent | null>(null);
+  useEffect(() => {
+    if (state.events.length === 0) return;
+    // Walk only events newer than the last one we processed so every
+    // event is observed exactly once even if the events array is
+    // rebuilt (it's sliced to a 200-event ring buffer in useSwarm).
+    let highest = lastSeenEventIdRef.current;
+    let nextLiveAchievement: TickerEntry | null = null;
+    let nextLiveQuestEvent: QuestEvent | null = null;
+    for (const entry of state.events) {
+      if (entry.id <= lastSeenEventIdRef.current) continue;
+      if (entry.id > highest) highest = entry.id;
+
+      if (entry.event === "character.achievement_earned") {
+        const d = entry.data;
+        const characterName =
+          (d.character_name as string | undefined) ??
+          (d.agent as string | undefined) ??
+          "";
+        const title = (d.title as string | undefined) ?? "";
+        const achievementId =
+          (d.achievement_id as string | undefined) ?? title;
+        if (!characterName || !title) continue;
+        nextLiveAchievement = {
+          achievement_id: achievementId,
+          title,
+          tier: ((d.tier as string | undefined) ?? "bronze") as
+            | "bronze"
+            | "silver"
+            | "gold"
+            | string,
+          character_name: characterName,
+          species_emoji: d.species_emoji as string | undefined,
+          earned_at:
+            (d.earned_at as string | undefined) ??
+            new Date(entry.timestamp).toISOString(),
+          isLive: true,
+        };
+      } else if (
+        entry.event === "quest.proposed" ||
+        entry.event === "quest.activated" ||
+        entry.event === "quest.completed"
+      ) {
+        // Re-shape the wire payload to match the QuestEvent union the
+        // panel consumes. We forward the data as-is; the panel only
+        // reads it to know "something quest-shaped happened" and
+        // refresh its REST cache.
+        const d = entry.data;
+        if (entry.event === "quest.proposed") {
+          const questId = d.quest_id as number | undefined;
+          const sessionIdValue = d.session_id as number | undefined;
+          const text = d.text as string | undefined;
+          if (questId == null || sessionIdValue == null || text == null) continue;
+          nextLiveQuestEvent = {
+            type: "quest.proposed",
+            data: {
+              quest_id: questId,
+              session_id: sessionIdValue,
+              text,
+              votes: d.votes as number | undefined,
+              status: d.status as
+                | "proposed"
+                | "active"
+                | "completed"
+                | "rejected"
+                | undefined,
+              created_at: d.created_at as string | undefined,
+            },
+          };
+        } else if (entry.event === "quest.activated") {
+          const questId = d.quest_id as number | undefined;
+          if (questId == null) continue;
+          nextLiveQuestEvent = {
+            type: "quest.activated",
+            data: {
+              quest_id: questId,
+              session_id: d.session_id as number | undefined,
+              activated_round: d.activated_round as number | undefined,
+            },
+          };
+        } else {
+          const questId = d.quest_id as number | undefined;
+          if (questId == null) continue;
+          nextLiveQuestEvent = {
+            type: "quest.completed",
+            data: {
+              quest_id: questId,
+              session_id: d.session_id as number | undefined,
+              completed_round: d.completed_round as number | undefined,
+            },
+          };
+        }
+      }
+    }
+    if (highest > lastSeenEventIdRef.current) {
+      lastSeenEventIdRef.current = highest;
+    }
+    // Single setState per effect run (only when a relevant event landed).
+    // Multiple matches in one batch collapse to the last one — the
+    // ticker queue + quest panel are both event-driven, so the latest
+    // wins is the right call (the panel polls /api/quests on top of
+    // this for full history, and the ticker keeps a queue internally).
+    if (nextLiveAchievement) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLiveAchievement(nextLiveAchievement);
+    }
+    if (nextLiveQuestEvent) {
+      setLiveQuestEvent(nextLiveQuestEvent);
+    }
+  }, [state.events]);
+
   // Panel visibility — toggled by keyboard shortcuts
   const [showTasks, setShowTasks] = useState(true);
   const [showFiles, setShowFiles] = useState(true);
@@ -483,6 +651,12 @@ function Dashboard() {
         {/* ── Center: pixel map + event log ───────────────────────────── */}
         <div className="flex flex-1 flex-col min-w-0" style={{ padding: "6px", gap: "6px" }}>
 
+          {/* Top-of-stage achievements strip — fed by ``state.events``
+              forwarding for ``character.achievement_earned``. The strip
+              height stays compact so it doesn't eat into the pixel-map
+              area. */}
+          <AchievementsTicker recent={tickerRecent} liveEvent={liveAchievement} />
+
           {/* Pixel map — terminal frame aesthetic */}
           <div
             className="relative flex-[3] min-h-0 rounded-xl overflow-hidden scanlines"
@@ -542,6 +716,20 @@ function Dashboard() {
             relationships={state.relationships}
             onSelectAgent={handleSelectAgent}
           />
+
+          {/* Live quest designer — viewers propose/upvote quests; admins
+              can activate/complete inline. ``sessionId`` may be null on
+              a fresh connect (before the auth.status round-trip), so
+              suppress the panel until it's known. The panel polls /api/
+              quests every 5 s and reconciles via ``liveQuestEvent`` from
+              the swarm WS for sub-poll updates. */}
+          {sessionId != null && (
+            <LiveQuestPanel
+              sessionId={sessionId}
+              isAdmin={user?.role === "admin"}
+              liveQuestEvent={liveQuestEvent}
+            />
+          )}
 
           {showChat && (
             <div style={{ height: 272 }}>
