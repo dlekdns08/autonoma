@@ -42,7 +42,7 @@ router = APIRouter(prefix="/api/live-share", tags=["live-share"])
 # on every poll is O(N×M) over swarm internals. We cache the snapshot
 # for a tiny window and invalidate proactively on the bus events that
 # can mutate the directory shape.
-_DIRECTORY_CACHE: dict[str, list[dict[str, Any]]] = {"snapshot": []}
+_DIRECTORY_CACHE: dict[str, Any] = {"snapshot": [], "_room_count": 0}
 _DIRECTORY_CACHE_TS: float = 0.0
 _DIRECTORY_TTL_SEC: float = 2.0
 
