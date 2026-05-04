@@ -81,6 +81,50 @@ export default function AgentProfilePage() {
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteStatus, setNoteStatus] = useState<string | null>(null);
 
+  // ── Achievements (Feature #12) ────────────────────────────────
+  // The character UUID is only available after the profile resolves;
+  // ``useAgentProfile`` accepts either a name *or* a uuid, but the
+  // achievements endpoint requires the canonical uuid.
+  const characterUuid = profile?.character.uuid ?? null;
+  const [achievements, setAchievements] = useState<AgentAchievement[]>([]);
+  const [achievementsLoading, setAchievementsLoading] = useState(false);
+  const [achievementsError, setAchievementsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!characterUuid) {
+      if (profile && !profile.character.uuid) {
+        // Defensive: profile present but no uuid means the route param
+        // could not be resolved server-side. Surface a TODO so the gap
+        // is visible during dev.
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[agent/profile] cannot determine character uuid for achievements fetch",
+          { name },
+        );
+      }
+      return;
+    }
+    let cancelled = false;
+    setAchievementsLoading(true);
+    setAchievementsError(null);
+    fetchAgentAchievements(characterUuid)
+      .then((res) => {
+        if (cancelled) return;
+        setAchievements(res.items);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAchievementsError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAchievementsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [characterUuid, profile, name]);
+
   const onPin = async () => {
     const trimmed = noteText.trim();
     if (!trimmed) return;
