@@ -244,7 +244,3 @@ async def test_list_anomalies_other_session_isolated(fresh_db) -> None:
     assert rows[0].details["path"] == "x.py"
 
 
-# Marker so a future maintainer can find which rule constants the suite
-# pins down. Touching any of these without updating tests is the signal
-# that you need to think about the rule's behaviour, not just the number.
-pytest.importorskip("sqlalchemy")  # sanity — keeps the import block honest
