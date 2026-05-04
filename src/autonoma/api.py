@@ -4406,3 +4406,39 @@ app.include_router(_standup_router.router)
 app.include_router(_battle_router.router)
 app.include_router(_podcast_router.router)
 app.include_router(_vision_router.router)
+
+# ── 2026-05 feature pack routers ─────────────────────────────────────
+# All twelve are additive — none mutate or shadow earlier routes. Order
+# matters only for FastAPI's first-match rule and these all live under
+# fresh prefixes. Each lazy-imports settings on demand so importing the
+# router is cheap.
+from autonoma.routers import (  # noqa: E402
+    coordinator as _coordinator_router,
+    highlights as _highlights_router,
+    inspire as _inspire_router,
+    achievements as _achievements_router,
+    persona_breed as _persona_breed_router,
+    quests as _quests_router,
+    voice_consent as _voice_consent_router,
+    fingerspell as _fingerspell_router,
+    anomalies as _anomalies_router,
+    ab_compare as _ab_compare_router,
+    metrics as _metrics_router,
+)
+app.include_router(_coordinator_router.router)
+app.include_router(_highlights_router.router)
+app.include_router(_inspire_router.router)
+app.include_router(_achievements_router.router)
+app.include_router(_persona_breed_router.router)
+app.include_router(_quests_router.router)
+app.include_router(_voice_consent_router.router)
+app.include_router(_fingerspell_router.router)
+app.include_router(_anomalies_router.router)
+app.include_router(_ab_compare_router.router)
+app.include_router(_metrics_router.router)
+
+# MCP server is feature-flagged because it changes the security surface
+# (different auth header, JSON-RPC envelope). Off by default.
+if settings.mcp_server_enabled:
+    from autonoma.mcp import server as _mcp_server  # noqa: E402
+    app.include_router(_mcp_server.router)
