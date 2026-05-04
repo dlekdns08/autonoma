@@ -21,6 +21,7 @@ from sqlalchemy import insert, select
 
 from autonoma.db.engine import get_engine, init_db
 from autonoma.db.schema import personas
+from autonoma.db.users import users as users_table
 from autonoma.personas_breed import (
     breed_personas,
     breed_seed_strings,
@@ -29,6 +30,38 @@ from autonoma.personas_breed import (
 
 
 OWNER_ID = "owner-test-uid"
+
+
+async def _ensure_owner(owner_id: str | None) -> None:
+    """Insert a placeholder user so the personas FK is satisfied.
+
+    ``personas.owner_user_id`` is `ForeignKey('users.id', ondelete='SET NULL')`
+    and SQLite's ``PRAGMA foreign_keys=ON`` is set in production-engine
+    configuration, so an INSERT with a phantom owner fails with
+    `IntegrityError: FOREIGN KEY constraint failed`. Inserting a stub user
+    once per test side-steps that without coupling the test to the real
+    auth service.
+    """
+    if not owner_id:
+        return
+    engine = get_engine()
+    async with engine.begin() as conn:
+        existing = (
+            await conn.execute(
+                select(users_table.c.id).where(users_table.c.id == owner_id)
+            )
+        ).first()
+        if existing is not None:
+            return
+        await conn.execute(
+            insert(users_table).values(
+                id=owner_id,
+                username=f"user-{owner_id[:6]}",
+                password_hash="x",
+                role="user",
+                status="active",
+            )
+        )
 
 
 async def _insert_persona(
@@ -41,6 +74,7 @@ async def _insert_persona(
     is_public: bool = False,
 ) -> str:
     pid = str(uuid.uuid4())
+    await _ensure_owner(owner_id)
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(
