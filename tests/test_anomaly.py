@@ -227,6 +227,54 @@ async def test_record_and_list_round_trip(fresh_db) -> None:
     assert payload["details"]["agent"] == "alice"
 
 
+async def test_two_sessions_isolated_under_concurrent_ticks(fresh_db) -> None:
+    """Two ``AnomalyDetector`` instances must not share state.
+
+    Feeding the same agent name into both detectors should produce two
+    independent anomalies, each stamped with its own ``session_id``.
+    Persisting both rows must keep ``list_anomalies(s)`` strictly
+    scoped to ``s``.
+    """
+    await init_db()
+
+    det1 = AnomalyDetector(session_id=1)
+    det2 = AnomalyDetector(session_id=2)
+
+    repeated = "we should refactor the parser before adding new rules"
+
+    # Interleave the speech records — same agent name in each detector.
+    for r in range(1, REPETITION_MIN_HITS + 1):
+        det1.record_speech("alice", repeated, round_number=r)
+        det2.record_speech("alice", repeated, round_number=r)
+
+    # Tick both — each should produce ITS OWN repetition fire.
+    fires1 = det1.tick(round_number=REPETITION_MIN_HITS)
+    fires2 = det2.tick(round_number=REPETITION_MIN_HITS)
+
+    rep1 = [f for f in fires1 if f.kind == "repetition"]
+    rep2 = [f for f in fires2 if f.kind == "repetition"]
+    assert len(rep1) == 1, f"detector 1 missed its repetition: {fires1}"
+    assert len(rep2) == 1, f"detector 2 missed its repetition: {fires2}"
+    # Cross-contamination check: each fire is tagged with its own session.
+    assert rep1[0].session_id == 1
+    assert rep2[0].session_id == 2
+
+    # Persist each one.
+    await record_anomaly(rep1[0])
+    await record_anomaly(rep2[0])
+
+    rows1 = await list_anomalies(1)
+    rows2 = await list_anomalies(2)
+    assert len(rows1) == 1
+    assert len(rows2) == 1
+    assert rows1[0].session_id == 1
+    assert rows1[0].kind == "repetition"
+    assert rows2[0].session_id == 2
+    assert rows2[0].kind == "repetition"
+    # And no cross-leak via ``list_anomalies`` for an unused session.
+    assert await list_anomalies(999) == []
+
+
 async def test_list_anomalies_other_session_isolated(fresh_db) -> None:
     await init_db()
     await record_anomaly(
