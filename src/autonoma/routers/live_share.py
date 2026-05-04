@@ -42,7 +42,7 @@ router = APIRouter(prefix="/api/live-share", tags=["live-share"])
 # on every poll is O(N×M) over swarm internals. We cache the snapshot
 # for a tiny window and invalidate proactively on the bus events that
 # can mutate the directory shape.
-_DIRECTORY_CACHE: dict[str, Any] = {"snapshot": [], "_room_count": 0}
+_DIRECTORY_CACHE: dict[str, Any] = {"snapshot": [], "_signature": frozenset()}
 _DIRECTORY_CACHE_TS: float = 0.0
 _DIRECTORY_TTL_SEC: float = 2.0
 
@@ -172,11 +172,16 @@ def _list_public_rooms() -> list[dict[str, Any]]:
 
     global _DIRECTORY_CACHE_TS
     now = time.monotonic()
+    # Lightweight identity signature: a frozenset of room_ids. Cheap to
+    # build, but distinct enough to detect a swapped-out ``_rooms`` dict
+    # (e.g. a test fixture that clears + repopulates between calls)
+    # without iterating swarm internals.
+    sig = frozenset(_api._rooms.keys())
     cached = _DIRECTORY_CACHE.get("snapshot")
     if (
         cached is not None
         and (now - _DIRECTORY_CACHE_TS) < _DIRECTORY_TTL_SEC
-        and _DIRECTORY_CACHE.get("_room_count") == len(_api._rooms)
+        and _DIRECTORY_CACHE.get("_signature") == sig
     ):
         return cached
 
@@ -192,7 +197,7 @@ def _list_public_rooms() -> list[dict[str, Any]]:
     cards.sort(key=lambda c: (-c["viewer_count"], -c["started_at"]))
 
     _DIRECTORY_CACHE["snapshot"] = cards
-    _DIRECTORY_CACHE["_room_count"] = len(_api._rooms)
+    _DIRECTORY_CACHE["_signature"] = sig
     _DIRECTORY_CACHE_TS = now
     return cards
 
