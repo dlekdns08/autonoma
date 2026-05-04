@@ -161,8 +161,24 @@ def _list_public_rooms() -> list[dict[str, Any]]:
     + freshest live shows lead the grid. Stable enough for the polled
     directory page; the real-time delta channel is the bus events
     ``live_share.session_started`` / ``live_share.session_ended``.
+
+    Backed by a 2-second TTL cache so a polled directory at 1 Hz only
+    rebuilds the card list ~once. Cache is also invalidated by the bus
+    handlers above and by a length-signature mismatch (a room dict
+    cleared from under us, e.g. by a test fixture, must not return
+    stale entries).
     """
     from autonoma import api as _api
+
+    global _DIRECTORY_CACHE_TS
+    now = time.monotonic()
+    cached = _DIRECTORY_CACHE.get("snapshot")
+    if (
+        cached is not None
+        and (now - _DIRECTORY_CACHE_TS) < _DIRECTORY_TTL_SEC
+        and _DIRECTORY_CACHE.get("_room_count") == len(_api._rooms)
+    ):
+        return cached
 
     cards: list[dict[str, Any]] = []
     for room in _api._rooms.values():
@@ -174,6 +190,10 @@ def _list_public_rooms() -> list[dict[str, Any]]:
             logger.exception("[live_share] dropping malformed room %s", room.room_id)
 
     cards.sort(key=lambda c: (-c["viewer_count"], -c["started_at"]))
+
+    _DIRECTORY_CACHE["snapshot"] = cards
+    _DIRECTORY_CACHE["_room_count"] = len(_api._rooms)  # type: ignore[assignment]
+    _DIRECTORY_CACHE_TS = now
     return cards
 
 
