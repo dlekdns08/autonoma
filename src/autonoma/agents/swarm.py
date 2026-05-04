@@ -379,6 +379,113 @@ class AgentSwarm:
         except Exception as exc:  # pragma: no cover — non-critical
             logger.warning("Registry finish_project failed: %s", exc)
 
+        # 2026-05 feature pack — honourable retirement (#2). After the
+        # project is persisted, walk surviving characters and retire any
+        # that have crossed the runs/level thresholds. Failures here
+        # never block the session.
+        if getattr(settings, "retirement_enabled", False):
+            try:
+                from autonoma.world.retirement import (
+                    is_retirement_eligible,
+                    retire_character,
+                )
+                for surv in survivors:
+                    uid = surv.get("character_uuid") or self.registry.resolve_name(
+                        surv.get("name", "")
+                    )
+                    if not uid:
+                        continue
+                    runs = int(surv.get("runs_survived", 0) or 0)
+                    level = int(surv.get("level", 1) or 1)
+                    if is_retirement_eligible(runs, level):
+                        await retire_character(
+                            uid,
+                            project_uuid=getattr(project, "uuid", None),
+                        )
+            except Exception:
+                logger.exception("[retirement] sweep failed; continuing")
+
+    async def _anomaly_tick(self) -> None:
+        """Run the per-round anomaly detector (#18). No-op when disabled."""
+        if not getattr(settings, "anomaly_detection_enabled", False):
+            return
+        if self._anomaly_detector is None:
+            try:
+                from autonoma.anomaly import AnomalyDetector
+                from autonoma.context import current_session_id
+                sid = current_session_id.get(None) or 0
+                self._anomaly_detector = AnomalyDetector(session_id=int(sid or 0))
+            except Exception:
+                logger.exception("[anomaly] detector construction failed; disabling")
+                self._anomaly_detector = False  # poison value
+                return
+        if self._anomaly_detector is False:
+            return
+        try:
+            from autonoma.anomaly import record_anomaly
+            # Feed current per-agent mood snapshot into the detector so the
+            # mood_drift rule has data; speech/file/error events are pushed
+            # by their own emit sites.
+            for name, ag in self.agents.items():
+                mood = getattr(ag, "mood", None)
+                mood_str = (
+                    mood.value
+                    if mood is not None and hasattr(mood, "value")
+                    else str(mood or "")
+                )
+                if mood_str:
+                    self._anomaly_detector.record_mood(name, mood_str, self._round)
+            anomalies = self._anomaly_detector.tick(self._round)
+            for anomaly in anomalies:
+                await record_anomaly(anomaly)
+        except Exception:
+            logger.exception("[anomaly] tick failed; continuing")
+
+    async def _maybe_compact_memoirs(self) -> None:
+        """Periodic memoir compaction across all known characters (#3)."""
+        every = getattr(settings, "memoir_compact_every_rounds", 0)
+        if not every or self._round - self._memoir_last_round < every:
+            return
+        self._memoir_last_round = self._round
+        try:
+            from autonoma.memory.memoir import compact_memoir, should_compact
+            for name, ag in self.agents.items():
+                uid = self.registry.resolve_name(name) if self.registry else None
+                if not uid:
+                    continue
+                if not await should_compact(uid):
+                    continue
+                client = getattr(ag, "_llm_client", None) or getattr(ag, "llm_client", None)
+                if client is None:
+                    continue
+                await compact_memoir(uid, client)
+        except Exception:
+            logger.exception("[memoir] periodic compaction failed; continuing")
+
+    async def _ghost_appearances_2026(self) -> None:
+        """5%-per-round chance to summon a retired character (#2)."""
+        if not getattr(settings, "retirement_enabled", False):
+            return
+        try:
+            from autonoma.world.retirement import summon_ghost_for_round
+            ghost = await summon_ghost_for_round(
+                self._round,
+                list(self.agents.keys()),
+                random.Random(hash(("ghost", self._round))),
+            )
+            if ghost is None:
+                return
+            await bus.emit(
+                "ghost.cameo",
+                round_number=self._round,
+                character_uuid=ghost.character_uuid,
+                name=ghost.name,
+                kind=ghost.kind,
+                memoir=ghost.memoir_text[:240],
+            )
+        except Exception:
+            logger.exception("[ghost] cameo summon failed; continuing")
+
     async def _run_loop(
         self,
         project: ProjectState,
