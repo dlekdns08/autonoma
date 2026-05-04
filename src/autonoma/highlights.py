@@ -224,7 +224,15 @@ class HighlightRecorder:
             score=base_score + self._next_recency_boost(),
             payload=dict(payload),
         )
-        self._buffers[session_id].append(candidate)
+        buf = self._buffers[session_id]
+        buf.append(candidate)
+        # Cap the per-session buffer so long-running sessions don't
+        # accumulate unboundedly. We keep the top-N by score (with the
+        # baked-in recency boost as the tie-breaker), discarding the
+        # rest. Cheap: only runs when the cap is actually exceeded.
+        if len(buf) > MAX_BUFFER_PER_SESSION:
+            buf.sort(key=lambda c: (c.score, c.timestamp), reverse=True)
+            del buf[MAX_BUFFER_PER_SESSION:]
 
     # ── handlers ──────────────────────────────────────────────────────
     # Each handler signature is ``async def(**data)`` to match the bus
