@@ -153,7 +153,7 @@ async def open_market_endpoint(
 @router.get("/markets")
 async def list_markets_endpoint(
     session_id: int = Query(..., description="live session id"),
-    _user: User = Depends(require_active_user),
+    user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     """Return every *open* market in the session, newest first.
 
@@ -161,6 +161,8 @@ async def list_markets_endpoint(
     widget never displays them as bettable.
     """
     _check_enabled()
+    # I2 fix: only the session's owner (or admin) may list markets.
+    assert_session_owner_or_admin(session_id, user)
     markets = await list_open_markets(session_id)
     return {
         "session_id": session_id,
@@ -184,6 +186,9 @@ async def place_bet_endpoint(
     human-readable without an extra join.
     """
     _check_enabled()
+    # I2 fix: bettors must belong to the session whose market they're
+    # touching — stops cross-session bet manipulation.
+    assert_session_owner_or_admin(session_id, user)
     try:
         entry = await place_bet(
             session_id=session_id,
