@@ -22,9 +22,14 @@ _TOKEN = "test-mcp-token"
 @pytest.fixture
 async def client(fresh_db, monkeypatch) -> AsyncIterator[AsyncClient]:
     from autonoma.config import settings as live_settings
+    from autonoma.db.engine import init_db
     from autonoma.mcp.server import router as mcp_router
 
     monkeypatch.setattr(live_settings, "coordinator_token", _TOKEN)
+    # ``fresh_db`` only points the engine at a scratch dir; tools need
+    # the schema actually created or queries trip
+    # ``OperationalError: no such table: run_summary``.
+    await init_db()
 
     app = FastAPI()
     app.include_router(mcp_router)
