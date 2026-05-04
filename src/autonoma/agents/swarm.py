@@ -170,6 +170,11 @@ class AgentSwarm:
         bus.on("agent.spawn_requested", self._on_spawn_request)
         bus.on("agent.recovery_needed", self._on_recovery_needed)
 
+        # 2026-05 feature pack — session-scoped detectors. Lazy-allocated
+        # because their session_id isn't known until ``run`` binds one.
+        self._anomaly_detector: Any = None
+        self._memoir_last_round: int = 0
+
     async def initialize(self, project: ProjectState) -> None:
         """Set up the swarm: director decomposes goal, agents get created."""
         project.agents.append(self.director.persona)
@@ -579,6 +584,12 @@ class AgentSwarm:
 
             # Tick animations
             self._tick_animations()
+            # 2026-05 feature pack — anomaly tick. Detector is opt-in;
+            # when disabled the call is a no-op.
+            await self._anomaly_tick()
+            # Periodic memoir compaction (#3). Cheap when nothing's
+            # eligible — just runs the should_compact query.
+            await self._maybe_compact_memoirs()
             # Fan out mood changes accumulated since the previous tick
             # (direct ``agent.mood = …`` assignments don't self-emit).
             await self._emit_mood_changes()
