@@ -240,6 +240,68 @@ async def test_list_memoir_versions_orders_oldest_first(
     assert versions[1].journal_id_end < versions[2].journal_id_start
 
 
+async def test_compact_skips_when_llm_raises(
+    fresh_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the LLM raises during compaction, no side effects must
+    persist: no ``character_memoirs`` row, no ``memoir_version`` bump,
+    no ``character.memoir_compacted`` bus event.
+
+    The current contract (see ``compact_memoir``) propagates the
+    underlying exception via ``raise``. This test pins that contract
+    AND validates the absence of side effects.
+    """
+    from autonoma.db.schema import character_memoirs
+
+    monkeypatch.setattr(settings, "memoir_compact_min_journal_chars", 1000)
+
+    cuuid = await _seed_character(name="Faulty", role="explorer")
+
+    # Push past threshold so ``should_compact`` is True.
+    chunk = "B" * 600
+    for i in range(1, 11):  # 6000 chars total
+        await _add_journal(cuuid, chunk, round_number=i)
+    assert await should_compact(cuuid) is True
+
+    class ExplodingLLM:
+        async def complete(self, prompt: str) -> str:
+            raise RuntimeError("upstream timeout")
+
+    seen: list[dict] = []
+
+    async def _capture(**data):
+        seen.append(data)
+
+    bus.on("character.memoir_compacted", _capture)
+
+    # Contract: the exception propagates.
+    with pytest.raises(RuntimeError, match="upstream timeout"):
+        await compact_memoir(cuuid, ExplodingLLM())
+
+    # No memoir row was inserted.
+    from sqlalchemy import select as _select
+    engine = get_engine()
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                _select(character_memoirs).where(
+                    character_memoirs.c.character_uuid == cuuid
+                )
+            )
+        ).all()
+    assert rows == [], "no character_memoirs row should be inserted on LLM failure"
+
+    # ``characters.memoir_version`` was NOT bumped — still 0.
+    text, version = await get_latest_memoir(cuuid)
+    assert version == 0
+    assert text == ""
+
+    # No bus event was emitted.
+    assert seen == [], (
+        "character.memoir_compacted must NOT fire when the LLM raises"
+    )
+
+
 async def test_get_latest_memoir_for_unknown_character_returns_zero(
     fresh_db: Path,
 ) -> None:
