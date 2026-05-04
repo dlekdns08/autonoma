@@ -91,7 +91,14 @@ def _consent_error(status_code: int, code: str, message: str) -> HTTPException:
 
 
 async def _require_owned_profile(profile_id: str, user: User) -> Any:
-    """404 for unknown profile, 403 if caller isn't the owner (or admin)."""
+    """Return the profile summary if the caller owns it; otherwise 404.
+
+    I2 fix: both the "no such profile" branch and the "exists but not
+    yours" branch return the same ``404 profile_not_found`` shape so a
+    hostile client can't enumerate which profile_ids exist on the box
+    by watching for 403 vs 404 responses. The non-owner attempt is
+    still audit-logged so an operator can see the probe.
+    """
     summary = await voice_service.get_profile_summary(profile_id)
     if summary is None:
         raise _consent_error(
@@ -100,10 +107,15 @@ async def _require_owned_profile(profile_id: str, user: User) -> Any:
             "해당 프로필을 찾을 수 없습니다.",
         )
     if summary.owner_user_id != user.id and getattr(user, "role", "") != "admin":
+        logger.warning(
+            "[consent] non-owner attempted access profile_id=%s user_id=%s",
+            profile_id,
+            getattr(user, "id", None),
+        )
         raise _consent_error(
-            http_status.HTTP_403_FORBIDDEN,
-            "not_owner",
-            "이 프로필의 동의를 등록할 권한이 없습니다.",
+            http_status.HTTP_404_NOT_FOUND,
+            "profile_not_found",
+            "해당 프로필을 찾을 수 없습니다.",
         )
     return summary
 
