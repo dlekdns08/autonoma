@@ -76,12 +76,58 @@ export function useLiveSessions(
 
   // Initial fetch + steady-state polling. Restarts when the interval
   // changes (e.g. tab visibility throttling could flip it).
+  //
+  // ``document.hidden`` guard: when the tab is backgrounded we skip
+  // the periodic fetch. This avoids burning the operator's API budget
+  // on a tab the user can't see, and matches the browser's own
+  // throttling of timers in hidden tabs (~1 fire/min in Chrome). On
+  // ``visibilitychange`` returning to ``visible`` we kick a refresh
+  // immediately so the grid is up-to-date by the time the user looks
+  // at it — the next polling tick may otherwise be ~5 s away.
+  //
+  // SSR safety: ``document`` is the obvious gate, but ``window`` is
+  // the more common SSR sentinel; we use the former since the rest of
+  // this effect only references ``window`` indirectly via the timer
+  // API and the effect itself only runs after mount.
+  //
+  // NOTE on the WS-driven live-delta path (I7): ``useLiveSessions`` is
+  // mounted by ``/live`` which is a public discovery page that doesn't
+  // (and shouldn't) open a swarm WS. The host's dashboard is the right
+  // place to bump ``liveDeltaTrigger`` when ``live_share.visibility_changed``
+  // fires — it already has a swarm WS via ``useSwarm``. Keeping this
+  // hook ignorant of the WS keeps ``/live`` from spinning up an extra
+  // socket just for discovery. The 5 s polling cadence on the public
+  // page is good enough for a directory listing.
   useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => {
+    const docAvailable = typeof document !== "undefined";
+    const isHidden = () => docAvailable && document.hidden;
+
+    const tick = () => {
+      if (isHidden()) return;
       void refresh();
-    }, pollIntervalMs);
-    return () => window.clearInterval(id);
+    };
+
+    // Initial fetch only when the tab is visible. If the user opens
+    // the page in a backgrounded tab, the next ``visibilitychange``
+    // will trigger the first fetch on focus.
+    tick();
+
+    const id = window.setInterval(tick, pollIntervalMs);
+
+    let onVisibility: (() => void) | null = null;
+    if (docAvailable) {
+      onVisibility = () => {
+        if (!document.hidden) void refresh();
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+
+    return () => {
+      window.clearInterval(id);
+      if (docAvailable && onVisibility) {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
   }, [refresh, pollIntervalMs]);
 
   // Out-of-band refresh whenever the parent bumps the delta trigger.
