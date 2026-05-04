@@ -76,17 +76,31 @@ async def _tool_list_sessions(_params: dict[str, Any]) -> Any:
 
 
 async def _tool_start_swarm_headless(params: dict[str, Any]) -> Any:
-    """Kick off a backend-only swarm run via ``_run_swarm_headless``."""
+    """Kick off a backend-only swarm run via ``_run_swarm_headless``.
+
+    C2 fix (owner_user_id spoofing): the tool no longer accepts an
+    ``owner_user_id`` argument. Previously a holder of the MCP token
+    could spawn a session impersonating any user simply by passing
+    that user's id, which then leaked into ownership-gated artifact
+    endpoints. The MCP token in the current design isn't a *user*
+    token — it's a server-side capability — so we attribute every
+    headless run to a constant ``"mcp"`` placeholder. When MCP grows
+    a real per-user identity model the constant should be replaced
+    with the verified subject from the bound token.
+    """
     goal = str(params.get("goal") or "").strip()
-    owner = str(params.get("owner_user_id") or "").strip()
-    if not goal or not owner:
-        raise ValueError("goal and owner_user_id are required")
+    if not goal:
+        raise ValueError("goal is required")
     preset_id = str(params.get("preset_id") or "")
     max_rounds_raw = params.get("max_rounds", 30)
     try:
         max_rounds = int(max_rounds_raw)
     except (TypeError, ValueError):
         raise ValueError("max_rounds must be an integer")
+
+    # Constant placeholder owner. Any future per-user MCP token model
+    # should derive this from the verified token subject — see docstring.
+    owner = "mcp"
 
     from autonoma.api import _run_swarm_headless  # lazy
 
