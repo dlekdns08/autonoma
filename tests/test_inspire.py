@@ -133,6 +133,52 @@ async def test_inspire_happy_path_returns_five_suggestions(
 
 
 
+async def test_inspire_handles_github_fetch_failure(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the GitHub fetch raises (e.g. timeout), the route must:
+
+    1. Return 502 (per ``_fetch_github_context``'s ``HTTPException``).
+    2. Surface a documented error code (``github_fetch_failed`` /
+       ``github_rate_limited``) in ``detail.code``.
+    3. NOT leak the raw exception text into the response body. (If this
+       assertion fails, that's a real bug — leave the test failing as a
+       finding rather than weakening the assertion.)
+    """
+    import httpx as _httpx
+
+    from autonoma.config import settings
+    monkeypatch.setattr(settings, "inspire_enabled", True)
+
+    async def _boom(self, url, *args, **kwargs):
+        raise _httpx.TimeoutException("upstream slow")
+
+    # Patch the AsyncClient.get used by ``_fetch_github_context``.
+    monkeypatch.setattr(_httpx.AsyncClient, "get", _boom)
+
+    r = await client.post(
+        "/api/inspire",
+        json={"repo_url": "https://github.com/example/repo"},
+    )
+
+    assert r.status_code == 502, r.text
+    body = r.json()
+    code = body["detail"]["code"]
+    # Either of these is "documented" per the route's contract.
+    assert code in {"github_fetch_failed", "github_rate_limited"}, (
+        f"unexpected error code {code!r}"
+    )
+
+    # Raw exception text MUST NOT leak. If this fails, the bug is in
+    # ``routers/inspire.py::_fetch_github_context`` — it currently
+    # f-string-formats the exception into the user-facing message.
+    # TODO(human-triage): leak of raw exception text into response.
+    assert "upstream slow" not in r.text, (
+        "raw exception text leaked into response body — see "
+        "routers/inspire.py::_fetch_github_context"
+    )
+
+
 async def test_inspire_422_without_context(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
