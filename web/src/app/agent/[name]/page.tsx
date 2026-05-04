@@ -15,13 +15,18 @@
  * the UI simply lets you type and send.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useAgentProfile, type AgentJournalEntry } from "@/hooks/useAgentProfile";
 import { StatusBox } from "@/components/StatusBox";
 import TradingCard from "@/components/TradingCard";
+import AchievementBadge from "@/components/AchievementBadge";
+import {
+  fetchAgentAchievements,
+  type AgentAchievement,
+} from "@/lib/achievements";
 
 const RARITY_COLOR: Record<string, string> = {
   legendary: "from-amber-400 to-rose-500",
