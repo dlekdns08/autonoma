@@ -22,7 +22,17 @@ def assert_session_owner_or_admin(session_id: int, user: Any) -> None:
         from autonoma.api import _sessions
     except ImportError:
         return  # CI / standalone uses don't have the live registry
-    sess = _sessions.get(int(session_id))
+    # ``_sessions`` is keyed by int. Path/query params arrive as either
+    # ``int`` or ``str``; coerce defensively. Unparseable handles can't
+    # match anything in the live registry and surface as 404 below.
+    try:
+        sid_int = int(session_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail={"code": "session_not_found"},
+        )
+    sess = _sessions.get(sid_int)
     if sess is None:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
