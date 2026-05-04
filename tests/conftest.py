@@ -9,9 +9,16 @@ from autonoma.event_bus import bus
 
 @pytest.fixture(autouse=True)
 def _reset():
+    # ``_taps`` collects callbacks from ``cutscenes`` and ``tracing``
+    # routers — clearing only ``_handlers`` left these wired across
+    # tests, occasionally re-firing into closed loops with stale
+    # asyncio primitives held by the tap closures and surfacing as
+    # apparently-unrelated test failures.
     bus._handlers.clear()
+    bus._taps.clear()
     yield
     bus._handlers.clear()
+    bus._taps.clear()
 
 
 @pytest.fixture
