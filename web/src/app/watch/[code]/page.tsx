@@ -46,6 +46,7 @@ export default function WatchPage() {
     getMouthAmplitude,
     speakingAgents,
     room,
+    wsRef,
   } = useSwarm();
 
   // Lock the body to the viewport so a long event log can't push the
@@ -70,16 +71,22 @@ export default function WatchPage() {
   }, [connected, code, room?.code, joinRoom]);
 
   // ── Viewer-overlay (cursors + stickers) ──────────────────────────
-  // ``useSwarm`` does not expose its WebSocket (the socket lives in a
-  // private ``wsRef`` inside the hook), and the wiring brief forbids
-  // editing ``useSwarm.ts``. So we feed the overlay a ``null`` socket:
-  // the hook is null-safe (it bails out of its message-listener effect
-  // when ``ws == null``) and our ``sendCommand`` is a no-op. The result
-  // is that the sticker bar still renders and reacts locally, but
-  // remote cursors/stickers won't fan out until the swarm hook gains
-  // a public WS handle. See the deliverable note for details.
-  const overlayWs: WebSocket | null = null;
+  // ``useSwarm`` now exposes ``wsRef`` so we can attach the overlay's
+  // listener directly to the live socket. ``connected`` flips on the
+  // first re-render after open, so reading ``wsRef.current`` here is
+  // correct: stale-closure noise is impossible because the hook
+  // re-subscribes on every render anyway.
+  const overlayWs: WebSocket | null = connected ? wsRef.current : null;
   const { state: overlayState } = useViewerOverlay(overlayWs);
+  const sendOverlayCommand = useCallback(
+    (cmd: object) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(cmd));
+      }
+    },
+    [wsRef],
+  );
   // Stable per-mount viewer id. ``useState`` with a lazy initializer
   // is the canonical "compute once at mount" hatch — and it's the only
   // place React's purity rule lets us call ``crypto.randomUUID`` /
