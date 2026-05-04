@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
+from autonoma._session_owner import assert_session_owner_or_admin
 from autonoma.auth import User, require_active_user, require_admin
 from autonoma.config import settings
 from autonoma.viewer_betting import (
