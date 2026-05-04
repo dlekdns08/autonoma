@@ -4462,6 +4462,8 @@ from autonoma.routers import (  # noqa: E402
     anomalies as _anomalies_router,
     ab_compare as _ab_compare_router,
     metrics as _metrics_router,
+    viewer_betting as _viewer_betting_router,
+    mocap_live as _mocap_live_router,
 )
 app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
@@ -4474,6 +4476,8 @@ app.include_router(_fingerspell_router.router)
 app.include_router(_anomalies_router.router)
 app.include_router(_ab_compare_router.router)
 app.include_router(_metrics_router.router)
+app.include_router(_viewer_betting_router.router)
+app.include_router(_mocap_live_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
