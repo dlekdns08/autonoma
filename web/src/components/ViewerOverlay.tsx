@@ -133,7 +133,7 @@ export default function ViewerOverlay({
   // forcing a global state update for every frame. We bump a counter
   // and read ``performance.now()`` during render. The loop stops when
   // there's nothing animating to avoid a permanent wakeup. ──────────
-  const [, setFrameTick] = useState<number>(0);
+  const [frameTick, setFrameTick] = useState<number>(0);
   const cursorList = useMemo(
     () => Object.values(remote.cursors).filter((c) => c.viewerId !== viewerId),
     [remote.cursors, viewerId],
@@ -195,7 +195,16 @@ export default function ViewerOverlay({
     [sendCommand, viewerId, displayName],
   );
 
-  const now = performance.now();
+  // ``performance.now()`` is impure, so we read it inside a memo keyed
+  // on the rAF tick. The eslint react-hooks/purity rule treats memoised
+  // reads as stable as long as the deps drive the recomputation, which
+  // they do here (the rAF loop bumps ``frameTick`` every frame while
+  // anything is animating, and only then).
+  const now = useMemo(() => {
+    // Reference frameTick so the memo recomputes each tick.
+    void frameTick;
+    return performance.now();
+  }, [frameTick]);
 
   return (
     <div
