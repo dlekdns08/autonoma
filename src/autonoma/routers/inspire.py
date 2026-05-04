@@ -143,12 +143,16 @@ async def _fetch_github_context(repo_url: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
-        logger.warning(f"[inspire] GitHub fetch failed: {exc}")
+        # Log internally with the exception detail, but don't echo
+        # ``str(exc)`` into the response — httpx exception messages
+        # can include URLs, headers, and stack fragments we don't
+        # want leaving the box (I3 fix).
+        logger.exception("[inspire] GitHub fetch failed")
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "github_fetch_failed",
-                "message": f"Could not reach GitHub: {exc}",
+                "message": "Could not reach GitHub.",
             },
         ) from exc
 
