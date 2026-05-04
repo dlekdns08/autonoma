@@ -21,7 +21,7 @@
  * existing TTS pipeline so phone viewers hear agents the same way.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
@@ -100,13 +100,11 @@ export default function WatchPage() {
     }
     return `viewer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   });
-  const overlaySendCommand = useMemo(
-    () => () => {
-      // No-op while we don't have a WS handle. The signature still
-      // matches the component's contract so type-checking passes.
-    },
-    [],
-  );
+  // The ViewerOverlay component expects a stable function reference;
+  // ``sendOverlayCommand`` (defined above) already captures wsRef so
+  // it's stable across renders, but we alias it here for the prop name
+  // the component uses.
+  const overlaySendCommand = sendOverlayCommand;
 
   const idle = state.agents.length === 0;
 
