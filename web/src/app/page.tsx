@@ -447,6 +447,11 @@ function Dashboard() {
           };
         }
       }
+      // Note: ``betting.market_resolved`` and ``live_share.visibility_changed``
+      // are forwarded inside ``/watch/[code]/page.tsx`` (where the
+      // betting widget is mounted) and consumed by ``/live`` and
+      // ``/admin/ab-compare`` via their own polling fallbacks. Adding
+      // dashboard-side fan-out here would create dead state slots.
     }
     if (highest > lastSeenEventIdRef.current) {
       lastSeenEventIdRef.current = highest;
@@ -542,7 +547,14 @@ function Dashboard() {
     return (
       <div className="flex h-screen flex-col relative">
         <Starfield intensity={0.3} />
-        <Header projectName="" round={0} maxRounds={0} sky="" connected={connected} />
+        <Header
+          projectName=""
+          round={0}
+          maxRounds={0}
+          sky=""
+          connected={connected}
+          isAdmin={user?.role === "admin"}
+        />
         <main className="flex-1 relative z-10">
           <IdleScreen
             connected={connected && !needsAuth}
@@ -570,6 +582,7 @@ function Dashboard() {
           maxRounds={state.max_rounds}
           sky={state.sky}
           connected={connected}
+          isAdmin={user?.role === "admin"}
         />
         <main className="flex-1 overflow-hidden relative z-10">
           <EndScreen
@@ -624,6 +637,7 @@ function Dashboard() {
         maxRounds={state.max_rounds}
         sky={state.sky}
         connected={connected}
+        isAdmin={user?.role === "admin"}
       />
 
       <main className="flex flex-1 overflow-hidden relative z-10 gap-0">
