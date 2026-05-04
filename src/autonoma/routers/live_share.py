@@ -172,11 +172,15 @@ def _list_public_rooms() -> list[dict[str, Any]]:
 
     global _DIRECTORY_CACHE_TS
     now = time.monotonic()
-    # Lightweight identity signature: a frozenset of room_ids. Cheap to
-    # build, but distinct enough to detect a swapped-out ``_rooms`` dict
-    # (e.g. a test fixture that clears + repopulates between calls)
+    # Lightweight identity signature: ``(room_id, short_code, is_public)``
+    # per room. Cheap to build, but distinct enough to detect a
+    # swapped-out ``_rooms`` dict (e.g. a test fixture that clears +
+    # repopulates between calls with the same ids but new contents)
     # without iterating swarm internals.
-    sig = frozenset(_api._rooms.keys())
+    sig = frozenset(
+        (rid, getattr(r, "short_code", ""), bool(getattr(r, "is_public", False)))
+        for rid, r in _api._rooms.items()
+    )
     cached = _DIRECTORY_CACHE.get("snapshot")
     if (
         cached is not None
