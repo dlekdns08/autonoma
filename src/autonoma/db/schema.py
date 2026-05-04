@@ -76,6 +76,15 @@ characters = Table(
     Column("is_alive", Integer, nullable=False, default=1),  # 0/1
     Column("first_seen_at", DateTime, nullable=False, server_default=func.current_timestamp()),
     Column("last_seen_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    # Migration 012 — retirement / ghost lifecycle (#2). NULL while the
+    # character is still active; set to retirement timestamp when the
+    # honourable-retirement criteria fire.
+    Column("retired_at", DateTime, nullable=True),
+    # Migration 012 — compacted memoir text (#3). The latest compaction
+    # is kept here as a fast read; the full version trail lives in
+    # ``character_memoirs``.
+    Column("memoir_text", Text, nullable=False, default=""),
+    Column("memoir_version", Integer, nullable=False, default=0),
     # No unique constraint on (seed_hash, name): when a non-legendary
     # character dies, the next run with the same seed spawns a *new* row
     # (fresh uuid) so the graveyard row stays intact. The registry picks
@@ -264,6 +273,10 @@ personas = Table(
     Column("tags_json", Text, nullable=False, default="[]"),
     Column("is_public", Integer, nullable=False, default=0),  # 0/1
     Column("download_count", Integer, nullable=False, default=0),
+    # Migration 012 — persona breeding (#13). JSON list of parent
+    # persona ids when this persona was bred from two existing ones.
+    # Empty for hand-authored personas.
+    Column("parent_persona_ids", Text, nullable=False, default="[]"),
     Column(
         "created_at",
         DateTime,
@@ -676,4 +689,162 @@ voice_transcripts = Table(
         server_default=func.current_timestamp(),
         index=True,
     ),
+)
+
+
+# ── earned_achievements ────────────────────────────────────────────────────
+# Migration 012 — feature #12. Persistent record of every achievement a
+# character has earned. ``achievement_id`` matches a key in
+# ``world.ACHIEVEMENTS``; the row is created the first time it fires.
+earned_achievements = Table(
+    "earned_achievements",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("achievement_id", String(64), nullable=False),
+    Column("tier", String(16), nullable=False, default=""),
+    Column("earned_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    UniqueConstraint("character_uuid", "achievement_id", name="uq_earned_ach"),
+)
+
+Index("ix_earned_ach_char", earned_achievements.c.character_uuid)
+
+
+# ── character_memoirs ─────────────────────────────────────────────────────
+# Migration 012 — feature #3. Append-only history of compacted memoirs.
+# Most lookups want the latest version, which is mirrored on
+# ``characters.memoir_text`` / ``characters.memoir_version``; this table
+# holds the trail so we can show the character growing across versions.
+character_memoirs = Table(
+    "character_memoirs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column("version", Integer, nullable=False, default=1),
+    Column("text", Text, nullable=False),
+    # Source markers — what range of journal rows fed this memoir.
+    Column("journal_id_start", Integer, nullable=False, default=0),
+    Column("journal_id_end", Integer, nullable=False, default=0),
+    Column("token_estimate", Integer, nullable=False, default=0),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    UniqueConstraint("character_uuid", "version", name="uq_memoir_char_version"),
+)
+
+
+# ── ghost_appearances ─────────────────────────────────────────────────────
+# Migration 012 — feature #2. Each retired/dead character is recorded
+# here so future runs can summon them as advisors or cameo dreams.
+ghost_appearances = Table(
+    "ghost_appearances",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column(
+        "project_uuid",
+        String(36),
+        ForeignKey("projects.project_uuid", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column("kind", String(16), nullable=False, default="dream"),  # dream|advice|cameo
+    Column("round_number", Integer, nullable=False, default=0),
+    Column("witnessed_by", String(64), nullable=False, default=""),
+    Column("text", Text, nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+
+# ── session_anomalies ─────────────────────────────────────────────────────
+# Migration 012 — feature #18. Per-round flags emitted by the anomaly
+# detector. The AB-compare view (#19) joins these to ``run_summary``.
+session_anomalies = Table(
+    "session_anomalies",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False, index=True),
+    Column("round_number", Integer, nullable=False, default=0),
+    Column("kind", String(32), nullable=False),  # repetition|mood_drift|file_churn|stall|llm_error_burst
+    Column("severity", String(8), nullable=False, default="warn"),  # info|warn|crit
+    Column("details_json", Text, nullable=False, default="{}"),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+)
+
+
+# ── viewer_bets ───────────────────────────────────────────────────────────
+# Migration 012 — feature #4. Channel-point style viewer bets on swarm
+# events. Resolution is server-side at boss kill / round close.
+viewer_bets = Table(
+    "viewer_bets",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False, index=True),
+    Column("market_id", String(64), nullable=False, index=True),
+    Column("question", String(256), nullable=False, default=""),
+    Column("opened_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("closes_at_round", Integer, nullable=False, default=0),
+    Column("resolved_at", DateTime, nullable=True),
+    Column("winning_option", String(64), nullable=False, default=""),
+    Column("status", String(16), nullable=False, default="open"),  # open|locked|resolved|cancelled
+    UniqueConstraint("session_id", "market_id", name="uq_viewer_bet_market"),
+)
+
+
+viewer_bet_entries = Table(
+    "viewer_bet_entries",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "market_id",
+        String(64),
+        nullable=False,
+        index=True,
+    ),
+    Column("session_id", Integer, nullable=False, index=True),
+    Column("viewer_id", String(64), nullable=False, index=True),
+    Column("display_name", String(64), nullable=False, default=""),
+    Column("option", String(64), nullable=False),
+    Column("stake", Integer, nullable=False, default=10),
+    Column("placed_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("payout", Integer, nullable=False, default=0),
+    UniqueConstraint("market_id", "session_id", "viewer_id", name="uq_bet_entry"),
+)
+
+
+# ── live_quests ───────────────────────────────────────────────────────────
+# Migration 012 — feature #14. Operator/viewer-authored quest cards
+# voted on, then injected as a swarm-wide buff/objective for one round.
+live_quests = Table(
+    "live_quests",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("session_id", Integer, nullable=False, index=True),
+    Column("text", String(256), nullable=False),
+    Column("votes", Integer, nullable=False, default=0),
+    Column("status", String(16), nullable=False, default="proposed"),  # proposed|active|completed|skipped
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("activated_round", Integer, nullable=True),
+    Column("completed_round", Integer, nullable=True),
 )
