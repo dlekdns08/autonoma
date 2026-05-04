@@ -21,7 +21,7 @@
  * existing TTS pipeline so phone viewers hear agents the same way.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
@@ -108,6 +108,45 @@ export default function WatchPage() {
   // the component uses.
   const overlaySendCommand = sendOverlayCommand;
 
+  // ── Betting market resolution fan-out (I1) ─────────────────────────
+  // Forward the latest ``betting.market_resolved`` bus event into the
+  // widget so balance/leaderboard refresh immediately rather than
+  // waiting for the next 5s poll. We only keep the most-recent
+  // resolved market — the polling fallback handles the rare case
+  // where multiple markets settle in the same WS tick.
+  const lastBettingEventIdRef = useRef<number>(-1);
+  const [liveBettingResolution, setLiveBettingResolution] = useState<
+    import("@/lib/viewerBettingApi").ApiResolveSummary | null
+  >(null);
+  useEffect(() => {
+    if (state.events.length === 0) return;
+    let highest = lastBettingEventIdRef.current;
+    let next: import("@/lib/viewerBettingApi").ApiResolveSummary | null = null;
+    for (const entry of state.events) {
+      if (entry.id <= lastBettingEventIdRef.current) continue;
+      if (entry.id > highest) highest = entry.id;
+      if (entry.event !== "betting.market_resolved") continue;
+      const d = entry.data;
+      const marketId = d.market_id as string | undefined;
+      const winning = d.winning_option as string | undefined;
+      if (!marketId || !winning) continue;
+      next = {
+        market_id: marketId,
+        winning_option: winning,
+        total_stake: (d.total_stake as number | undefined) ?? 0,
+        total_payout: (d.total_payout as number | undefined) ?? 0,
+        winners: (d.winners as number | undefined) ?? 0,
+        losers: (d.losers as number | undefined) ?? 0,
+      };
+    }
+    if (highest > lastBettingEventIdRef.current) {
+      lastBettingEventIdRef.current = highest;
+    }
+    if (next) {
+      setLiveBettingResolution(next);
+    }
+  }, [state.events]);
+
   const idle = state.agents.length === 0;
 
   return (
@@ -182,7 +221,10 @@ export default function WatchPage() {
             while the WS hello round-trip is in flight. */}
         {sessionId !== null && sessionId > 0 ? (
           <div className="pointer-events-auto absolute bottom-2 right-2 z-30 w-[280px] max-w-[90vw]">
-            <ViewerBettingLiveWidget sessionId={sessionId} />
+            <ViewerBettingLiveWidget
+              sessionId={sessionId}
+              liveResolution={liveBettingResolution}
+            />
           </div>
         ) : null}
 
