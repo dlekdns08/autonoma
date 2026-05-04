@@ -89,7 +89,12 @@ export default function BGMToggle({ mood = "calm", events }: BGMToggleProps) {
 
   return (
     <div
-      className="fixed bottom-2 right-2 z-50 flex items-center gap-2"
+      // Pinned to bottom-right; on narrow screens (< sm) we drop the
+      // slider entirely (hover doesn't exist on touch) and shift the
+      // button up so it doesn't collide with the watch-page betting
+      // widget or the chat panel's typing indicator. Use ``pointer-events:auto``
+      // explicitly so the wrapper doesn't block any underlying overlays.
+      className="pointer-events-auto fixed bottom-2 right-2 z-50 flex items-center gap-2 sm:bottom-2 max-sm:bottom-16"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
