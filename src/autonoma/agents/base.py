@@ -851,6 +851,37 @@ Rules:
             description=desc,
         )
         self._check_and_emit_achievements()
+        # 2026-05 feature pack — CI loop (#9). Run a sandboxed
+        # syntax/lint check on the created file; on failure, fold a
+        # fix-task into this agent's inbox for the next round. Best
+        # effort: any error here is logged and ignored so a flaky
+        # checker can't poison the action.
+        if getattr(settings, "ci_loop_enabled", False):
+            try:
+                from autonoma.ci_loop import run_ci_check, format_fix_task
+                ci = await run_ci_check(path, content)
+                if not ci.ok:
+                    fix_msg = AgentMessage(
+                        sender="ci",
+                        recipient=self.name,
+                        msg_type=MessageType.TASK_ASSIGNMENT,
+                        content=format_fix_task(ci),
+                    )
+                    self.inbox.append(fix_msg)
+                    await bus.emit(
+                        "ci.failed",
+                        agent=self.name,
+                        path=path,
+                        message=ci.message[:200],
+                    )
+                else:
+                    await bus.emit(
+                        "ci.passed",
+                        agent=self.name,
+                        path=path,
+                    )
+            except Exception:
+                logger.exception("[ci] check failed; continuing")
         return {"agent": self.name, "action": "create_file", "path": path}
 
     async def _action_send_message(self, decision: dict, project: ProjectState) -> dict[str, Any]:
@@ -1293,6 +1324,25 @@ Rules:
             self.memory.remember(f"Achievement unlocked: {ach['title']}", "success", self._round_number)
             # Event emission is fire-and-forget since we can't await here
             # The swarm loop will pick it up
+        # 2026-05 feature pack — persist newly-earned achievements (#12).
+        # The character_uuid lookup goes through the registry attached
+        # to ``self.bones`` (set by the swarm spawn path); when no uuid
+        # is available (CI / disabled-registry runs) the persist is
+        # skipped silently. Fire-and-forget task so the sync action loop
+        # doesn't block.
+        if newly_earned:
+            uid = getattr(self, "character_uuid", "") or getattr(
+                getattr(self, "bones", None), "character_uuid", ""
+            )
+            if uid:
+                try:
+                    import asyncio as _asyncio
+                    from autonoma.achievements_db import batch_record
+                    _asyncio.get_event_loop().create_task(
+                        batch_record(uid, list(newly_earned))
+                    )
+                except Exception:
+                    logger.debug("[achievements] persist skipped", exc_info=True)
 
     # ── TUI Helpers ────────────────────────────────────────────────────
 
