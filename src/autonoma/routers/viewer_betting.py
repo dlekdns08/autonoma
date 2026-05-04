@@ -257,10 +257,12 @@ async def resolve_market_endpoint(
 async def leaderboard_endpoint(
     session_id: int = Query(..., description="live session id"),
     limit: int = Query(20, description="max rows to return; capped at 200"),
-    _user: User = Depends(require_active_user),
+    user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     """Top bettors by net play-money winnings in the session."""
     _check_enabled()
+    # I2 fix: only the session's owner (or admin) may view its leaderboard.
+    assert_session_owner_or_admin(session_id, user)
     rows = await leaderboard(session_id=session_id, limit=limit)
     return {
         "session_id": session_id,
