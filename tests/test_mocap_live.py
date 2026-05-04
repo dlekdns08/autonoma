@@ -231,6 +231,19 @@ def test_session_ended_carries_counts(
         ws.send_text(json.dumps(_good_frame()))
         ws.close()
 
+    # The server's ``finally`` emits ``mocap.frame.session_ended`` via
+    # an ``await bus.emit(...)`` which is scheduled on the loop. In
+    # isolation the TestClient join always lets it complete before
+    # ``with`` exits, but under the full suite (with other async work
+    # in flight) the emit can race with the assert below. Poll for up
+    # to 0.5s — long enough to cover the legitimate emit window,
+    # short enough that a real bug still trips the assert.
+    import time
+    for _ in range(25):
+        if any(e[0] == "mocap.frame.session_ended" for e in captured_events):
+            break
+        time.sleep(0.02)
+
     end_events = [e for e in captured_events if e[0] == "mocap.frame.session_ended"]
     assert len(end_events) == 1
     payload = end_events[0][1]
