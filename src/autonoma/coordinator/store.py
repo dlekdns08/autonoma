@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -263,7 +264,7 @@ class CoordinatorStore:
                         continue
                     if cand.instance_id == head.instance_id:
                         continue
-                    match_id = MatchInvite().id  # reuse id generator
+                    match_id = uuid.uuid4().hex
                     head.match_id = match_id
                     head.opponent_invite_id = cand.id
                     head.opponent_instance_id = cand.instance_id
