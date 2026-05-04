@@ -36,6 +36,13 @@ import { useSwarm } from "@/hooks/useSwarm";
 import VTuberStage, { type BackdropPreset } from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import AuthModal from "@/components/AuthModal";
+import AchievementsTicker, {
+  type TickerEntry,
+} from "@/components/AchievementsTicker";
+import {
+  fetchRecentAchievements,
+  type RecentAchievement,
+} from "@/lib/achievements";
 
 // Next 15 requires `useSearchParams` consumers to be inside a Suspense
 // boundary so static prerender can stream without pulling the search
@@ -78,6 +85,41 @@ function ObsContent() {
 
   const needsAuth = authState.status !== "authenticated";
   const showChat = params.get("chat") !== "0";
+  const showTicker = params.get("ticker") !== "0";
+
+  // ── Achievements ticker — chromakey-friendly transparent strip at the
+  //    top of the OBS feed. Initial list is fetched once on mount; we
+  //    don't subscribe to live ``character.achievement_earned`` here
+  //    because the OBS view is downstream of the dashboard's WS state
+  //    anyway (consumers compose the streams in OBS). The static feed
+  //    refreshes on remount/auth changes.
+  const [tickerRecent, setTickerRecent] = useState<TickerEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRecentAchievements(20)
+      .then((rows: RecentAchievement[]) => {
+        if (cancelled) return;
+        // Map RecentAchievement → TickerEntry (the component's input
+        // shape). The two contracts differ only in optional fields.
+        setTickerRecent(
+          rows.map((r) => ({
+            achievement_id: r.achievement_id,
+            title: r.title,
+            tier: r.tier,
+            character_name: r.character_name,
+            species_emoji: r.species_emoji,
+            earned_at: r.earned_at,
+          })),
+        );
+      })
+      .catch(() => {
+        // Silently ignore — an empty ticker is the desired fallback
+        // when the API is unreachable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Override the root layout's body background for transparent/chroma
   // modes. We do this via a one-shot effect rather than a route-level
@@ -121,6 +163,16 @@ function ObsContent() {
       ) : (
         <div className="flex h-full items-center justify-center font-mono text-sm text-white/40">
           Awaiting cast…
+        </div>
+      )}
+
+      {/* Recent-achievements ticker — anchored at the top, kept narrow
+          so it composites cleanly over a chromakey or transparent feed
+          (``?bg=green|blue|transparent``). Hidden via ``?ticker=0`` for
+          minimal capture mode. */}
+      {showTicker && (
+        <div className="pointer-events-none absolute left-0 right-0 top-0 z-20 px-3 py-2">
+          <AchievementsTicker recent={tickerRecent} />
         </div>
       )}
 
