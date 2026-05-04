@@ -47,6 +47,7 @@ from typing import Any
 
 from sqlalchemy import insert, select
 
+from autonoma.config import settings
 from autonoma.db.engine import get_engine
 from autonoma.db.schema import session_anomalies
 from autonoma.event_bus import bus
