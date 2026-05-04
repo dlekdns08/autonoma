@@ -129,11 +129,15 @@ export default function ViewerOverlay({
     };
   }, []);
 
-  // ── rAF tick: drives sticker animations + cursor fade without
-  // forcing a global state update for every frame. We bump a counter
-  // and read ``performance.now()`` during render. The loop stops when
-  // there's nothing animating to avoid a permanent wakeup. ──────────
-  const [frameTick, setFrameTick] = useState<number>(0);
+  // ── rAF tick: drives sticker animations + cursor fade. We push
+  // ``performance.now()`` into state from inside the rAF callback so
+  // render stays pure (React 19's react-hooks/purity rule rejects
+  // calling ``performance.now()`` during render or inside ``useMemo``).
+  // The loop stops when nothing is animating to avoid permanent
+  // wakeups.
+  const [renderNow, setRenderNow] = useState<number>(() =>
+    typeof performance !== "undefined" ? performance.now() : 0,
+  );
   const cursorList = useMemo(
     () => Object.values(remote.cursors).filter((c) => c.viewerId !== viewerId),
     [remote.cursors, viewerId],
@@ -147,7 +151,7 @@ export default function ViewerOverlay({
     if (!hasAnimating) return;
     let raf = 0;
     const loop = () => {
-      setFrameTick((n) => (n + 1) & 0xffff);
+      setRenderNow(performance.now());
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
