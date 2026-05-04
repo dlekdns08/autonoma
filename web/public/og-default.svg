@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="Autonoma — Self-Organizing Agent Swarm">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#1a1530"/>
+      <stop offset="60%" stop-color="#0d0a1c"/>
+      <stop offset="100%" stop-color="#0a0a12"/>
+    </radialGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f0abfc"/>
+      <stop offset="100%" stop-color="#a5b4fc"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g opacity="0.55" fill="none" stroke="#a5b4fc" stroke-width="1.25">
+    <circle cx="600" cy="315" r="80"/>
+    <circle cx="600" cy="315" r="150"/>
+    <circle cx="600" cy="315" r="230"/>
+  </g>
+  <g fill="#f0abfc">
+    <circle cx="600" cy="235" r="6"/>
+    <circle cx="708" cy="290" r="5"/>
+    <circle cx="708" cy="340" r="5"/>
+    <circle cx="600" cy="395" r="6"/>
+    <circle cx="492" cy="340" r="5"/>
+    <circle cx="492" cy="290" r="5"/>
+  </g>
+  <text x="600" y="305" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="120" font-weight="800" fill="url(#brand)" text-anchor="middle" letter-spacing="-2">Autonoma</text>
+  <text x="600" y="370" font-family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="32" font-weight="500" fill="#cbd5f5" text-anchor="middle" letter-spacing="2">Self-Organizing Agent Swarm</text>
+  <text x="600" y="560" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" fill="#7c7a99" text-anchor="middle" letter-spacing="6">autonoma.koala.ai.kr</text>
+</svg>
