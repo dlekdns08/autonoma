@@ -205,12 +205,6 @@ class Settings(BaseSettings):
     # Minimum seconds between auto-comments so the agent doesn't spam.
     vision_agent_cooldown_s: int = 60
 
-    # ── Persistence (feature #5) ──
-    # When False, agent identities, diaries, and relationships are
-    # session-scoped as they always were. When True they persist across
-    # sessions keyed by (owner_user_id, role, name).
-    persistent_agent_identities: bool = True
-
     # ── Standup podcast (feature #10) ──
     standup_enabled: bool = False
     standup_output_dir: Path = Path("./output/standups")
@@ -255,9 +249,10 @@ class Settings(BaseSettings):
     voice_asr_default_language: str = "ko"
 
     # ── 2026-05 feature pack ──────────────────────────────────────────
-    # #1 Swarm-vs-swarm coordinator. When set, a coordinator service URL
-    # other Autonoma instances dial into for matchmaking + scoring.
-    coordinator_url: str = ""
+    # #1 Swarm-vs-swarm coordinator. The coordinator HTTP service is
+    # this same Autonoma instance — no separate URL needed for now;
+    # peers POST to ``/api/coordinator/*`` directly. The shared HMAC
+    # token is also reused as the MCP server's ``X-MCP-Token``.
     coordinator_token: str = ""
 
     # #3 Memoir compaction — every N rounds, agents whose journal grew
@@ -316,6 +311,11 @@ class Settings(BaseSettings):
     # round trips one of the heuristics (repetition, mood drift, file
     # churn). Persisted to session_anomalies for the AB compare view.
     anomaly_detection_enabled: bool = True
+    # Sliding-window size in rounds for the detector. The default 10
+    # works well for short demos; long-running headless swarms (>200
+    # rounds) probably want 30-50 so a single noisy round doesn't
+    # dominate the verdict.
+    anomaly_window_rounds: int = 10
 
     # #4 Viewer betting — channel-points style. Disabled by default
     # because it interacts with chat moderation policy in some regions.
