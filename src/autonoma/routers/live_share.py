@@ -21,6 +21,7 @@ disappears and so should its public flag.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
@@ -33,6 +34,39 @@ from autonoma.event_bus import bus
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/live-share", tags=["live-share"])
+
+
+# ── Directory-feed TTL cache (I9) ─────────────────────────────────────
+# The ``GET /api/live-share/sessions`` endpoint is polled aggressively
+# from the public ``/live`` directory page; rebuilding a card per room
+# on every poll is O(N×M) over swarm internals. We cache the snapshot
+# for a tiny window and invalidate proactively on the bus events that
+# can mutate the directory shape.
+_DIRECTORY_CACHE: dict[str, list[dict[str, Any]]] = {"snapshot": []}
+_DIRECTORY_CACHE_TS: float = 0.0
+_DIRECTORY_TTL_SEC: float = 2.0
+
+
+def _invalidate_directory_cache() -> None:
+    """Force the next ``_list_public_rooms`` call to rebuild from scratch."""
+    global _DIRECTORY_CACHE_TS
+    _DIRECTORY_CACHE_TS = 0.0
+
+
+async def _on_visibility_changed(**_data: Any) -> None:
+    _invalidate_directory_cache()
+
+
+async def _on_swarm_ended(**_data: Any) -> None:
+    _invalidate_directory_cache()
+
+
+# Subscribe at module load so the cache stays consistent without each
+# emitter knowing about the directory feed. The handlers are no-ops if
+# the bus is reset (e.g. by tests); the length-signature fallback in
+# ``_list_public_rooms`` guarantees correctness in that case.
+bus.on("live_share.visibility_changed", _on_visibility_changed)
+bus.on("swarm.ended", _on_swarm_ended)
 
 
 # ── Request models ────────────────────────────────────────────────────
