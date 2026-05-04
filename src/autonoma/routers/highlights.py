@@ -50,6 +50,10 @@ async def list_highlights(
     """
     if not session_id:
         raise _err(400, "missing_session", "session_id is required.")
+    # IDOR fix (C5): refuse to surface highlight candidates for a
+    # session the caller doesn't own. 404 (not 403) so a hostile
+    # client can't enumerate live session ids.
+    assert_session_owner_or_admin(session_id, user)
     recorder = get_recorder()
     candidates = recorder.snapshot(session_id)
     return {
@@ -77,6 +81,9 @@ async def request_clip(
     """
     if not session_id:
         raise _err(400, "missing_session", "session_id is required.")
+    # Same IDOR check (C5) as the GET handler — only the session
+    # owner (or an admin) can request a clip.
+    assert_session_owner_or_admin(session_id, user)
 
     body = dict(payload or {})
     kind = str(body.get("kind") or "manual")
