@@ -32,7 +32,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
+from autonoma._session_owner import assert_session_owner_or_admin
 from autonoma.auth import User, require_active_user, require_admin
+from autonoma.event_bus import bus
 from autonoma.quests import (
     QuestTextEmpty,
     QuestTextTooLong,
@@ -122,6 +124,11 @@ async def propose(
     insert is forgiving about everything else (timestamps and the
     ``proposed`` status come from server defaults).
     """
+    # I2 fix: only the session's owner (or admin) may add quests to it.
+    # If the api._sessions registry isn't loaded (e.g. test harness with
+    # no live router), the helper no-ops and the proposal still goes
+    # through.
+    assert_session_owner_or_admin(body.session_id, user)
     try:
         quest_id = await propose_quest(body.session_id, body.text)
     except QuestTextEmpty as exc:
