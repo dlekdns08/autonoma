@@ -348,12 +348,13 @@ async def start_listening_to_bus() -> None:
     bridge = get_bridge()
     if bridge is None:
         # Bridge disabled — nothing to do, but stay alive so the caller
-        # can treat the task uniformly.
+        # can treat the task uniformly. No bus subscriptions are
+        # registered in this branch so a disabled bridge doesn't leak
+        # handlers (I14).
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             return
-        return
 
     async def _on_mocap_frame(
         bones: dict[str, Any] | None = None,
