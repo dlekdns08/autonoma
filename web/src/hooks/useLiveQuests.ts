@@ -51,10 +51,14 @@ export function useLiveQuests(
   const [quests, setQuests] = useState<Quest[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Latch the latest sessionId/enabled into refs so the polling effect
-  // captures stable values without re-creating timers on every render.
+  // Latch the latest sessionId into a ref so the polling effect captures
+  // a stable read without recreating its timer when the parent rerenders
+  // for other reasons. The ref is updated from an effect (per React 19's
+  // ``react-hooks/refs`` rule which forbids ref writes during render).
   const sessionRef = useRef(sessionId);
-  sessionRef.current = sessionId;
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
 
   const refresh = useCallback(async () => {
     try {
