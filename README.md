@@ -37,6 +37,32 @@ gestures driven by the agents' actual behavior.
 - **Optional TTS** — self-hosted OmniVoice zero-shot cloning (MPS/CUDA/CPU) with per-agent voice assignment and budget caps.
 - **Sandboxed execution** — agents run code they write inside a bubblewrap sandbox with CPU / wall-time / memory limits.
 
+### 2026-05 feature pack
+
+A second wave of opt-in features, all behind `AUTONOMA_*_ENABLED` flags
+(see [`.env.example`](./.env.example)). Off by default; flip the flag
+to enable.
+
+- **Live share & directory** — `/live` lists every public room; `/share/{code}` is the shareable landing page with Open-Graph metadata. Hosts toggle visibility per session.
+- **Achievements & memoirs** — XP unlocks persist in `earned_achievements`; long-running characters get periodic LLM-summarised memoirs that compress their journal into the system prompt.
+- **Honourable retirement & ghost cameos** — characters who survive `retirement_min_runs` × `retirement_min_level` retire; their compacted memoir lives on as a 5%-per-round dream cameo in future runs.
+- **Auto-highlight reel** — server-side detection of clip-worthy moments (boss kills, raid victories, donation spikes); the OBS overlay records the actual MP4 from the buffer.
+- **Live quests** — viewers propose / vote on round-objective cards; the winner activates as a swarm-wide buff for one round.
+- **Viewer betting** — channel-points style markets; viewers stake 10/50/100 on outcomes, leaderboard tracks lifetime winnings.
+- **Multi-viewer cursors + stickers** — spectators see each other's mouse trails on the stage and can fling emoji.
+- **Procedural BGM** — Web-Audio synth crossfades between calm/focus/tension layers based on the swarm's mood; one-shot pulses on boss kicks and raid fanfares.
+- **Persona breeding** — combine two published persona seeds into a child persona with merged tags and blended `prompt_style`.
+- **Goal recommender** — `/api/inspire` reads a GitHub URL or file tree and proposes 5 next-feature goals via the LLM.
+- **Sign-language fingerspelling** — Hangul-jamo fallback that turns out-of-vocabulary words into fingerspell pose plans.
+- **Voice consent + watermark** — voice profiles require a recorded consent phrase before TTS use; synthesised audio is LSB-watermarked.
+- **VMC/OSC bridge** — push live mocap frames to VRChat / VMC4U over OSC UDP. The browser's `/mocap` page becomes a head-tracker for any external 3D receiver.
+- **Anomaly detection** — repetition, mood-drift, file-churn, LLM-error-burst rules emit `session.anomaly` events that surface in the A/B compare report.
+- **A/B preset comparison** — pick two finished runs (`/admin/ab-compare`), compare tasks-done %, rounds, anomalies, LLM cost.
+- **Swarm-vs-swarm coordinator** — invite-based matchmaking + ELO leaderboard. The local instance hosts the coordinator endpoints under `/api/coordinator/*`.
+- **MCP server** — exposes `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events` as MCP tools so Claude Code / Cursor can drive Autonoma directly. Off by default; gated by `AUTONOMA_MCP_SERVER_ENABLED`.
+- **Auto CI loop** — every file an agent creates is sandbox-checked (ruff for `.py`, `tsc` for `.ts/.tsx`, `json.loads` for `.json`); failures fold back into the agent's inbox as a fix-task.
+- **OpenTelemetry + Prometheus** — `setup_otel()` exports traces to OTLP; `/metrics` serves Prometheus scrape format.
+
 ## Quick start
 
 ### Prerequisites
