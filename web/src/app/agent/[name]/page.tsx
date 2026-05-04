@@ -318,6 +318,48 @@ export default function AgentProfilePage() {
           <TradingCard profile={profile} />
         </section>
 
+        {/* ── Achievements (Feature #12) ──────────────────────── */}
+        <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+          <h2 className="mb-3 font-mono text-sm font-semibold text-white/80">
+            업적 {achievements.length > 0 ? `(${achievements.length})` : ""}
+          </h2>
+          {!characterUuid ? (
+            <p className="font-mono text-xs text-amber-300/80">
+              TODO: character uuid를 라우트에서 확인할 수 없어 업적을 불러오지 못했습니다.
+            </p>
+          ) : achievementsLoading ? (
+            <p className="font-mono text-xs text-white/40">불러오는 중…</p>
+          ) : achievementsError ? (
+            <p className="font-mono text-xs text-rose-300">
+              업적 로드 실패: {achievementsError}
+            </p>
+          ) : achievements.length === 0 ? (
+            <p className="font-mono text-xs text-white/40">
+              아직 획득한 업적이 없습니다.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+              {achievements.map((a) => (
+                <div
+                  key={`${a.achievement_id}-${a.earned_at}`}
+                  className="flex flex-col items-center gap-1"
+                >
+                  <AchievementBadge
+                    id={a.achievement_id}
+                    title={a.title}
+                    description={a.description}
+                    tier={a.tier}
+                    size="md"
+                  />
+                  <div className="text-center font-mono text-[9px] text-white/40">
+                    +{a.xp_reward} XP · {a.earned_at.slice(0, 10)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* ── Relationships ───────────────────────────────────── */}
         <section className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
           <h2 className="mb-3 font-mono text-sm font-semibold text-white/80">
