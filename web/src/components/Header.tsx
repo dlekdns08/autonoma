@@ -1,11 +1,18 @@
 "use client";
 
+import Link from "next/link";
+
 interface Props {
   projectName: string;
   round: number;
   maxRounds: number;
   sky: string;
   connected: boolean;
+  /** Caller passes ``user?.role === "admin"`` so we can conditionally
+   *  surface admin-only links without each header consumer having to
+   *  inline the check. Optional so non-auth pages (the OBS feed, the
+   *  share landing) can mount the header without an auth context. */
+  isAdmin?: boolean;
 }
 
 const SKY_COLOR: Record<string, string> = {
@@ -22,17 +29,41 @@ function skyDotClass(sky: string): string {
   return SKY_COLOR[key] ?? "bg-violet-500";
 }
 
-export default function Header({ projectName, round, maxRounds, sky, connected }: Props) {
+export default function Header({
+  projectName,
+  round,
+  maxRounds,
+  sky,
+  connected,
+  isAdmin = false,
+}: Props) {
   const progressPct = maxRounds > 0 ? Math.min(100, (round / maxRounds) * 100) : 0;
 
   return (
     <header className="border-b border-[rgba(255,255,255,0.06)] bg-transparent px-4 py-2">
       <div className="flex items-center justify-between gap-4">
 
-        {/* Left — logo mark */}
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-violet-400 text-base leading-none select-none">⬡</span>
-          <span className="font-mono font-bold text-sm text-violet-200">autonoma</span>
+        {/* Left — logo mark + nav */}
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80">
+            <span className="font-mono text-violet-400 text-base leading-none select-none">⬡</span>
+            <span className="font-mono font-bold text-sm text-violet-200">autonoma</span>
+          </Link>
+          {/* Public nav: discoverable from every page. */}
+          <Link
+            href="/live"
+            className="font-mono text-[10px] uppercase tracking-wider text-violet-300/60 hover:text-violet-100"
+          >
+            🔴 live
+          </Link>
+          {isAdmin && (
+            <Link
+              href="/admin/ab-compare"
+              className="font-mono text-[10px] uppercase tracking-wider text-fuchsia-300/60 hover:text-fuchsia-100"
+            >
+              a/b compare
+            </Link>
+          )}
           {projectName && (
             <>
               <span className="font-mono text-violet-800 text-sm select-none">|</span>
