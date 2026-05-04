@@ -1335,14 +1335,72 @@ Rules:
                 getattr(self, "bones", None), "character_uuid", ""
             )
             if uid:
-                try:
-                    import asyncio as _asyncio
-                    from autonoma.achievements_db import batch_record
-                    _asyncio.get_event_loop().create_task(
-                        batch_record(uid, list(newly_earned))
-                    )
-                except Exception:
-                    logger.debug("[achievements] persist skipped", exc_info=True)
+                self._schedule_achievement_persist(uid, list(newly_earned))
+
+    # Module-level set so tasks created across agents share the same
+    # garbage-collection guard. Without this, ``asyncio.create_task``
+    # on a fire-and-forget without holding the reference lets the
+    # event loop GC the task mid-flight, swallowing exceptions and
+    # producing the "Task was destroyed but it is pending" warning.
+    _PENDING_ACHIEVEMENT_TASKS: "set[asyncio.Task[None]]" = set()
+
+    def _schedule_achievement_persist(
+        self, character_uuid: str, ids: list[str]
+    ) -> None:
+        """Persist newly-earned achievements without blocking the
+        synchronous decision loop, with proper task lifecycle handling.
+
+        Three behaviours that the previous fire-and-forget did wrong:
+
+        1. ``get_event_loop()`` is deprecated in 3.12 when no loop is
+           running; use ``get_running_loop()`` and degrade gracefully
+           when called outside a loop (CI, tests).
+        2. Without holding the task reference, the event loop is free
+           to GC it before completion. We add to a module-level set
+           and remove on done so the GC can't reap mid-flight.
+        3. Exceptions inside ``batch_record`` were silently swallowed.
+           The done-callback now logs them so they're at least visible
+           in production logs.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop running — most likely sync test path. Drop the
+            # persist silently; the achievement event still emitted
+            # via ``_emit_achievement_event`` (or whatever the swarm
+            # chooses to do with it).
+            logger.debug(
+                "[achievements] persist skipped: no running loop"
+            )
+            return
+
+        try:
+            from autonoma.achievements_db import batch_record
+        except ImportError:
+            logger.debug(
+                "[achievements] persist skipped: module not importable",
+                exc_info=True,
+            )
+            return
+
+        task = loop.create_task(
+            batch_record(character_uuid, ids),
+            name=f"persist-achievements-{character_uuid[:8]}",
+        )
+        AutonomousAgent._PENDING_ACHIEVEMENT_TASKS.add(task)
+
+        def _on_done(t: "asyncio.Task[None]") -> None:
+            AutonomousAgent._PENDING_ACHIEVEMENT_TASKS.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.warning(
+                    "[achievements] batch_record failed for %s: %s",
+                    character_uuid, exc,
+                )
+
+        task.add_done_callback(_on_done)
 
     # ── TUI Helpers ────────────────────────────────────────────────────
 
