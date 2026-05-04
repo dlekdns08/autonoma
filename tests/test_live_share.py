@@ -230,6 +230,78 @@ async def test_visibility_flip_off_clears_metadata(client: AsyncClient) -> None:
     assert all(x["room_code"] != "CAR9" for x in listing["sessions"])
 
 
+async def test_concurrent_visibility_flips_safe(
+    client: AsyncClient,
+) -> None:
+    """Each user's flip must touch ONLY their own room.
+
+    The AsyncClient session-cookie state is not safely shareable across
+    concurrent coroutines, so we serialise the two POSTs but assert that
+    neither user's request leaks into the other's room. Alice flipping
+    her room public must NOT flip Bob's, and vice versa.
+    """
+    uid_alice = await _signup_and_get_user_id(client, "alice_concurrent")
+    _add_fake_room(
+        room_id=101,
+        code="ALICE",
+        is_public=False,
+        owner_user_id=uid_alice,
+        owner_display="Alice",
+    )
+
+    # Alice flips her room public.
+    r = await client.post(
+        "/api/live-share/visibility",
+        json={"public": True, "title": "Alice live"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["session"]["room_code"] == "ALICE"
+
+    from autonoma import api as _api
+    assert _api._rooms[101].is_public is True
+    assert _api._rooms[101].public_title == "Alice live"
+
+    # Now log out alice and switch to bob in the same client.
+    await client.post("/api/auth/logout")
+
+    uid_bob = await _signup_and_get_user_id(client, "bob_concurrent")
+    _add_fake_room(
+        room_id=202,
+        code="BOBBB",
+        is_public=False,
+        owner_user_id=uid_bob,
+        owner_display="Bob",
+    )
+
+    # Sanity: Bob's room is still private — Alice's flip did NOT touch it.
+    assert _api._rooms[202].is_public is False
+    assert _api._rooms[202].public_title == ""
+
+    # Bob flips his own room.
+    r = await client.post(
+        "/api/live-share/visibility",
+        json={"public": True, "title": "Bob live"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["session"]["room_code"] == "BOBBB"
+
+    # Both rooms are now public, each carries its own metadata.
+    assert _api._rooms[101].is_public is True
+    assert _api._rooms[101].public_title == "Alice live"
+    assert _api._rooms[202].is_public is True
+    assert _api._rooms[202].public_title == "Bob live"
+
+    # Bob flipping his back to private must not affect Alice's.
+    r = await client.post(
+        "/api/live-share/visibility", json={"public": False}
+    )
+    assert r.status_code == 200
+    assert _api._rooms[202].is_public is False
+    assert _api._rooms[101].is_public is True, (
+        "Bob's private flip leaked into Alice's room"
+    )
+
+
 async def test_visibility_does_not_touch_other_users_rooms(
     client: AsyncClient,
 ) -> None:
