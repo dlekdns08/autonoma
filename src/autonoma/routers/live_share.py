@@ -192,7 +192,7 @@ def _list_public_rooms() -> list[dict[str, Any]]:
     cards.sort(key=lambda c: (-c["viewer_count"], -c["started_at"]))
 
     _DIRECTORY_CACHE["snapshot"] = cards
-    _DIRECTORY_CACHE["_room_count"] = len(_api._rooms)  # type: ignore[assignment]
+    _DIRECTORY_CACHE["_room_count"] = len(_api._rooms)
     _DIRECTORY_CACHE_TS = now
     return cards
 
