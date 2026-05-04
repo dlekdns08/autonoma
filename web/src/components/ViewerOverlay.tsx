@@ -199,16 +199,9 @@ export default function ViewerOverlay({
     [sendCommand, viewerId, displayName],
   );
 
-  // ``performance.now()`` is impure, so we read it inside a memo keyed
-  // on the rAF tick. The eslint react-hooks/purity rule treats memoised
-  // reads as stable as long as the deps drive the recomputation, which
-  // they do here (the rAF loop bumps ``frameTick`` every frame while
-  // anything is animating, and only then).
-  const now = useMemo(() => {
-    // Reference frameTick so the memo recomputes each tick.
-    void frameTick;
-    return performance.now();
-  }, [frameTick]);
+  // ``renderNow`` is updated from the rAF loop above; using it during
+  // render keeps the component pure for the react-hooks/purity rule.
+  const now = renderNow;
 
   return (
     <div
