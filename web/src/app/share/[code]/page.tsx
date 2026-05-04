@@ -46,6 +46,23 @@ async function safeFetch(code: string): Promise<LiveSession | null> {
   }
 }
 
+// Resolve the public origin once for `metadataBase`. Crawlers need
+// absolute URLs for og:image / twitter:image; relative paths get
+// silently dropped by some unfurlers. Prefer the operator-set
+// `NEXT_PUBLIC_API_URL`, fall back to the production hostname so the
+// route is still useful in environments that haven't set the env var.
+function resolveMetadataBase(): URL {
+  const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (raw) {
+    try {
+      return new URL(raw);
+    } catch {
+      // fall through to default
+    }
+  }
+  return new URL("https://autonoma.koala.ai.kr");
+}
+
 export async function generateMetadata({
   params,
 }: SharePageProps): Promise<Metadata> {
@@ -60,8 +77,19 @@ export async function generateMetadata({
     session?.goal?.trim() ||
     "Watch a self-organizing agent swarm";
   const url = `/share/${code}`;
+  // Static OG image fallback — prevents the empty social-preview
+  // thumbnail when `card: "summary_large_image"` is declared without
+  // an image. A future PR can swap this for a per-session dynamic OG
+  // image via Next.js' `ImageResponse` route handler.
+  const ogImage = {
+    url: "/og-default.svg",
+    width: 1200,
+    height: 630,
+    alt: "Autonoma",
+  };
 
   return {
+    metadataBase: resolveMetadataBase(),
     title,
     description,
     openGraph: {
@@ -70,11 +98,13 @@ export async function generateMetadata({
       type: "website",
       siteName: "Autonoma",
       url,
+      images: [ogImage],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
+      images: ["/og-default.svg"],
     },
   };
 }
