@@ -160,6 +160,11 @@ async def vote(
     if record is None:
         raise _err(404, "quest_not_found", "no quest with that id.")
 
+    # I2 fix: a viewer who isn't part of this quest's session shouldn't
+    # be able to vote on it. Mirror the 404 from session check so we
+    # don't leak "quest exists but not for you".
+    assert_session_owner_or_admin(record.session_id, user)
+
     key = (user.id, int(quest_id))
     if key in _voted_pairs:
         raise _err(409, "already_voted", "you already voted on this quest.")
@@ -186,7 +191,7 @@ async def list_for_session(
         default=None,
         description="filter by lifecycle: proposed|active|completed|skipped",
     ),
-    _user: User = Depends(require_active_user),
+    user: User = Depends(require_active_user),
 ) -> dict[str, Any]:
     """Return every quest for ``session_id``, sorted by votes desc.
 
@@ -195,6 +200,8 @@ async def list_for_session(
     custom states a future migration may add without needing a router
     change.
     """
+    # I2 fix: only the session's owner (or admin) sees its quest list.
+    assert_session_owner_or_admin(session_id, user)
     quests = await list_quests(session_id, status=status)
     return {
         "session_id": session_id,
