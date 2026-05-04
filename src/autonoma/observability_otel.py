@@ -248,12 +248,14 @@ class PrometheusRegistry:
                 lines.append(f"# TYPE {name} histogram")
                 for key, entry in sorted(self._histograms[name].items()):
                     base_labels = list(key)
-                    cum = 0
+                    # ``entry["buckets"][i]`` is *already* the cumulative
+                    # count of observations ≤ ``self._buckets[i]`` — see
+                    # ``observe`` where we bump every bucket whose bound
+                    # is ≥ the value. Don't accumulate again here.
                     for i, bound in enumerate(self._buckets):
-                        cum += entry["buckets"][i]
                         bucket_labels = base_labels + [("le", _fmt(bound))]
                         lines.append(
-                            f"{name}_bucket{_format_labels(tuple(bucket_labels))} {cum}"
+                            f"{name}_bucket{_format_labels(tuple(bucket_labels))} {entry['buckets'][i]}"
                         )
                     inf_labels = base_labels + [("le", "+Inf")]
                     lines.append(
