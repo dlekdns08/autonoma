@@ -151,8 +151,18 @@ class AnomalyDetector:
     is the caller's responsibility — call ``record_anomaly`` for each.
     """
 
-    def __init__(self, session_id: int, window_rounds: int = WINDOW_ROUNDS) -> None:
+    def __init__(self, session_id: int, window_rounds: int | None = None) -> None:
         self.session_id = session_id
+        # ``window_rounds`` precedence (highest to lowest):
+        #   1. explicit constructor argument
+        #   2. ``settings.anomaly_window_rounds`` if configured
+        #   3. module default ``WINDOW_ROUNDS``
+        # The settings field is intentionally *not* declared in
+        # ``config.py`` (a shared file) — the ``getattr`` fallback keeps
+        # this module forward-compatible: an operator can add the field
+        # later for tuning without an edit here.
+        if window_rounds is None:
+            window_rounds = getattr(settings, "anomaly_window_rounds", WINDOW_ROUNDS)
         self.window_rounds = max(1, int(window_rounds))
 
         # Per-agent ring of recent utterances. Each entry is
