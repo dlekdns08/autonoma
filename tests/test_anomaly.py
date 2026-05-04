@@ -11,8 +11,6 @@ isolated from the storage layer (no need for ``fresh_db``).
 
 from __future__ import annotations
 
-import pytest
-
 from autonoma.anomaly import (
     COOLDOWN_ROUNDS,
     FILE_CHURN_LOOKBACK_ROUNDS,
