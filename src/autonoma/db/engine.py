@@ -285,6 +285,60 @@ async def _migration_011_voice_transcripts(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_012_feature_pack_2026_05(conn) -> None:
+    """2026-05 feature pack — adds:
+
+    New tables (created via ``create_all(checkfirst=True)``):
+      * earned_achievements (#12)
+      * character_memoirs (#3)
+      * ghost_appearances (#2)
+      * session_anomalies (#18)
+      * viewer_bets / viewer_bet_entries (#4)
+      * live_quests (#14)
+
+    New columns on existing tables (must be added via ALTER on
+    pre-populated DBs because ``create_all(checkfirst=True)`` skips
+    live tables):
+      * characters.retired_at, characters.memoir_text, characters.memoir_version
+      * personas.parent_persona_ids
+    """
+    # New tables — create_all picks them up because the metadata import
+    # at module top now includes them.
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+    # ALTER existing tables. SQLite rejects duplicate ADD COLUMN, so
+    # probe first.
+    char_cols = {
+        row[1]
+        for row in (await conn.execute(text("PRAGMA table_info(characters)"))).fetchall()
+    }
+    if "retired_at" not in char_cols:
+        await conn.execute(text("ALTER TABLE characters ADD COLUMN retired_at DATETIME"))
+    if "memoir_text" not in char_cols:
+        await conn.execute(
+            text("ALTER TABLE characters ADD COLUMN memoir_text TEXT NOT NULL DEFAULT ''")
+        )
+    if "memoir_version" not in char_cols:
+        await conn.execute(
+            text(
+                "ALTER TABLE characters ADD COLUMN memoir_version "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+
+    persona_cols = {
+        row[1]
+        for row in (await conn.execute(text("PRAGMA table_info(personas)"))).fetchall()
+    }
+    if "parent_persona_ids" not in persona_cols:
+        await conn.execute(
+            text(
+                "ALTER TABLE personas ADD COLUMN parent_persona_ids "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+        )
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -297,6 +351,7 @@ MIGRATIONS: list[Migration] = [
     (9, _migration_009_personas),
     (10, _migration_010_mocap_last_accessed),
     (11, _migration_011_voice_transcripts),
+    (12, _migration_012_feature_pack_2026_05),
 ]
 
 
