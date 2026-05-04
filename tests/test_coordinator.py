@@ -150,6 +150,76 @@ async def test_submit_scores_resolves_match_and_updates_elo(store):
     assert (inv_a.id, inv_b.id)  # silence unused-var lint while keeping the references for future debugging
 
 
+async def test_concurrent_score_submissions_resolve_once(store):
+    """Two ``submit_score`` calls firing concurrently must resolve the
+    match exactly once (single ``coordinator.match_resolved`` event,
+    ELO sum conserved, deterministic A/B ordering)."""
+    await _register_pair(store)
+    await store.enqueue_match(
+        MatchInvite(instance_id="inst-a", goal="race")
+    )
+    await store.enqueue_match(
+        MatchInvite(instance_id="inst-b", goal="race")
+    )
+    pairs = await store.pair_pending_matches()
+    assert len(pairs) == 1
+    match_id = pairs[0][0].match_id
+    assert match_id is not None
+
+    seen: list[dict] = []
+
+    async def handler(**data):
+        seen.append(data)
+
+    bus.on("coordinator.match_resolved", handler)
+
+    # Both sides submit at the same time; the async lock inside the
+    # store is the only thing keeping the resolution single-shot.
+    results = await asyncio.gather(
+        store.submit_score(
+            match_id,
+            "inst-a",
+            {
+                "task_completed": True,
+                "tasks_done": 5,
+                "rounds_used": 8,
+                "files_created": 3,
+            },
+        ),
+        store.submit_score(
+            match_id,
+            "inst-b",
+            {
+                "task_completed": False,
+                "tasks_done": 2,
+                "rounds_used": 12,
+                "files_created": 1,
+            },
+        ),
+    )
+
+    # Exactly one of the two coroutines should observe the resolution
+    # (the other returns ``None`` because its half arrives first).
+    resolved = [r for r in results if r is not None]
+    assert len(resolved) == 1, f"expected exactly one resolution, got {results}"
+    result = resolved[0]
+    assert result.match_id == match_id
+    assert result.winner == "inst-a"
+
+    # ELO is conserved (winner+loser deltas sum to zero).
+    assert result.elo_delta_a + result.elo_delta_b == pytest.approx(0.0)
+
+    # A/B ordering is deterministic regardless of which coroutine
+    # crossed the lock first.
+    assert {result.instance_a, result.instance_b} == {"inst-a", "inst-b"}
+    # Stable A/B order is alphabetical by instance_id.
+    assert result.instance_a < result.instance_b
+
+    # Bus event fired exactly once.
+    assert len(seen) == 1
+    assert seen[0]["match_id"] == match_id
+
+
 async def test_draw_splits_elo(store):
     await _register_pair(store)
     await store.enqueue_match(
