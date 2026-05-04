@@ -283,5 +283,8 @@ async def balance_endpoint(
     someone else's balance.
     """
     _check_enabled()
+    # I2 fix: only the session's owner (or admin) may pull a balance —
+    # blocks cross-session balance probing.
+    assert_session_owner_or_admin(session_id, user)
     bal = await balance(session_id=session_id, viewer_id=user.id)
     return {"viewer_id": user.id, "balance": bal}
