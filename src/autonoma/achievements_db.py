@@ -189,7 +189,12 @@ async def list_recent_globally(limit: int = 20) -> list[dict[str, Any]]:
                         == characters.c.character_uuid,
                     )
                 )
-                .order_by(desc(earned_achievements.c.earned_at))
+                # Tie-break on id so multiple inserts within the same
+                # SQLite-second still resolve newest-first.
+                .order_by(
+                    desc(earned_achievements.c.earned_at),
+                    desc(earned_achievements.c.id),
+                )
                 .limit(safe_limit)
             )
         ).mappings().all()
