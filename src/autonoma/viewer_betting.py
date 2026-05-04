@@ -186,6 +186,14 @@ def _entry_from_row(row: Any) -> Entry:
 
 
 async def _fetch_market(session_id: int, market_id: str) -> Market | None:
+    # ``_fetch_market`` is called by ``place_bet`` BEFORE its own
+    # ``init_db()``, so we have to be the one ensuring the schema is
+    # there — otherwise an early call against a fresh DB trips
+    # ``OperationalError: no such table: viewer_bets`` instead of the
+    # intended ``ValueError("market_not_open")``. ``init_db`` is
+    # idempotent; the cost on the warm path is one ``await`` against a
+    # checked flag.
+    await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
