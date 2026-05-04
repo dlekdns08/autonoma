@@ -256,7 +256,12 @@ async def list_active_ghosts(
                     ghost_appearances.c.created_at,
                 )
                 .where(ghost_appearances.c.character_uuid.in_(uuids))
-                .order_by(desc(ghost_appearances.c.created_at))
+                # Tie-break on id so multiple rows inserted within the
+                # same SQLite-second still resolve newest-first.
+                .order_by(
+                    desc(ghost_appearances.c.created_at),
+                    desc(ghost_appearances.c.id),
+                )
             )
         ).mappings().all()
 
