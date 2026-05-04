@@ -29,6 +29,7 @@ import VTuberStage from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import Stage from "@/components/Stage";
 import ViewerOverlay from "@/components/ViewerOverlay";
+import ViewerBettingLiveWidget from "@/components/ViewerBettingLiveWidget";
 import { useViewerOverlay } from "@/hooks/useViewerOverlay";
 
 export default function WatchPage() {
@@ -47,6 +48,7 @@ export default function WatchPage() {
     speakingAgents,
     room,
     wsRef,
+    sessionId,
   } = useSwarm();
 
   // Lock the body to the viewport so a long event log can't push the
@@ -171,6 +173,18 @@ export default function WatchPage() {
         {/* Chat overlay floats on top of the map; tap-through is fine
             because there are no other interactive elements here. */}
         <ChatOverlay messages={chat} />
+
+        {/* Viewer-side betting widget — only meaningful once the host
+            has a swarm session attached to the room (sessionId > 0).
+            The widget itself short-circuits when the operator has
+            betting disabled, so this gate is purely about not flashing
+            "start a swarm session to enable betting" at spectators
+            while the WS hello round-trip is in flight. */}
+        {sessionId !== null && sessionId > 0 ? (
+          <div className="pointer-events-auto absolute bottom-2 right-2 z-30 w-[280px] max-w-[90vw]">
+            <ViewerBettingLiveWidget sessionId={sessionId} />
+          </div>
+        ) : null}
 
         {/* Viewer overlay — cursors + sticker bar. Sits on top of every
             other element in the viewing area (last child of <main>) so
