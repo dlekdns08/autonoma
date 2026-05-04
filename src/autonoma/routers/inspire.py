@@ -333,10 +333,17 @@ async def inspire(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning(f"[inspire] LLM failed: {exc}")
+        # Log the full exception (with traceback) internally so an
+        # operator can debug, but never echo the raw text out to the
+        # client — provider responses can include API keys, prompt
+        # fragments, or stack frames we don't want leaving the box.
+        logger.exception("[inspire] LLM call failed")
         raise HTTPException(
             status_code=502,
-            detail={"code": "inspire_failed", "message": str(exc)},
+            detail={
+                "code": "inspire_failed",
+                "message": "LLM request failed",
+            },
         ) from exc
 
     suggestions = _parse_suggestions(raw)
