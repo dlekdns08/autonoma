@@ -32,7 +32,34 @@ _POLL_INTERVAL_SECONDS = 60.0
 class SchedulerRunner:
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
+        # Event is lazy-allocated so it binds to the *current* event
+        # loop on first access. Constructing it here would latch it to
+        # whatever loop happened to be active during module import —
+        # problematic in tests where pytest-asyncio rebuilds the loop
+        # per function and this singleton survives across tests, then
+        # the next ``await self._stopping.wait()`` raises
+        # ``RuntimeError: <Event> is bound to a different event loop``
+        # which cascades into apparently-unrelated test failures.
+        self._stopping_ref: asyncio.Event | None = None
+
+    @property
+    def _stopping(self) -> asyncio.Event:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        existing = self._stopping_ref
+        if existing is None:
+            self._stopping_ref = asyncio.Event()
+            return self._stopping_ref
+        if running is not None:
+            bound = getattr(existing, "_loop", None)
+            if bound is not None and bound is not running:
+                # Loop swap (typically a fresh pytest-asyncio loop).
+                # Drop the stale Event and start over so handlers don't
+                # crash trying to wait on a closed loop.
+                self._stopping_ref = asyncio.Event()
+        return self._stopping_ref
 
     @property
     def running(self) -> bool:
