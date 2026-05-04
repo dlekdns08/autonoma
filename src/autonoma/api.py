@@ -186,6 +186,15 @@ class RoomState:
     swarm: Any = None
     project: Any = None
     task: asyncio.Task | None = None
+    # ── live-share fields (2026-05) ────────────────────────────────────
+    # Off by default. Hosts opt-in via POST /api/live-share/visibility,
+    # which sets ``is_public=True`` and announces the room on the
+    # ``/live`` directory page. Title and description are operator-set
+    # so the directory card can advertise more than the goal text.
+    is_public: bool = False
+    public_title: str = ""
+    public_description: str = ""
+    started_at: float = 0.0  # time.time() when the room went live
 
 
 _sessions: dict[int, SessionState] = {}
@@ -2237,6 +2246,7 @@ async def _create_room_for(session: SessionState) -> RoomState:
             room_id=session.session_id,
             owner_session_id=session.session_id,
             short_code=code,
+            started_at=time.time(),
         )
         _rooms[room.room_id] = room
         _short_codes[code] = room.room_id
@@ -4484,6 +4494,7 @@ from autonoma.routers import (  # noqa: E402
     metrics as _metrics_router,
     viewer_betting as _viewer_betting_router,
     mocap_live as _mocap_live_router,
+    live_share as _live_share_router,
 )
 app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
@@ -4498,6 +4509,7 @@ app.include_router(_ab_compare_router.router)
 app.include_router(_metrics_router.router)
 app.include_router(_viewer_betting_router.router)
 app.include_router(_mocap_live_router.router)
+app.include_router(_live_share_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
