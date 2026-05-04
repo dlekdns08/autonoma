@@ -1137,6 +1137,26 @@ def _log_startup_summary() -> None:
         _cookie_samesite(),
         settings.provider,
     )
+    # 2026-05 feature pack — surface which optional surfaces are on so
+    # operators can sanity-check from the very first log line. Each is
+    # a one-tag "feature=on/off" entry rather than a paragraph so the
+    # log stays scannable.
+    logger.info(
+        "[startup:2026-05] mcp=%s vmc=%s otel=%s prom=%s betting=%s "
+        "anomaly=%s ci_loop=%s retirement=%s highlights=%s inspire=%s "
+        "memoir_every=%s",
+        "on" if settings.mcp_server_enabled else "off",
+        "on" if settings.vmc_bridge_enabled else "off",
+        "on" if settings.otel_endpoint else "off",
+        "on" if settings.prometheus_metrics_enabled else "off",
+        "on" if settings.viewer_betting_enabled else "off",
+        "on" if settings.anomaly_detection_enabled else "off",
+        "on" if settings.ci_loop_enabled else "off",
+        "on" if settings.retirement_enabled else "off",
+        "on" if settings.highlights_enabled else "off",
+        "on" if settings.inspire_enabled else "off",
+        settings.memoir_compact_every_rounds or "off",
+    )
 
 
 async def _warmup_omnivoice() -> None:
