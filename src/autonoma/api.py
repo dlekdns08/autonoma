@@ -1213,11 +1213,49 @@ async def lifespan(app: FastAPI):
     from autonoma.scheduler import scheduler_runner
     scheduler_runner.start()
     bus.on("schedule.fire_requested", _on_schedule_fire_requested)
+
+    # 2026-05 feature pack lifespan hooks. Each is best-effort —
+    # individual failures must never block the rest of the boot since
+    # they only power optional surfaces (metrics scrape, OBS overlay,
+    # VRChat bridge).
+    try:
+        from autonoma.observability_otel import setup_otel
+        setup_otel()
+    except Exception:
+        logger.exception("[startup] OTel setup failed; continuing without it")
+
+    try:
+        from autonoma.highlights import get_recorder as _get_highlight_recorder
+        _highlight_recorder = _get_highlight_recorder()
+        _highlight_recorder.start()
+    except Exception:
+        _highlight_recorder = None
+        logger.exception("[startup] highlights recorder failed; continuing")
+
+    vmc_task: asyncio.Task[None] | None = None
+    if getattr(settings, "vmc_bridge_enabled", False):
+        try:
+            from autonoma.vmc import start_listening_to_bus as _vmc_start
+            vmc_task = asyncio.create_task(_vmc_start(), name="vmc-bridge")
+        except Exception:
+            logger.exception("[startup] VMC bridge boot failed; disabling")
+
     try:
         yield
     finally:
         bus.off("schedule.fire_requested", _on_schedule_fire_requested)
         await scheduler_runner.stop()
+        if _highlight_recorder is not None:
+            try:
+                _highlight_recorder.stop()
+            except Exception:
+                logger.exception("[shutdown] highlights stop failed")
+        if vmc_task is not None and not vmc_task.done():
+            vmc_task.cancel()
+            try:
+                await vmc_task
+            except (asyncio.CancelledError, Exception):
+                pass
         # Warmup tasks: cancel and await so the shutdown sequence is
         # actually quiescent — bare ``cancel()`` returns immediately
         # while the underlying HF model download (potentially
