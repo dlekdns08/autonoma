@@ -1533,5 +1533,12 @@ export function useSwarm() {
     voiceBindingsRefreshToken,
     voiceBindingEvent,
     sfx,
+    // Exposed for opt-in consumers (e.g. ViewerOverlay's
+    // `useViewerOverlay(ws)` hook) that need to attach extra event
+    // listeners or send out-of-band commands. Read as
+    // ``connected ? wsRef.current : null`` — ``connected`` triggers a
+    // re-render once the socket is open, so a consumer that depends on
+    // both will pick up the live socket on the next render.
+    wsRef,
   };
 }
