@@ -31,6 +31,7 @@ import AchievementsTicker, {
   type TickerEntry,
 } from "@/components/AchievementsTicker";
 import LiveQuestPanel from "@/components/LiveQuestPanel";
+import ShareButton from "@/components/ShareButton";
 import {
   fetchRecentAchievements,
   type RecentAchievement,
@@ -867,6 +868,7 @@ function Dashboard() {
           >
             {shareCopied ? "Copied!" : "Share"}
           </button>
+          <ShareButton roomCode={room?.code ?? null} sessionId={sessionId} />
           {authState.status === "authenticated" && (
             <>
               <span>
