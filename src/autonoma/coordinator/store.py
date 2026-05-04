@@ -90,9 +90,33 @@ class CoordinatorStore:
         self._submissions: dict[str, MatchSubmission] = {}
         self._results: dict[str, MatchResult] = {}
         self._ratings: dict[str, dict[str, float]] = {}
-        self._async_lock = asyncio.Lock()
+        # Async lock is lazy-created so it binds to the *current* event
+        # loop on first access. Constructing it at import time would
+        # latch it to whatever loop happened to be active during module
+        # import — problematic in tests where pytest-asyncio rebuilds
+        # the loop per function and the singleton survives across tests.
+        self._async_lock_ref: asyncio.Lock | None = None
         self._fs_lock = threading.Lock()
         self._loaded = False
+
+    @property
+    def _async_lock(self) -> asyncio.Lock:
+        # Re-bind the lock if it's missing OR was attached to a stale
+        # loop. ``asyncio.get_running_loop()`` raises if we're not in a
+        # loop, so we only re-check when there is one.
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        existing = self._async_lock_ref
+        if existing is None:
+            self._async_lock_ref = asyncio.Lock()
+            return self._async_lock_ref
+        if running is not None:
+            bound = getattr(existing, "_loop", None)
+            if bound is not None and bound is not running:
+                self._async_lock_ref = asyncio.Lock()
+        return self._async_lock_ref
 
     # ── filesystem helpers ────────────────────────────────────────
 
