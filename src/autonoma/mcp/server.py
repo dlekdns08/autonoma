@@ -231,7 +231,11 @@ _TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "goal": {"type": "string", "description": "What the swarm should accomplish."},
-                "owner_user_id": {"type": "string", "description": "User id this run belongs to."},
+                # ``owner_user_id`` was removed in the C2 fix — the
+                # MCP token isn't a user token, so accepting this
+                # field would let any caller impersonate an arbitrary
+                # user_id. Server attributes the run to a fixed
+                # ``"mcp"`` placeholder instead.
                 "preset_id": {"type": "string", "description": "Optional harness preset id."},
                 "max_rounds": {
                     "type": "integer",
@@ -240,7 +244,7 @@ _TOOLS: list[dict[str, Any]] = [
                     "description": "Hard ceiling on rounds.",
                 },
             },
-            "required": ["goal", "owner_user_id"],
+            "required": ["goal"],
             "additionalProperties": False,
         },
         "handler": _tool_start_swarm_headless,
