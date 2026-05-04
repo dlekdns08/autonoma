@@ -123,13 +123,8 @@ async def run_ci_check(
             return await _check_js(file_path, target, started, timeout)
         if ext == "json":
             return await _check_json(file_path, target, started)
-        return _result(
-            file_path,
-            True,
-            f"no checker for extension '.{ext}'" if ext else "no checker for extension",
-            started,
-            "",
-        )
+        msg = f"no checker for extension '.{ext}'" if ext else "no checker for extension"
+        return _result(file_path, True, msg, started, "")
     finally:
         if cleanup is not None:
             try:
