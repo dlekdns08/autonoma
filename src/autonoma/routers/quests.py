@@ -81,6 +81,29 @@ def _clear_votes_for(quest_id: int) -> None:
     _voted_pairs = {(uid, qid) for (uid, qid) in _voted_pairs if qid != quest_id}
 
 
+# ── Bus-driven dedup cleanup (I10) ────────────────────────────────────
+# Subscribe at module load so any path that takes a quest off the
+# proposed-pool — activation OR completion, by the router or by some
+# future internal flow — frees the matching dedup entries. The
+# per-activation ``_clear_votes_for`` call below stays as a synchronous
+# belt-and-suspenders so the test ordering ("dedup cleared before the
+# response returns") is preserved.
+
+
+async def _on_quest_terminal(**data: Any) -> None:
+    qid = data.get("quest_id")
+    if qid is None:
+        return
+    try:
+        _clear_votes_for(int(qid))
+    except (TypeError, ValueError):
+        return
+
+
+bus.on("quest.activated", _on_quest_terminal)
+bus.on("quest.completed", _on_quest_terminal)
+
+
 def _err(status: int, code: str, message: str) -> HTTPException:
     """Standard structured-error helper, matches the rest of the routers."""
     return HTTPException(
