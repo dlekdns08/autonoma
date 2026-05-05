@@ -30,7 +30,6 @@ from autonoma.memory.memoir import (
     should_compact,
 )
 
-
 # ── Fakes / helpers ───────────────────────────────────────────────────
 
 
