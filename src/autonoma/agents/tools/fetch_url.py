@@ -74,11 +74,12 @@ def _get_shared_client() -> Any:
         atexit.register(_shared_client.close)
     return _shared_client
 
+
 # Tight ceilings — agents only need a paragraph or two to inform a
 # follow-up decision. Anything bigger is almost always wasted tokens.
 MAX_RESPONSE_BYTES = 1 * 1024 * 1024  # 1 MiB — hard download cap
-DEFAULT_MAX_CHARS = 4000              # default text excerpt size
-MAX_MAX_CHARS = 16000                 # ceiling, even if caller asks more
+DEFAULT_MAX_CHARS = 4000  # default text excerpt size
+MAX_MAX_CHARS = 16000  # ceiling, even if caller asks more
 DEFAULT_TIMEOUT_S = 10.0
 
 
@@ -188,9 +189,7 @@ def fetch_url(
 
     # Re-check the FINAL host after any redirects — a redirect into
     # 169.254.169.254 (cloud metadata) is a classic SSRF.
-    final_host = (
-        urlparse(str(resp.url)).hostname or parsed.hostname
-    )
+    final_host = urlparse(str(resp.url)).hostname or parsed.hostname
     if _is_private_host(final_host):
         return FetchResult(
             ok=False, url=str(resp.url), reason="private_host_blocked_after_redirect"
