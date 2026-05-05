@@ -21,7 +21,6 @@ from sqlalchemy import insert
 
 from autonoma.mocap.validator import ValidatedClip
 
-
 # ── helpers ──────────────────────────────────────────────────────────
 
 
@@ -45,9 +44,11 @@ def _stub_clip(size_bytes: int = 1024, name: str = "clip") -> ValidatedClip:
 
 
 async def _seed_user(username: str = "alice", role: str = "user") -> str:
-    from autonoma.db.users import create_user, users as users_table
-    from autonoma.db.engine import get_engine
     from sqlalchemy import update as sa_update
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.users import create_user
+    from autonoma.db.users import users as users_table
 
     user = await create_user(username=username, password_hash="h")
     if role != "user":
@@ -258,7 +259,8 @@ async def test_orphan_list_respects_binding_and_age(
 ) -> None:
     """Clip with no binding + stale last_accessed_at → returned.
     After we add a binding → not returned."""
-    from sqlalchemy import text, update as sa_update
+    from sqlalchemy import text
+    from sqlalchemy import update as sa_update
 
     from autonoma.db.engine import get_engine, init_db
     from autonoma.db.schema import mocap_clips
@@ -308,7 +310,8 @@ async def test_orphan_list_respects_binding_and_age(
 
 async def test_orphan_list_day_threshold(fresh_db: Path) -> None:
     """A clip last accessed 30 days ago is orphaned at 10d, not at 60d."""
-    from sqlalchemy import text, update as sa_update
+    from sqlalchemy import text
+    from sqlalchemy import update as sa_update
 
     from autonoma.db.engine import get_engine, init_db
     from autonoma.db.schema import mocap_clips
@@ -340,7 +343,8 @@ async def test_get_clip_payload_touches_last_accessed(
     fresh_db: Path,
 ) -> None:
     """``get_clip_payload`` bumps last_accessed_at, unorphaning the clip."""
-    from sqlalchemy import select, text, update as sa_update
+    from sqlalchemy import select, text
+    from sqlalchemy import update as sa_update
 
     from autonoma.db.engine import get_engine, init_db
     from autonoma.db.schema import mocap_clips
