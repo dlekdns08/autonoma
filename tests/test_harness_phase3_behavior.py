@@ -13,13 +13,11 @@ the contract test.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
 from autonoma.harness.strategies import lookup
-
 
 # ── system.prompt_variant ────────────────────────────────────────────
 
