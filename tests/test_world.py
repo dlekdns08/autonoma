@@ -1294,6 +1294,7 @@ class TestFortuneCookies:
     def test_fulfillment(self):
         jar = FortuneCookieJar(seed=42)
         cookie = jar.give_cookie("Alice", 1)
+        assert cookie is not None
         # Try the cookie's actual condition
         result = jar.check_fulfillment("Alice", cookie.condition)
         assert result is not None
