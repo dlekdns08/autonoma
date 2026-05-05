@@ -70,9 +70,7 @@ def _resolve_session_secret() -> str:
 
 
 _SESSION_SECRET: Final[str] = _resolve_session_secret()
-_serializer: Final[URLSafeSerializer] = URLSafeSerializer(
-    _SESSION_SECRET, salt=_SESSION_SALT
-)
+_serializer: Final[URLSafeSerializer] = URLSafeSerializer(_SESSION_SECRET, salt=_SESSION_SALT)
 
 
 # ── Password helpers ──────────────────────────────────────────────────
@@ -112,9 +110,7 @@ def verify_password(password: str, password_hash: str) -> bool:
     if not password or not password_hash:
         return False
     try:
-        return bcrypt.checkpw(
-            _encode_password(password), password_hash.encode("ascii")
-        )
+        return bcrypt.checkpw(_encode_password(password), password_hash.encode("ascii"))
     except (ValueError, TypeError):
         # Malformed hash → treat as mismatch rather than 500ing.
         return False
