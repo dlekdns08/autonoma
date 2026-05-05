@@ -112,9 +112,7 @@ class Market:
             "status": self.status,
             "closes_at_round": self.closes_at_round,
             "opened_at": self.opened_at.isoformat() if self.opened_at else None,
-            "resolved_at": (
-                self.resolved_at.isoformat() if self.resolved_at else None
-            ),
+            "resolved_at": (self.resolved_at.isoformat() if self.resolved_at else None),
             "winning_option": self.winning_option,
         }
 
@@ -253,7 +251,9 @@ async def open_market(
     )
     logger.info(
         "[betting] opened market_id=%s session_id=%d closes_at_round=%d",
-        market_id, session_id, closes_at_round,
+        market_id,
+        session_id,
+        closes_at_round,
     )
     return market
 
@@ -330,9 +330,7 @@ async def place_bet(
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                select(viewer_bet_entries).where(
-                    viewer_bet_entries.c.id == entry_id
-                )
+                select(viewer_bet_entries).where(viewer_bet_entries.c.id == entry_id)
             )
         ).first()
     if row is None:
@@ -379,7 +377,9 @@ async def lock_market(session_id: int, market_id: str) -> bool:
         market_id=str(market_id),
     )
     logger.info(
-        "[betting] locked market_id=%s session_id=%d", market_id, session_id,
+        "[betting] locked market_id=%s session_id=%d",
+        market_id,
+        session_id,
     )
     return True
 
@@ -474,7 +474,10 @@ async def resolve_market(
     )
     logger.info(
         "[betting] resolved market_id=%s winning_option=%s winners=%d losers=%d",
-        market_id, winning_option, winners, losers,
+        market_id,
+        winning_option,
+        winners,
+        losers,
     )
     return summary
 
@@ -504,9 +507,7 @@ async def leaderboard(
                     func.sum(viewer_bet_entries.c.payout).label("total_payout"),
                     func.sum(viewer_bet_entries.c.stake).label("total_stake"),
                     func.count(viewer_bet_entries.c.id).label("bets"),
-                    func.max(viewer_bet_entries.c.display_name).label(
-                        "display_name"
-                    ),
+                    func.max(viewer_bet_entries.c.display_name).label("display_name"),
                 )
                 .where(viewer_bet_entries.c.session_id == int(session_id))
                 .group_by(viewer_bet_entries.c.viewer_id)
@@ -547,12 +548,8 @@ async def balance(session_id: int, viewer_id: str) -> int:
         row = (
             await conn.execute(
                 select(
-                    func.coalesce(
-                        func.sum(viewer_bet_entries.c.payout), 0
-                    ).label("total_payout"),
-                    func.coalesce(
-                        func.sum(viewer_bet_entries.c.stake), 0
-                    ).label("total_stake"),
+                    func.coalesce(func.sum(viewer_bet_entries.c.payout), 0).label("total_payout"),
+                    func.coalesce(func.sum(viewer_bet_entries.c.stake), 0).label("total_stake"),
                 )
                 .where(viewer_bet_entries.c.session_id == int(session_id))
                 .where(viewer_bet_entries.c.viewer_id == str(viewer_id))
