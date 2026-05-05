@@ -26,30 +26,30 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hmac
+import io
 import itertools
 import json
 import logging
-import time
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from typing import Any, Literal
-
-import io
 import re
+import time
 import zipfile
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from fastapi import (
     Depends,
     FastAPI,
-    File,
-    Form,
     HTTPException,
     Query,
     Request,
-    Response as FastAPIResponse,
-    UploadFile,
     WebSocket,
     WebSocketDisconnect,
+)
+from fastapi import (
+    Response as FastAPIResponse,
+)
+from fastapi import (
     status as http_status,
 )
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,7 +79,7 @@ from autonoma.db.users import (
 )
 from autonoma.event_bus import bus
 from autonoma.harness.policy import HarnessPolicyContent, default_policy_content
-from autonoma.llm import LLMConfig
+from autonoma.llm import LLMConfig, llm_config_from_settings
 
 logger = logging.getLogger(__name__)
 
@@ -3092,7 +3092,7 @@ async def apply_template(
         if session.owner_user_id is not None and session.owner_user_id != user.id:
             raise HTTPException(
                 status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"Session not found",
+                detail="Session not found",
             )
 
     created: list[str] = []
@@ -3960,6 +3960,8 @@ async def list_models_with_key(
 # the bus→WS bridge falls through to ``manager.broadcast``, fanning the
 # update out to every connected viewer.
 
+import collections as _collections  # noqa: E402
+
 from autonoma.mocap import (  # noqa: E402  — grouped at feature boundary
     ALLOWED_TRIGGER_KINDS,
     MocapValidationError,
@@ -3969,8 +3971,6 @@ from autonoma.mocap import (  # noqa: E402  — grouped at feature boundary
 )
 from autonoma.mocap import store as mocap_store  # noqa: E402
 from autonoma.mocap.triggers import trigger_catalog  # noqa: E402
-
-import collections as _collections  # noqa: E402
 
 # ── Mocap upload abuse-prevention ─────────────────────────────────────
 #
@@ -4358,22 +4358,42 @@ async def mocap_fire_trigger(
 # so grepping for ``voice`` in this file still points the right way.
 
 from autonoma.routers import voice as _voice_router  # noqa: E402
+
 app.include_router(_voice_router.router)
 
 # New feature routers (2026 feature pack — streaming, vision, bridges,
 # agent profiles, personas, battle, playback, standup, sign language)
 from autonoma.routers import (  # noqa: E402
     agents as _agents_router,
+)
+from autonoma.routers import (
     bridges as _bridges_router,
+)
+from autonoma.routers import (
     live as _live_router,
+)
+from autonoma.routers import (
     personas as _personas_router,
+)
+from autonoma.routers import (
     playback as _playback_router,
+)
+from autonoma.routers import (
     podcast as _podcast_router,
+)
+from autonoma.routers import (
     sign as _sign_router,
+)
+from autonoma.routers import (
     standup as _standup_router,
+)
+from autonoma.routers import (
     swarm_battle as _battle_router,
+)
+from autonoma.routers import (
     vision as _vision_router,
 )
+
 app.include_router(_agents_router.router)
 app.include_router(_bridges_router.router)
 from autonoma.routers import cutscenes as _cutscenes_router  # noqa: E402
@@ -4523,22 +4543,49 @@ app.include_router(_vision_router.router)
 # matters only for FastAPI's first-match rule and these all live under
 # fresh prefixes. Each lazy-imports settings on demand so importing the
 # router is cheap.
+from autonoma.routers import (
+    ab_compare as _ab_compare_router,
+)
+from autonoma.routers import (
+    achievements as _achievements_router,
+)
+from autonoma.routers import (
+    anomalies as _anomalies_router,
+)
 from autonoma.routers import (  # noqa: E402
     coordinator as _coordinator_router,
-    highlights as _highlights_router,
-    inspire as _inspire_router,
-    achievements as _achievements_router,
-    persona_breed as _persona_breed_router,
-    quests as _quests_router,
-    voice_consent as _voice_consent_router,
+)
+from autonoma.routers import (
     fingerspell as _fingerspell_router,
-    anomalies as _anomalies_router,
-    ab_compare as _ab_compare_router,
-    metrics as _metrics_router,
-    viewer_betting as _viewer_betting_router,
-    mocap_live as _mocap_live_router,
+)
+from autonoma.routers import (
+    highlights as _highlights_router,
+)
+from autonoma.routers import (
+    inspire as _inspire_router,
+)
+from autonoma.routers import (
     live_share as _live_share_router,
 )
+from autonoma.routers import (
+    metrics as _metrics_router,
+)
+from autonoma.routers import (
+    mocap_live as _mocap_live_router,
+)
+from autonoma.routers import (
+    persona_breed as _persona_breed_router,
+)
+from autonoma.routers import (
+    quests as _quests_router,
+)
+from autonoma.routers import (
+    viewer_betting as _viewer_betting_router,
+)
+from autonoma.routers import (
+    voice_consent as _voice_consent_router,
+)
+
 app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
 app.include_router(_inspire_router.router)
