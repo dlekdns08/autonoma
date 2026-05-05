@@ -151,9 +151,7 @@ async def get_user_by_id(user_id: str) -> User | None:
     await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(select(users).where(users.c.id == user_id))
-        ).mappings().first()
+        row = (await conn.execute(select(users).where(users.c.id == user_id))).mappings().first()
     return _row_to_user(row) if row else None
 
 
@@ -162,8 +160,10 @@ async def get_user_by_username(username: str) -> User | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
-            await conn.execute(select(users).where(users.c.username == username))
-        ).mappings().first()
+            (await conn.execute(select(users).where(users.c.username == username)))
+            .mappings()
+            .first()
+        )
     return _row_to_user(row) if row else None
 
 
@@ -171,9 +171,7 @@ async def list_users() -> list[User]:
     await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
-        rows = (
-            await conn.execute(select(users).order_by(users.c.created_at))
-        ).mappings().all()
+        rows = (await conn.execute(select(users).order_by(users.c.created_at))).mappings().all()
     return [_row_to_user(r) for r in rows]
 
 
@@ -185,9 +183,7 @@ async def update_user_status(user_id: str, status: UserStatus) -> User | None:
     now = datetime.now(UTC)
     async with engine.begin() as conn:
         result = await conn.execute(
-            update(users)
-            .where(users.c.id == user_id)
-            .values(status=status, updated_at=now)
+            update(users).where(users.c.id == user_id).values(status=status, updated_at=now)
         )
         if result.rowcount == 0:
             return None

@@ -328,7 +328,11 @@ class CharacterRegistry:
 
         logger.info(
             "Registry: project %s finished (%s, rounds=%d, survivors=%d, deaths=%d)",
-            project_uuid, status, rounds_used, len(survivors), len(deaths),
+            project_uuid,
+            status,
+            rounds_used,
+            len(survivors),
+            len(deaths),
         )
         self._project_uuid = None
 
@@ -390,13 +394,17 @@ class CharacterRegistry:
         # latest dead row if legendary, else fall through to create.
         async with engine.connect() as conn:
             rows = (
-                await conn.execute(
-                    select(characters)
-                    .where(characters.c.seed_hash == sh)
-                    .where(characters.c.name == name)
-                    .order_by(desc(characters.c.is_alive), desc(characters.c.last_seen_at))
+                (
+                    await conn.execute(
+                        select(characters)
+                        .where(characters.c.seed_hash == sh)
+                        .where(characters.c.name == name)
+                        .order_by(desc(characters.c.is_alive), desc(characters.c.last_seen_at))
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
 
         chosen = None
         if rows:

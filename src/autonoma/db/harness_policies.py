@@ -148,10 +148,10 @@ async def get_policy_by_id(policy_id: str) -> HarnessPolicy | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
-            await conn.execute(
-                select(harness_policies).where(harness_policies.c.id == policy_id)
-            )
-        ).mappings().first()
+            (await conn.execute(select(harness_policies).where(harness_policies.c.id == policy_id)))
+            .mappings()
+            .first()
+        )
     return _row_to_policy(row) if row else None
 
 
@@ -161,12 +161,14 @@ async def get_default_policy() -> HarnessPolicy | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
-            await conn.execute(
-                select(harness_policies)
-                .where(harness_policies.c.is_default.is_(True))
-                .limit(1)
+            (
+                await conn.execute(
+                    select(harness_policies).where(harness_policies.c.is_default.is_(True)).limit(1)
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
     return _row_to_policy(row) if row else None
 
 
@@ -180,20 +182,24 @@ async def list_policies_for_user(user_id: str) -> list[HarnessPolicy]:
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(harness_policies)
-                .where(
-                    or_(
-                        harness_policies.c.owner_user_id == user_id,
-                        harness_policies.c.is_default.is_(True),
+            (
+                await conn.execute(
+                    select(harness_policies)
+                    .where(
+                        or_(
+                            harness_policies.c.owner_user_id == user_id,
+                            harness_policies.c.is_default.is_(True),
+                        )
+                    )
+                    .order_by(
+                        harness_policies.c.is_default.desc(),
+                        harness_policies.c.created_at,
                     )
                 )
-                .order_by(
-                    harness_policies.c.is_default.desc(),
-                    harness_policies.c.created_at,
-                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     return [_row_to_policy(r) for r in rows]
 
 
@@ -221,9 +227,7 @@ async def update_policy(
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(
-            sa_update(harness_policies)
-            .where(harness_policies.c.id == policy_id)
-            .values(**values)
+            sa_update(harness_policies).where(harness_policies.c.id == policy_id).values(**values)
         )
     return await get_policy_by_id(policy_id)
 

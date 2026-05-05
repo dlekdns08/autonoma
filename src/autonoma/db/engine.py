@@ -173,7 +173,8 @@ async def _migration_007_voice_fs_storage(conn) -> None:
     if ref_audio_row is not None and ref_audio_row[3]:  # notnull==1
         # Rebuild the table with ref_audio nullable. Keep column order
         # compatible with the ORM so inspection matches.
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE voice_profiles__new (
                 id VARCHAR(36) PRIMARY KEY,
                 owner_user_id VARCHAR(36) NOT NULL
@@ -188,8 +189,10 @@ async def _migration_007_voice_fs_storage(conn) -> None:
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             INSERT INTO voice_profiles__new (
                 id, owner_user_id, name, ref_text, ref_audio,
                 ref_audio_path, ref_audio_mime, duration_s, size_bytes,
@@ -200,17 +203,18 @@ async def _migration_007_voice_fs_storage(conn) -> None:
                 ref_audio_path, ref_audio_mime, duration_s, size_bytes,
                 created_at, updated_at
             FROM voice_profiles
-        """))
+        """)
+        )
         await conn.execute(text("DROP TABLE voice_profiles"))
-        await conn.execute(text(
-            "ALTER TABLE voice_profiles__new RENAME TO voice_profiles"
-        ))
+        await conn.execute(text("ALTER TABLE voice_profiles__new RENAME TO voice_profiles"))
         # voice_bindings has a FK into voice_profiles — the rebuild
         # preserves the PK names so existing bindings stay valid.
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_voice_profiles_owner_user_id "
-            "ON voice_profiles(owner_user_id)"
-        ))
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_voice_profiles_owner_user_id "
+                "ON voice_profiles(owner_user_id)"
+            )
+        )
 
 
 async def _migration_008_agent_journal(conn) -> None:
@@ -261,9 +265,7 @@ async def _migration_010_mocap_last_accessed(conn) -> None:
     if "last_accessed_at" not in cols:
         # Step 1: add the column nullable (SQLite limitation around
         # non-constant defaults on ALTER). Explicit NULL default.
-        await conn.execute(
-            text("ALTER TABLE mocap_clips ADD COLUMN last_accessed_at DATETIME")
-        )
+        await conn.execute(text("ALTER TABLE mocap_clips ADD COLUMN last_accessed_at DATETIME"))
         # Step 2: backfill. ``COALESCE(created_at, CURRENT_TIMESTAMP)``
         # handles the (impossible but defensive) case where created_at
         # is NULL for some legacy row.
@@ -310,8 +312,7 @@ async def _migration_012_feature_pack_2026_05(conn) -> None:
     # ALTER existing tables. SQLite rejects duplicate ADD COLUMN, so
     # probe first.
     char_cols = {
-        row[1]
-        for row in (await conn.execute(text("PRAGMA table_info(characters)"))).fetchall()
+        row[1] for row in (await conn.execute(text("PRAGMA table_info(characters)"))).fetchall()
     }
     if "retired_at" not in char_cols:
         await conn.execute(text("ALTER TABLE characters ADD COLUMN retired_at DATETIME"))
@@ -321,22 +322,15 @@ async def _migration_012_feature_pack_2026_05(conn) -> None:
         )
     if "memoir_version" not in char_cols:
         await conn.execute(
-            text(
-                "ALTER TABLE characters ADD COLUMN memoir_version "
-                "INTEGER NOT NULL DEFAULT 0"
-            )
+            text("ALTER TABLE characters ADD COLUMN memoir_version INTEGER NOT NULL DEFAULT 0")
         )
 
     persona_cols = {
-        row[1]
-        for row in (await conn.execute(text("PRAGMA table_info(personas)"))).fetchall()
+        row[1] for row in (await conn.execute(text("PRAGMA table_info(personas)"))).fetchall()
     }
     if "parent_persona_ids" not in persona_cols:
         await conn.execute(
-            text(
-                "ALTER TABLE personas ADD COLUMN parent_persona_ids "
-                "TEXT NOT NULL DEFAULT '[]'"
-            )
+            text("ALTER TABLE personas ADD COLUMN parent_persona_ids TEXT NOT NULL DEFAULT '[]'")
         )
 
 
@@ -358,11 +352,7 @@ MIGRATIONS: list[Migration] = [
 
 async def _get_schema_version(conn) -> int:
     await conn.execute(
-        text(
-            "CREATE TABLE IF NOT EXISTS schema_version ("
-            "  version INTEGER PRIMARY KEY"
-            ")"
-        )
+        text("CREATE TABLE IF NOT EXISTS schema_version (  version INTEGER PRIMARY KEY)")
     )
     result = await conn.execute(text("SELECT MAX(version) FROM schema_version"))
     row = result.first()
@@ -384,6 +374,7 @@ async def _verify_schema(conn) -> None:
     are informational only, because dropping/renaming in SQLite needs
     a dedicated migration anyway.
     """
+
     def _sync_check(sync_conn) -> list[str]:
         insp = sa_inspect(sync_conn)
         errors: list[str] = []
@@ -405,7 +396,8 @@ async def _verify_schema(conn) -> None:
                 logger.info(
                     "[schema] table '%s' has unknown columns %s — probably "
                     "from an older code revision, leaving in place",
-                    table.name, sorted(extra),
+                    table.name,
+                    sorted(extra),
                 )
         return errors
 

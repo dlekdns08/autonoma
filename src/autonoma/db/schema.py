@@ -786,7 +786,9 @@ session_anomalies = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("session_id", Integer, nullable=False, index=True),
     Column("round_number", Integer, nullable=False, default=0),
-    Column("kind", String(32), nullable=False),  # repetition|mood_drift|file_churn|stall|llm_error_burst
+    Column(
+        "kind", String(32), nullable=False
+    ),  # repetition|mood_drift|file_churn|stall|llm_error_burst
     Column("severity", String(8), nullable=False, default="warn"),  # info|warn|crit
     Column("details_json", Text, nullable=False, default="{}"),
     Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
@@ -843,7 +845,9 @@ live_quests = Table(
     Column("session_id", Integer, nullable=False, index=True),
     Column("text", String(256), nullable=False),
     Column("votes", Integer, nullable=False, default=0),
-    Column("status", String(16), nullable=False, default="proposed"),  # proposed|active|completed|skipped
+    Column(
+        "status", String(16), nullable=False, default="proposed"
+    ),  # proposed|active|completed|skipped
     Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
     Column("activated_round", Integer, nullable=True),
     Column("completed_round", Integer, nullable=True),
