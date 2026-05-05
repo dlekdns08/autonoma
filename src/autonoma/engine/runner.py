@@ -50,11 +50,13 @@ class AutonomaEngine:
             # handlers before raising.
             self.renderer.attach(self.swarm, project)
             # Phase 1: Director plans
-            self.console.print(Panel(
-                f"[bold]{name}[/]: {description}",
-                title="[bold magenta]Autonoma[/]",
-                border_style="magenta",
-            ))
+            self.console.print(
+                Panel(
+                    f"[bold]{name}[/]: {description}",
+                    title="[bold magenta]Autonoma[/]",
+                    border_style="magenta",
+                )
+            )
 
             await self.swarm.initialize(project)
 
@@ -100,9 +102,7 @@ class AutonomaEngine:
             console=self.console,
             refresh_per_second=refresh,
         ) as live:
-            run_task = asyncio.create_task(
-                self.swarm.run(project, max_rounds=max_rounds)
-            )
+            run_task = asyncio.create_task(self.swarm.run(project, max_rounds=max_rounds))
 
             try:
                 while not run_task.done():
@@ -170,10 +170,7 @@ class AutonomaEngine:
         table.add_row("Tasks", f"{done}/{total} done")
         table.add_row("Files Created", str(len(project.files)))
         table.add_row("Agents Used", str(len(project.agents)))
-        table.add_row(
-            "Duration",
-            f"{(datetime.now() - project.started_at).total_seconds():.1f}s"
-        )
+        table.add_row("Duration", f"{(datetime.now() - project.started_at).total_seconds():.1f}s")
 
         self.console.print(table)
 
