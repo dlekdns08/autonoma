@@ -65,12 +65,12 @@ def setup_otel() -> bool:
         # without ``opentelemetry`` installed. If any of these miss, we
         # warn once and fall through to the Prometheus-only path.
         from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter,
         )
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError:
         logger.warning(
             "OTel endpoint %s configured but opentelemetry-* packages "
@@ -93,12 +93,12 @@ def setup_otel() -> bool:
         # don't currently emit OTel metrics (Prometheus covers that),
         # but ``get_meter()`` exists for downstream code that wants to.
         try:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                OTLPMetricExporter,
+            )
             from opentelemetry.sdk.metrics import MeterProvider
             from opentelemetry.sdk.metrics.export import (
                 PeriodicExportingMetricReader,
-            )
-            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-                OTLPMetricExporter,
             )
 
             reader = PeriodicExportingMetricReader(
