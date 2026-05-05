@@ -35,7 +35,6 @@ from autonoma.auth import (
 from autonoma.event_bus import bus
 from autonoma.routers import mocap_live as mocap_live_mod
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 
