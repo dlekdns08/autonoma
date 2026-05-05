@@ -67,26 +67,21 @@ class WorkspaceManager:
             safe_path = raw_path
             # Reject absolute POSIX paths
             if safe_path.startswith("/"):
-                logger.warning(
-                    f"[Workspace] Skipping absolute path: {raw_path!r}"
-                )
+                logger.warning(f"[Workspace] Skipping absolute path: {raw_path!r}")
                 skipped.append(raw_path)
                 continue
             # Reject Windows-style absolute paths (e.g. "C:/foo")
             if len(safe_path) >= 2 and safe_path[1] == ":" and safe_path[0].isalpha():
-                logger.warning(
-                    f"[Workspace] Skipping absolute (drive-letter) path: {raw_path!r}"
-                )
+                logger.warning(f"[Workspace] Skipping absolute (drive-letter) path: {raw_path!r}")
                 skipped.append(raw_path)
                 continue
 
             # Reject any ``..`` component before we touch the filesystem.
             # PurePosixPath handles "foo/../bar" → parts=("foo","..","bar").
             from pathlib import PurePosixPath
+
             if ".." in PurePosixPath(safe_path).parts:
-                logger.warning(
-                    f"[Workspace] Skipping path with '..' component: {raw_path!r}"
-                )
+                logger.warning(f"[Workspace] Skipping path with '..' component: {raw_path!r}")
                 skipped.append(raw_path)
                 continue
 
@@ -104,9 +99,7 @@ class WorkspaceManager:
             # or overwrite a caller-provided file outside this artifact's
             # intent.
             if resolved == project_root or not resolved.is_relative_to(project_root):
-                logger.warning(
-                    f"[Workspace] Skipping path traversal attempt: {raw_path!r}"
-                )
+                logger.warning(f"[Workspace] Skipping path traversal attempt: {raw_path!r}")
                 skipped.append(raw_path)
                 continue
 
