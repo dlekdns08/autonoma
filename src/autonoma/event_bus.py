@@ -58,9 +58,7 @@ class EventBus:
             if pattern.endswith(".*") and event.startswith(pattern[:-2]):
                 handlers.extend(hs)
         if handlers:
-            results = await asyncio.gather(
-                *(h(**data) for h in handlers), return_exceptions=True
-            )
+            results = await asyncio.gather(*(h(**data) for h in handlers), return_exceptions=True)
             # Surface any handler errors instead of silently swallowing them.
             # We keep return_exceptions=True so one bad handler doesn't kill
             # the whole batch — but log at ERROR with the full traceback so
