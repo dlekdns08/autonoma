@@ -19,7 +19,6 @@ from autonoma.mocap.validator import (
     validate_payload,
 )
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
