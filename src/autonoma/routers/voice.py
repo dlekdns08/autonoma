@@ -503,7 +503,8 @@ async def voice_command(
     Returns both the transcript and the routing result so the UI can
     show "✓ delivered to Alice" toasts.
     """
-    from autonoma.external_input import ExternalMessage, router as ext_router
+    from autonoma.external_input import ExternalMessage
+    from autonoma.external_input import router as ext_router
 
     transcript = await voice_transcribe(audio=audio, language=language, user=user)
     text = (transcript.get("text") or "").strip()
@@ -882,7 +883,8 @@ async def voice_stream(ws: WebSocket) -> None:
         # Imported lazily to avoid an import cycle: external_input
         # registers its own bus listeners at module load that touch the
         # voice router, so we defer until the very first stream final.
-        from autonoma.external_input import ExternalMessage, router as ext_router
+        from autonoma.external_input import ExternalMessage
+        from autonoma.external_input import router as ext_router
 
         ext_msg = ExternalMessage(
             source="voice",
