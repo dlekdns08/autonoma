@@ -47,9 +47,7 @@ def _expected(rating_a: float, rating_b: float) -> float:
     return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
 
 
-def _elo_update(
-    rating_a: float, rating_b: float, score_a: float
-) -> tuple[float, float]:
+def _elo_update(rating_a: float, rating_b: float, score_a: float) -> tuple[float, float]:
     """Return new ratings given ``score_a`` in {1.0, 0.5, 0.0}."""
     expected_a = _expected(rating_a, rating_b)
     expected_b = 1.0 - expected_a
@@ -60,6 +58,7 @@ def _elo_update(
 
 
 # ── KPI scoring ─────────────────────────────────────────────────────
+
 
 def _kpi_key(kpi: dict[str, Any]) -> tuple[int, int, int, int]:
     """Sort key — higher tuple wins.
@@ -79,6 +78,7 @@ def _kpi_key(kpi: dict[str, Any]) -> tuple[int, int, int, int]:
 
 
 # ── Store ───────────────────────────────────────────────────────────
+
 
 class CoordinatorStore:
     """In-memory + JSON-backed store. Singleton via ``coordinator_store``."""
@@ -149,33 +149,25 @@ class CoordinatorStore:
             try:
                 self._instances[inst_id] = InstanceRecord.model_validate(data)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[coordinator] skipping corrupt instance %s: %s", inst_id, exc
-                )
+                logger.warning("[coordinator] skipping corrupt instance %s: %s", inst_id, exc)
         raw = self._read_json("invites.json") or {}
         for inv_id, data in raw.items():
             try:
                 self._invites[inv_id] = MatchInvite.model_validate(data)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[coordinator] skipping corrupt invite %s: %s", inv_id, exc
-                )
+                logger.warning("[coordinator] skipping corrupt invite %s: %s", inv_id, exc)
         raw = self._read_json("submissions.json") or {}
         for key, data in raw.items():
             try:
                 self._submissions[key] = MatchSubmission.model_validate(data)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[coordinator] skipping corrupt submission %s: %s", key, exc
-                )
+                logger.warning("[coordinator] skipping corrupt submission %s: %s", key, exc)
         raw = self._read_json("results.json") or {}
         for match_id, data in raw.items():
             try:
                 self._results[match_id] = MatchResult.model_validate(data)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[coordinator] skipping corrupt result %s: %s", match_id, exc
-                )
+                logger.warning("[coordinator] skipping corrupt result %s: %s", match_id, exc)
         raw = self._read_json("ratings.json") or {}
         for inst_id, data in raw.items():
             if isinstance(data, dict):
@@ -232,15 +224,11 @@ class CoordinatorStore:
 
     # ── public API ────────────────────────────────────────────────
 
-    async def register_instance(
-        self, instance_id: str, name: str, endpoint: str
-    ) -> None:
+    async def register_instance(self, instance_id: str, name: str, endpoint: str) -> None:
         """Register or update an instance record."""
         async with self._async_lock:
             self._load()
-            record = InstanceRecord(
-                instance_id=instance_id, name=name, endpoint=endpoint
-            )
+            record = InstanceRecord(instance_id=instance_id, name=name, endpoint=endpoint)
             self._instances[instance_id] = record
             self._persist_instances()
             # Pre-seed the rating row so the leaderboard shows new
@@ -312,9 +300,7 @@ class CoordinatorStore:
         async with self._async_lock:
             self._load()
             # Find both invites of this match.
-            paired = [
-                inv for inv in self._invites.values() if inv.match_id == match_id
-            ]
+            paired = [inv for inv in self._invites.values() if inv.match_id == match_id]
             if len(paired) != 2:
                 logger.warning(
                     "[coordinator] submit_score: match %s has %d invites",
@@ -330,9 +316,7 @@ class CoordinatorStore:
                     match_id,
                 )
                 return None
-            sub = MatchSubmission(
-                match_id=match_id, instance_id=instance_id, kpi=dict(kpi or {})
-            )
+            sub = MatchSubmission(match_id=match_id, instance_id=instance_id, kpi=dict(kpi or {}))
             self._submissions[f"{match_id}:{instance_id}"] = sub
             self._persist_submissions()
 
@@ -443,9 +427,7 @@ coordinator_store = CoordinatorStore()
 # pointed at ``tmp_path`` and call methods on it directly).
 
 
-async def register_instance(
-    instance_id: str, name: str, endpoint: str
-) -> None:
+async def register_instance(instance_id: str, name: str, endpoint: str) -> None:
     await coordinator_store.register_instance(instance_id, name, endpoint)
 
 
