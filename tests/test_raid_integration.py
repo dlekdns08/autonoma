@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from autonoma.event_bus import bus
-from autonoma.world.raids import GuildRaid, RaidArena, RaidPhase
+from autonoma.world.raids import GuildRaid, RaidPhase
 
 
 def test_record_does_not_amplify_damage():
@@ -97,9 +97,9 @@ async def test_swarm_emits_raid_victory_when_guild_clears_boss():
         # _check_boss_fight may or may not spawn a boss this round; if
         # it didn't, force one through and re-run the fight.
         if swarm.boss_arena.current_boss is None:
-            from autonoma.world import BossAgent
-
             import random as _r
+
+            from autonoma.world import BossAgent
             swarm.boss_arena.current_boss = BossAgent.generate(10, 5, _r.Random(1))
             swarm.boss_arena.current_boss.hp = 1  # one-tap kill
             swarm.boss_arena.current_boss.max_hp = 1
