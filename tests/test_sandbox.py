@@ -7,7 +7,6 @@ On macOS the seatbelt backend is used, on Linux bwrap (or rlimit fallback).
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 
 import pytest
