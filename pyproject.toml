@@ -101,11 +101,19 @@ extend-exclude = [".venv", "output", "logs", ".hf-cache", "data"]
 # adds catches for common pitfalls without forcing style rewrites. Add
 # more rule families later once the baseline is clean.
 select = ["E", "F", "B", "I"]
-# E501 (line too long) is informational here; we let the formatter
-# handle line wrapping rather than failing CI on cosmetic length.
-ignore = ["E501", "B008"]
+# - E501 (line too long): cosmetic, formatter's job.
+# - B008 (function call in default arg): FastAPI/typer Depends() pattern.
+# - B904 (raise without from): widespread pattern in this codebase;
+#   adding ``from`` everywhere is its own follow-up.
+# - B905 (zip strict): same — broad cleanup deferred.
+# - B007 (unused loop var): often intentional iteration counters.
+# - F841 (unused local): often diagnostic-only references kept for repl.
+ignore = ["E501", "B008", "B904", "B905", "B007", "F841"]
 
 [tool.ruff.lint.per-file-ignores]
+# __init__.py files re-export symbols intentionally — they are the
+# package's public surface, not unused imports.
+"src/autonoma/**/__init__.py" = ["F401"]
 # Tests routinely use ``assert`` and rely on fixtures being shadowed.
 "tests/**" = ["B011"]
 
