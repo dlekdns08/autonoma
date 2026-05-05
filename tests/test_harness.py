@@ -1,6 +1,5 @@
 """Tests for the agent harness system."""
 
-import pytest
 
 from autonoma.agents.harness import (
     CODER_HARNESS,
@@ -8,7 +7,6 @@ from autonoma.agents.harness import (
     HARNESS_REGISTRY,
     REVIEWER_HARNESS,
     TESTER_HARNESS,
-    AgentCapability,
     AgentHarness,
     get_harness,
 )
