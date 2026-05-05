@@ -138,6 +138,8 @@ async def livechat_event(
     from autonoma.external_input import (
         ExternalMessage,
         SourceKind,
+    )
+    from autonoma.external_input import (
         router as ext_router,
     )
 
@@ -219,8 +221,9 @@ async def livechat_open_poll(
           "duration_sec": 30
         }
     """
-    from autonoma.auth import require_active_user
     from fastapi import Depends
+
+    from autonoma.auth import require_active_user
 
     # FastAPI handles the dependency injection in the signature; the
     # explicit ``Depends`` here just makes the import path obvious in
