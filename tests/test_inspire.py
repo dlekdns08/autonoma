@@ -21,7 +21,6 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-
 # ── Test doubles ──────────────────────────────────────────────────────
 
 
