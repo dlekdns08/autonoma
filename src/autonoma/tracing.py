@@ -25,7 +25,7 @@ import time
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from autonoma.config import settings
 from autonoma.event_bus import bus
