@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import signal
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,7 +12,6 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from autonoma.agents.swarm import AgentSwarm
 from autonoma.config import settings
