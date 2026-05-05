@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 # ``fresh_db`` is defined in tests/conftest.py — shared by every DB test.
 
 
