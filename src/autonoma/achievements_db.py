@@ -140,12 +140,16 @@ async def list_achievements(character_uuid: str) -> list[EarnedAchievement]:
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(earned_achievements)
-                .where(earned_achievements.c.character_uuid == character_uuid)
-                .order_by(desc(earned_achievements.c.earned_at))
+            (
+                await conn.execute(
+                    select(earned_achievements)
+                    .where(earned_achievements.c.character_uuid == character_uuid)
+                    .order_by(desc(earned_achievements.c.earned_at))
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     return [
         EarnedAchievement(
             achievement_id=r["achievement_id"],
@@ -171,33 +175,36 @@ async def list_recent_globally(limit: int = 20) -> list[dict[str, Any]]:
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(
-                    earned_achievements.c.achievement_id,
-                    earned_achievements.c.tier,
-                    earned_achievements.c.earned_at,
-                    earned_achievements.c.project_uuid,
-                    earned_achievements.c.character_uuid,
-                    characters.c.name,
-                    characters.c.species_emoji,
-                    characters.c.role,
-                )
-                .select_from(
-                    earned_achievements.join(
-                        characters,
-                        earned_achievements.c.character_uuid
-                        == characters.c.character_uuid,
+            (
+                await conn.execute(
+                    select(
+                        earned_achievements.c.achievement_id,
+                        earned_achievements.c.tier,
+                        earned_achievements.c.earned_at,
+                        earned_achievements.c.project_uuid,
+                        earned_achievements.c.character_uuid,
+                        characters.c.name,
+                        characters.c.species_emoji,
+                        characters.c.role,
                     )
+                    .select_from(
+                        earned_achievements.join(
+                            characters,
+                            earned_achievements.c.character_uuid == characters.c.character_uuid,
+                        )
+                    )
+                    # Tie-break on id so multiple inserts within the same
+                    # SQLite-second still resolve newest-first.
+                    .order_by(
+                        desc(earned_achievements.c.earned_at),
+                        desc(earned_achievements.c.id),
+                    )
+                    .limit(safe_limit)
                 )
-                # Tie-break on id so multiple inserts within the same
-                # SQLite-second still resolve newest-first.
-                .order_by(
-                    desc(earned_achievements.c.earned_at),
-                    desc(earned_achievements.c.id),
-                )
-                .limit(safe_limit)
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
     out: list[dict[str, Any]] = []
     for r in rows:
