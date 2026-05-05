@@ -73,9 +73,8 @@ async def test_action_open_pr_missing_args_returns_structured_failure(
     """With no repo_path/branch/title, the handler must return a clean
     failure and never invoke the tool — this is the dead-man's-switch
     against LLM hallucinations."""
-    from autonoma.models import ProjectState
-    from autonoma.agents.base import AutonomousAgent
     from autonoma.agents import tools as tools_pkg
+    from autonoma.models import ProjectState
 
     called = {"hit": False}
 
@@ -111,7 +110,6 @@ async def test_action_open_pr_delegates_with_agent_name(
 ) -> None:
     """Happy path: patched tool returns a fake URL; handler surfaces it
     + emits ``agent.opened_pr`` on the bus."""
-    from autonoma.agents import base as agent_base
     from autonoma.agents.tools import git_pr as git_pr_mod
     from autonoma.event_bus import bus
     from autonoma.models import ProjectState
@@ -178,7 +176,7 @@ def _make_stub_agent(name: str = "Agent"):
     cost and network deps."""
     from autonoma.agents.base import AutonomousAgent
     from autonoma.agents.harness import CODER_HARNESS
-    from autonoma.world import AgentStats, AgentBones
+    from autonoma.world import AgentBones, AgentStats
 
     class _Stub(AutonomousAgent):
         def __init__(self, nm: str) -> None:
@@ -189,8 +187,8 @@ def _make_stub_agent(name: str = "Agent"):
             self.persona = type("P", (), {"name": nm, "skills": []})()
             self.harness = CODER_HARNESS
             self.stats = AgentStats()
-            from autonoma.world import AgentMemory, Mood
             from autonoma.harness.policy import default_policy_content as _defp
+            from autonoma.world import AgentMemory, Mood
             self.memory = AgentMemory()
             self.mood = Mood.FOCUSED
             self.policy = _defp()
