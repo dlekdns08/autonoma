@@ -25,7 +25,7 @@ import hmac
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi import status as http_status
 
 from autonoma.auth import User, require_active_user
