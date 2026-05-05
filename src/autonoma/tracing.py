@@ -234,6 +234,7 @@ def finish_run(recorder: RunRecorder | None) -> None:
 
 # ── Traced LLM call helper ────────────────────────────────────────────
 
+
 async def traced_messages_create(
     client: "BaseLLMClient",
     *,
@@ -278,33 +279,37 @@ async def traced_messages_create(
     except Exception as exc:
         duration = round(time.perf_counter() - started, 3)
         if recorder is not None:
-            await recorder.log_llm_call({
+            await recorder.log_llm_call(
+                {
+                    "ts": started_iso,
+                    "agent": agent,
+                    "phase": phase,
+                    "duration_sec": duration,
+                    "request": req_summary,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+        raise
+
+    duration = round(time.perf_counter() - started, 3)
+    if recorder is not None:
+        await recorder.log_llm_call(
+            {
                 "ts": started_iso,
                 "agent": agent,
                 "phase": phase,
                 "duration_sec": duration,
                 "request": req_summary,
-                "error": f"{type(exc).__name__}: {exc}",
-            })
-        raise
-
-    duration = round(time.perf_counter() - started, 3)
-    if recorder is not None:
-        await recorder.log_llm_call({
-            "ts": started_iso,
-            "agent": agent,
-            "phase": phase,
-            "duration_sec": duration,
-            "request": req_summary,
-            "response": {
-                "stop_reason": response.stop_reason,
-                "usage": {
-                    "input_tokens": response.input_tokens,
-                    "output_tokens": response.output_tokens,
+                "response": {
+                    "stop_reason": response.stop_reason,
+                    "usage": {
+                        "input_tokens": response.input_tokens,
+                        "output_tokens": response.output_tokens,
+                    },
+                    "text": response.text,
                 },
-                "text": response.text,
-            },
-        })
+            }
+        )
     return response
 
 
