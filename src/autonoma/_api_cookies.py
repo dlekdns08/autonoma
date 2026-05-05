@@ -31,13 +31,15 @@ def _resolve_cors_origins() -> list[str]:
     if settings.environment == "development":
         # Dev origins; production origins should come from env via settings
         # (AUTONOMA_CORS_ALLOW_ORIGINS), never hardcoded here.
-        origins.extend([
-            "http://localhost:3000", "http://127.0.0.1:3000",
-            "http://localhost:3478", "http://127.0.0.1:3478",
-        ])
-    extra = [
-        o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()
-    ]
+        origins.extend(
+            [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:3478",
+                "http://127.0.0.1:3478",
+            ]
+        )
+    extra = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
     for origin in extra:
         if origin not in origins:
             origins.append(origin)
