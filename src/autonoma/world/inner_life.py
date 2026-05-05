@@ -277,9 +277,9 @@ class AgentDiary:
             return f"📔 {self.agent_name}'s Diary: (empty - no adventures yet~)"
 
         lines = [
-            f"╔══════════════════════════════════════╗",
+            "╔══════════════════════════════════════╗",
             f"║  📔 {self.agent_name}'s Diary  ({self.species})  ║",
-            f"╚══════════════════════════════════════╝",
+            "╚══════════════════════════════════════╝",
             "",
         ]
         for entry in self.entries:
