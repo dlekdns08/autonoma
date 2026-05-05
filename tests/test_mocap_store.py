@@ -16,7 +16,6 @@ import pytest
 
 from autonoma.mocap.validator import ValidatedClip
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
