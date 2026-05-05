@@ -28,8 +28,8 @@ from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from autonoma.auth import User, require_active_user
-from autonoma.event_bus import bus
 from autonoma.config import settings
+from autonoma.event_bus import bus
 from autonoma.tts import create_tts_client, tts_config_from_settings
 from autonoma.tts_synth import synthesize_streaming
 from autonoma.voice.store import get_profile
