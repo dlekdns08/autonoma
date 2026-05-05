@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, select
 
 
 async def _wav_bytes(n: int = 256) -> bytes:
@@ -33,7 +33,7 @@ async def test_new_profile_writes_to_disk_and_reads_back(
     fresh_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
-    from autonoma.db.engine import init_db, get_engine
+    from autonoma.db.engine import get_engine, init_db
     from autonoma.db.schema import voice_profiles
     from autonoma.voice import store
 
@@ -90,7 +90,7 @@ async def test_legacy_blob_row_still_readable(
 ) -> None:
     """Rows written before migration 007 still work via the BLOB fallback."""
     from autonoma.config import settings
-    from autonoma.db.engine import init_db, get_engine
+    from autonoma.db.engine import get_engine, init_db
     from autonoma.db.schema import voice_profiles
     from autonoma.voice import store
 
