@@ -81,9 +81,7 @@ def breed_seed_strings(seed_a: str, seed_b: str, salt: str = "") -> str:
     return ":".join(interleaved)
 
 
-def merge_tags(
-    tags_a: list[str], tags_b: list[str], max_tags: int = 6
-) -> list[str]:
+def merge_tags(tags_a: list[str], tags_b: list[str], max_tags: int = 6) -> list[str]:
     """Set union of two tag lists, preferring overlapping tags first.
 
     Tags shared between both parents go to the front (they're the
@@ -164,9 +162,7 @@ def _blend_prompt_style_offline(style_a: str, style_b: str) -> str:
     return a or b
 
 
-async def _blend_prompt_style_llm(
-    style_a: str, style_b: str, llm_client: Any
-) -> str:
+async def _blend_prompt_style_llm(style_a: str, style_b: str, llm_client: Any) -> str:
     """Ask the LLM to fuse two prompt_style strings into one voice.
 
     Falls back to the offline blend if the LLM call fails or returns
@@ -183,10 +179,7 @@ async def _blend_prompt_style_llm(
         "Reply with 1-2 short sentences describing the blended tone. "
         "No preamble, no quotes."
     )
-    user_msg = (
-        f"Parent A voice:\n{a}\n\nParent B voice:\n{b}\n\n"
-        "Write the blended child's voice."
-    )
+    user_msg = f"Parent A voice:\n{a}\n\nParent B voice:\n{b}\n\nWrite the blended child's voice."
     try:
         # ``BaseLLMClient.create`` expects model/max_tokens/temperature.
         # Sensible small defaults — this is a one-off blending call.
@@ -304,9 +297,7 @@ async def breed_personas(
                 parent_persona_ids=json.dumps(parent_lineage),
             )
         )
-        new_row = (
-            await conn.execute(select(personas).where(personas.c.id == child_id))
-        ).first()
+        new_row = (await conn.execute(select(personas).where(personas.c.id == child_id))).first()
 
     if new_row is None:  # pragma: no cover — defensive
         raise RuntimeError("breed_personas: failed to read inserted row")
