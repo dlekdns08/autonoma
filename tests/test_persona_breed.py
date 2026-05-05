@@ -28,7 +28,6 @@ from autonoma.personas_breed import (
     merge_tags,
 )
 
-
 OWNER_ID = "owner-test-uid"
 
 
@@ -216,7 +215,6 @@ async def test_breed_same_parent_rejected(fresh_db):
 async def test_breed_router_same_id_returns_400(fresh_db):
     """Round-trip the same-parent case through the HTTP router so we
     confirm 400 (not 500) is what callers see."""
-    from collections.abc import AsyncIterator
 
     from httpx import ASGITransport, AsyncClient
 
