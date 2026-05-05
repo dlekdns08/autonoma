@@ -170,7 +170,9 @@ class AnimatedRenderer:
             title.append(f"| {self._project.name} ", style="cyan")
         if self._round > 0:
             sparkle = SPARKLE_FRAMES[self._frame % len(SPARKLE_FRAMES)]
-            title.append(f"| {sparkle} Round {self._round}/{self._max_rounds} {sparkle} ", style="yellow")
+            title.append(
+                f"| {sparkle} Round {self._round}/{self._max_rounds} {sparkle} ", style="yellow"
+            )
         if self._sky_line:
             title.append(f"| {self._sky_line} ", style="dim cyan")
         return Panel(Align.center(title), style="magenta", border_style="bright_magenta")
@@ -179,7 +181,9 @@ class AnimatedRenderer:
         """Render the animated stage with kawaii agent sprites and speech bubbles."""
         if not self._swarm:
             msg = IDLE_MESSAGES[self._frame % len(IDLE_MESSAGES)]
-            return Panel(f"[dim]{msg}[/]", title="[bold cyan]~ Stage ~[/]", border_style="bright_cyan")
+            return Panel(
+                f"[dim]{msg}[/]", title="[bold cyan]~ Stage ~[/]", border_style="bright_cyan"
+            )
 
         WIDTH = 80
         HEIGHT = 18
@@ -203,7 +207,7 @@ class AnimatedRenderer:
                 for i, line in enumerate(bubble_lines):
                     row = bubble_y + i
                     if 0 <= row < HEIGHT:
-                        for j, ch in enumerate(line[:WIDTH - x]):
+                        for j, ch in enumerate(line[: WIDTH - x]):
                             col = x + j
                             if 0 <= col < WIDTH:
                                 canvas[row][col] = ch
@@ -213,42 +217,50 @@ class AnimatedRenderer:
             for i, line in enumerate(sprite_lines):
                 row = y + i
                 if 0 <= row < HEIGHT:
-                    for j, ch in enumerate(line[:WIDTH - x]):
+                    for j, ch in enumerate(line[: WIDTH - x]):
                         col = x + j
                         if 0 <= col < WIDTH:
                             canvas[row][col] = ch
 
             # Draw cute name tag with level and evolved species
             name_row = y + len(sprite_lines)
-            level_str = f"Lv{agent.stats.level}" if hasattr(agent, 'stats') else ""
+            level_str = f"Lv{agent.stats.level}" if hasattr(agent, "stats") else ""
             species_emoji = ""
             species_name = ""
-            if hasattr(agent, 'bones') and agent.bones:
+            if hasattr(agent, "bones") and agent.bones:
                 evolved_sp, evolved_ej = agent.bones.get_evolved_form(
-                    agent.stats.level if hasattr(agent, 'stats') else 1
+                    agent.stats.level if hasattr(agent, "stats") else 1
                 )
                 species_emoji = evolved_ej
                 species_name = evolved_sp
             mood_str = ""
-            if hasattr(agent, 'mood'):
+            if hasattr(agent, "mood"):
                 mood_map = {
-                    "happy": "(^w^)", "focused": "(>_<)", "frustrated": "(>.<)",
-                    "excited": "(*^*)", "tired": "(-_-)", "proud": "(^_~)",
-                    "worried": "(o_o)", "curious": "(?.?)", "determined": "(!_!)",
-                    "relaxed": "(~_~)", "inspired": "(!!)", "mischievous": "(>w<)",
+                    "happy": "(^w^)",
+                    "focused": "(>_<)",
+                    "frustrated": "(>.<)",
+                    "excited": "(*^*)",
+                    "tired": "(-_-)",
+                    "proud": "(^_~)",
+                    "worried": "(o_o)",
+                    "curious": "(?.?)",
+                    "determined": "(!_!)",
+                    "relaxed": "(~_~)",
+                    "inspired": "(!!)",
+                    "mischievous": "(>w<)",
                     "nostalgic": "(._.)",
                 }
                 mood_str = mood_map.get(agent.mood.value, "")
             tag = f"{species_emoji}~{name[:6]}~{level_str}"
             if name_row < HEIGHT:
-                for j, ch in enumerate(tag[:WIDTH - x]):
+                for j, ch in enumerate(tag[: WIDTH - x]):
                     col = x + j
                     if 0 <= col < WIDTH:
                         canvas[name_row][col] = ch
             # Mood face below name
             mood_row = name_row + 1
             if mood_str and mood_row < HEIGHT:
-                for j, ch in enumerate(mood_str[:WIDTH - x]):
+                for j, ch in enumerate(mood_str[: WIDTH - x]):
                     col = x + j
                     if 0 <= col < WIDTH:
                         canvas[mood_row][col] = ch
@@ -369,19 +381,23 @@ class AnimatedRenderer:
                     build(children, branch, depth + 1)
 
         build(dirs, tree)
-        return Panel(tree, title=f"[bold magenta]{sparkle} Files {sparkle}[/]", border_style="bright_magenta")
+        return Panel(
+            tree, title=f"[bold magenta]{sparkle} Files {sparkle}[/]", border_style="bright_magenta"
+        )
 
     def _render_footer(self) -> Panel:
         agents = len(self._swarm.agents) if self._swarm else 0
         heart = HEART_FRAMES[self._frame % len(HEART_FRAMES)]
         return Panel(
-            Align.center(Text.from_markup(
-                f"[dim]{heart} Autonoma v0.1.0 | "
-                f"Agents: {agents} {MOOD_EMOTES['happy']} | "
-                f"Files: {len(self._files)} | "
-                f"Tokens: {self._total_tokens:,} | "
-                f"Ctrl+C to stop {heart}[/]"
-            )),
+            Align.center(
+                Text.from_markup(
+                    f"[dim]{heart} Autonoma v0.1.0 | "
+                    f"Agents: {agents} {MOOD_EMOTES['happy']} | "
+                    f"Files: {len(self._files)} | "
+                    f"Tokens: {self._total_tokens:,} | "
+                    f"Ctrl+C to stop {heart}[/]"
+                )
+            ),
             style="dim",
             border_style="bright_magenta",
         )
@@ -402,11 +418,13 @@ class AnimatedRenderer:
             for agent in self._swarm.agents.values():
                 if agent.state.value == "celebrating" and random.random() < 0.3:
                     chars = ["✦", "♥", "★", "♪", "✧", "♡", "☆"]
-                    self._particles.append({
-                        "x": agent.position.x + random.randint(-2, 6),
-                        "y": agent.position.y - 1,
-                        "char": random.choice(chars),
-                    })
+                    self._particles.append(
+                        {
+                            "x": agent.position.x + random.randint(-2, 6),
+                            "y": agent.position.y - 1,
+                            "char": random.choice(chars),
+                        }
+                    )
 
         # Cap particles
         if len(self._particles) > 30:
@@ -414,7 +432,9 @@ class AnimatedRenderer:
 
     # ── Event Handlers ─────────────────────────────────────────────────────
 
-    async def _on_speech(self, agent: str = "", text: str = "", style: str = "dim", **_: Any) -> None:
+    async def _on_speech(
+        self, agent: str = "", text: str = "", style: str = "dim", **_: Any
+    ) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
         emoji = "?"
         if self._swarm and agent in self._swarm.agents:
@@ -431,7 +451,9 @@ class AnimatedRenderer:
         self._files.append(path)
         self._log(f"[bold cyan]♪ {agent}[/] -> [bold]{path}[/]")
 
-    async def _on_task_assigned(self, agent: str = "", assigned_to: str = "", title: str = "", **_: Any) -> None:
+    async def _on_task_assigned(
+        self, agent: str = "", assigned_to: str = "", title: str = "", **_: Any
+    ) -> None:
         self._log(f"[bold yellow]♫ {agent}[/] -> {assigned_to}: [italic]{title}[/]")
 
     async def _on_task_completed(self, agent: str = "", title: str = "", **_: Any) -> None:
@@ -444,8 +466,12 @@ class AnimatedRenderer:
         if sky:
             self._sky_line = sky
 
-    async def _on_plan(self, task_count: int = 0, agent_count: int = 0, analysis: str = "", **_: Any) -> None:
-        self._log(f"[bold yellow]♥ Director:[/] Plan ready - {task_count} tasks, {agent_count} agents {MOOD_EMOTES['proud']}")
+    async def _on_plan(
+        self, task_count: int = 0, agent_count: int = 0, analysis: str = "", **_: Any
+    ) -> None:
+        self._log(
+            f"[bold yellow]♥ Director:[/] Plan ready - {task_count} tasks, {agent_count} agents {MOOD_EMOTES['proud']}"
+        )
         if analysis:
             self._log(f"  [dim]{analysis[:80]}[/]")
 
@@ -453,15 +479,22 @@ class AnimatedRenderer:
         self._log(f"[bold green]★ PROJECT COMPLETE! {MOOD_EMOTES['excited']}[/]")
         # Spawn celebration particles
         for _ in range(10):
-            self._particles.append({
-                "x": random.randint(10, 70),
-                "y": random.randint(10, 16),
-                "char": random.choice(["✦", "♥", "★", "♪"]),
-            })
+            self._particles.append(
+                {
+                    "x": random.randint(10, 70),
+                    "y": random.randint(10, 16),
+                    "char": random.choice(["✦", "♥", "★", "♪"]),
+                }
+            )
 
     async def _on_swarm_finished(
-        self, total_tokens: int = 0, epilogue: str = "", leaderboard: str = "",
-        multiverse: str = "", graveyard: str = "", **_: Any,
+        self,
+        total_tokens: int = 0,
+        epilogue: str = "",
+        leaderboard: str = "",
+        multiverse: str = "",
+        graveyard: str = "",
+        **_: Any,
     ) -> None:
         self._total_tokens = total_tokens
         if leaderboard:
@@ -477,29 +510,43 @@ class AnimatedRenderer:
             for line in multiverse.split("\n")[-6:]:
                 self._log(f"[bold cyan]{line}[/]")
 
-    async def _on_level_up(self, agent: str = "", level: int = 0, species: str = "", **_: Any) -> None:
-        self._log(f"[bold yellow]★★★ {agent} LEVELED UP to Lv{level}! ★★★ {MOOD_EMOTES['excited']}[/]")
+    async def _on_level_up(
+        self, agent: str = "", level: int = 0, species: str = "", **_: Any
+    ) -> None:
+        self._log(
+            f"[bold yellow]★★★ {agent} LEVELED UP to Lv{level}! ★★★ {MOOD_EMOTES['excited']}[/]"
+        )
         # Celebration particles
         for _ in range(8):
-            self._particles.append({
-                "x": random.randint(10, 70),
-                "y": random.randint(5, 15),
-                "char": random.choice(["★", "♥", "♪", "✦", "☆"]),
-            })
+            self._particles.append(
+                {
+                    "x": random.randint(10, 70),
+                    "y": random.randint(5, 15),
+                    "char": random.choice(["★", "♥", "♪", "✦", "☆"]),
+                }
+            )
 
-    async def _on_world_event(self, event_type: str = "", title: str = "", description: str = "", **_: Any) -> None:
+    async def _on_world_event(
+        self, event_type: str = "", title: str = "", description: str = "", **_: Any
+    ) -> None:
         self._log(f"[bold magenta]~*~ WORLD EVENT: {title} ~*~[/]")
         self._log(f"  [dim]{description}[/]")
 
-    async def _on_guild_formed(self, name: str = "", members: list[str] | None = None, synergy: float = 0, **_: Any) -> None:
+    async def _on_guild_formed(
+        self, name: str = "", members: list[str] | None = None, synergy: float = 0, **_: Any
+    ) -> None:
         member_str = ", ".join(members or [])
-        self._log(f"[bold cyan]♥♥ Guild formed: {name} ♥♥[/] ({member_str}) Synergy: +{synergy * 100:.0f}%")
+        self._log(
+            f"[bold cyan]♥♥ Guild formed: {name} ♥♥[/] ({member_str}) Synergy: +{synergy * 100:.0f}%"
+        )
         for _ in range(5):
-            self._particles.append({
-                "x": random.randint(10, 70),
-                "y": random.randint(5, 15),
-                "char": random.choice(["♥", "♡", "✦"]),
-            })
+            self._particles.append(
+                {
+                    "x": random.randint(10, 70),
+                    "y": random.randint(5, 15),
+                    "char": random.choice(["♥", "♡", "✦"]),
+                }
+            )
 
     async def _on_campfire(self, stories: int = 0, **_: Any) -> None:
         self._log(f"[bold yellow]🔥 Campfire! {stories} stories shared under the stars~ 🔥[/]")
@@ -511,28 +558,36 @@ class AnimatedRenderer:
     async def _on_fortune(self, agent: str = "", fortune: str = "", **_: Any) -> None:
         self._log(f"[bold yellow]🥠 {agent} opens a fortune cookie: [italic]{fortune}[/][/]")
 
-    async def _on_dream(self, agent: str = "", dream: str = "", dream_type: str = "", **_: Any) -> None:
+    async def _on_dream(
+        self, agent: str = "", dream: str = "", dream_type: str = "", **_: Any
+    ) -> None:
         icons = {"prophetic": "🔮", "nightmare": "👻", "peaceful": "🌙", "surreal": "🌀"}
         icon = icons.get(dream_type, "💤")
         self._log(f"[dim]{icon} {agent} dreams: {dream}[/]")
 
-    async def _on_boss_appeared(self, name: str = "", species: str = "", level: int = 0, hp: int = 0, **_: Any) -> None:
+    async def _on_boss_appeared(
+        self, name: str = "", species: str = "", level: int = 0, hp: int = 0, **_: Any
+    ) -> None:
         self._log(f"[bold red]☠☠☠ BOSS APPEARED: {name} (Lv{level}, {hp}HP) ☠☠☠[/]")
         for _ in range(8):
-            self._particles.append({
-                "x": random.randint(5, 75),
-                "y": random.randint(3, 15),
-                "char": random.choice(["☠", "⚔", "✖", "!"]),
-            })
+            self._particles.append(
+                {
+                    "x": random.randint(5, 75),
+                    "y": random.randint(3, 15),
+                    "char": random.choice(["☠", "⚔", "✖", "!"]),
+                }
+            )
 
     async def _on_boss_defeated(self, name: str = "", xp_reward: int = 0, **_: Any) -> None:
         self._log(f"[bold green]★★★ BOSS DEFEATED: {name}! +{xp_reward}XP to all! ★★★[/]")
         for _ in range(15):
-            self._particles.append({
-                "x": random.randint(5, 75),
-                "y": random.randint(3, 15),
-                "char": random.choice(["★", "♥", "✦", "♪", "☆", "♡"]),
-            })
+            self._particles.append(
+                {
+                    "x": random.randint(5, 75),
+                    "y": random.randint(3, 15),
+                    "char": random.choice(["★", "♥", "✦", "♪", "☆", "♡"]),
+                }
+            )
 
     async def _on_boss_damage(self, agent: str = "", message: str = "", **_: Any) -> None:
         self._log(f"[bold red]⚔ {message}[/]")

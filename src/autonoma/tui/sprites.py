@@ -147,6 +147,7 @@ def get_sprite(state: AgentState, emoji: str, frame: int = 0) -> list[str]:
 
 # ── Kawaii Speech Bubble ──────────────────────────────────────────────────────
 
+
 def render_speech_bubble(text: str, max_width: int = 30, mood: str = "") -> list[str]:
     r"""Render a kawaii comic-style speech bubble above the character.
 
@@ -205,6 +206,7 @@ def render_speech_bubble(text: str, max_width: int = 30, mood: str = "") -> list
 
 # ── Name Tag ───────────────────────────────────────────────────────────────
 
+
 def render_nametag(name: str, color: str, max_len: int = 10) -> str:
     """Render a truncated name tag with kawaii brackets."""
     truncated = name[:max_len]
@@ -233,4 +235,3 @@ KAWAII_STATUS_ICONS = {
     TaskStatus.DONE: "★",
     TaskStatus.BLOCKED: "✖",
 }
-
