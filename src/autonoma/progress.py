@@ -127,7 +127,7 @@ class ProgressTracker:
         sessions = self._data.get("sessions", [])
 
         lines = [
-            f"== PREVIOUS SESSION SUMMARY ==",
+            "== PREVIOUS SESSION SUMMARY ==",
             f"Project: {self._data.get('project_name', 'unknown')}",
             f"Progress: {progress.get('done', 0)}/{progress.get('total', 0)} tasks done ({progress.get('percentage', 0)}%)",
             f"Sessions so far: {len(sessions)}",
