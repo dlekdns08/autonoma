@@ -6,10 +6,8 @@ Cute ASCII art agents with expressive animations and comic-style bubbles.
 from __future__ import annotations
 
 import unicodedata
-from collections import deque
 
 from autonoma.models import AgentState, TaskStatus
-
 
 # ── Kawaii Agent Sprites (multi-line ASCII art per state) ─────────────────────
 
