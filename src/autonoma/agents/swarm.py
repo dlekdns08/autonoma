@@ -18,13 +18,10 @@ from autonoma.db.registry import CharacterRegistry
 from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — imports trigger @register
     loop_strategies as _loop_strategies,
-    routing_strategies as _routing_strategies,
-    spawn_strategies as _spawn_strategies,
 )
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import LLMConfig
-from autonoma.tracing import finish_run, start_run
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -33,6 +30,7 @@ from autonoma.models import (
     ProjectState,
     TaskStatus,
 )
+from autonoma.tracing import finish_run, start_run
 from autonoma.world import (
     BossArena,
     Campfire,
@@ -52,7 +50,6 @@ from autonoma.world import (
     TradingPost,
     WorldClock,
     WorldEventLedger,
-    WorldEventQueue,
     WorldEventType,
     apply_mood_contagion,
     check_achievements,
