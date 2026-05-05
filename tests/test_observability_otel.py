@@ -13,7 +13,6 @@ from autonoma.observability_otel import (
     setup_otel,
 )
 
-
 # ─────────────────── PrometheusRegistry behaviour ────────────────────
 
 
