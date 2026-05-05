@@ -17,7 +17,7 @@ import logging
 import random
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Literal, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -449,7 +449,7 @@ class OpenAILLMClient(BaseLLMClient):
         messages: list[dict[str, Any]],
         cache_system_prompt: bool = False,  # noqa: ARG002 — accepted for API parity; OpenAI/vLLM don't expose cache_control
     ) -> LLMResponse:
-        from openai import APIConnectionError, RateLimitError, AuthenticationError
+        from openai import APIConnectionError, AuthenticationError, RateLimitError
 
         full_messages = [{"role": "system", "content": system}] + list(messages)
 
@@ -523,7 +523,7 @@ class OpenAILLMClient(BaseLLMClient):
             create_kwargs["temperature"] = temperature
 
         try:
-            from openai import APIConnectionError, RateLimitError, AuthenticationError
+            from openai import APIConnectionError, AuthenticationError, RateLimitError
             async with await self._client.chat.completions.create(**create_kwargs) as stream_ctx:
                 async for chunk in stream_ctx:
                     delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -531,7 +531,7 @@ class OpenAILLMClient(BaseLLMClient):
                         yield delta
         except Exception as exc:
             try:
-                from openai import APIConnectionError, RateLimitError, AuthenticationError
+                from openai import APIConnectionError, AuthenticationError, RateLimitError
                 if isinstance(exc, APIConnectionError):
                     raise LLMConnectionError(str(exc)) from exc
                 if isinstance(exc, RateLimitError):
