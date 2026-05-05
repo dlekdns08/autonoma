@@ -112,8 +112,8 @@ async def test_mocap_upsert_binding_raises_on_readback_miss(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_voice_create_profile_raises_on_readback_miss(monkeypatch):
-    from autonoma.voice import store
     from autonoma.voice import fs as voice_fs
+    from autonoma.voice import store
 
     monkeypatch.setattr(store, "get_engine", _miss_then_pass_engine)
     monkeypatch.setattr(voice_fs, "write_ref_audio", lambda *a, **k: "x.wav")
