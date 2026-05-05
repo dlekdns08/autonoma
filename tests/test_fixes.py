@@ -2,24 +2,17 @@
 
 import pytest
 
-from autonoma.agents.base import AutonomousAgent, _extract_json, MAX_INBOX_SIZE
+from autonoma.agents.base import MAX_INBOX_SIZE, AutonomousAgent, _extract_json
 from autonoma.agents.swarm import AgentSwarm
 from autonoma.config import settings
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
-    AgentState,
     MessageType,
-    Position,
     ProjectState,
-    SpeechBubble,
-    Task,
-    TaskPriority,
-    TaskStatus,
 )
 from autonoma.tui.renderer import AnimatedRenderer
 from autonoma.tui.sprites import render_speech_bubble
-
 
 # ── _extract_json ────────────────────────────────────────────────────────────
 
