@@ -31,6 +31,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -38,7 +39,6 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
-    Index,
     func,
 )
 
