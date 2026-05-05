@@ -156,6 +156,13 @@ class AutonomousAgent:
     - How results are structured (output format requirements)
     """
 
+    # Optional features that get attached lazily by the swarm; declared
+    # here so type checkers know about them without forcing eager
+    # construction. ``hasattr`` checks at the read sites still gate
+    # code paths, so a None default is safe.
+    diary: Any = None
+    _last_evolved_species: str = ""
+
     def __init__(
         self,
         persona: AgentPersona,
