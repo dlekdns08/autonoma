@@ -27,7 +27,6 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-
 ALLOWED_BONES: frozenset[str] = frozenset(
     [
         "hips",
