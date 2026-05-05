@@ -19,8 +19,8 @@ listen for the ``schedule.fire_requested`` event.
 """
 
 from autonoma.scheduler.model import Schedule, ScheduleNotFound
-from autonoma.scheduler.store import schedule_store, ScheduleStore
 from autonoma.scheduler.runner import SchedulerRunner, scheduler_runner
+from autonoma.scheduler.store import ScheduleStore, schedule_store
 
 __all__ = [
     "Schedule",
