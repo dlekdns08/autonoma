@@ -61,13 +61,13 @@ logger = logging.getLogger(__name__)
 WINDOW_ROUNDS = 10
 
 # repetition
-REPETITION_LOOKBACK = 5            # last N utterances per agent
-REPETITION_MIN_HITS = 3            # ≥ M near-duplicate utterances
+REPETITION_LOOKBACK = 5  # last N utterances per agent
+REPETITION_MIN_HITS = 3  # ≥ M near-duplicate utterances
 REPETITION_JACCARD_THRESHOLD = 0.6
 
 # mood_drift
 MOOD_DRIFT_LOOKBACK_ROUNDS = 3
-MOOD_DRIFT_RATIO = 0.6             # ≥ 60% of agents
+MOOD_DRIFT_RATIO = 0.6  # ≥ 60% of agents
 NEGATIVE_MOODS = frozenset({"tired", "frustrated", "worried", "despair"})
 
 # file_churn
@@ -197,9 +197,7 @@ class AnomalyDetector:
         cleaned = (text or "").strip()
         if not cleaned:
             return
-        self._utterances[agent].append(
-            (int(round_number), cleaned, _tokenize(cleaned))
-        )
+        self._utterances[agent].append((int(round_number), cleaned, _tokenize(cleaned)))
 
     def record_mood(self, agent: str, mood: str, round_number: int) -> None:
         if not agent:
@@ -451,7 +449,8 @@ async def record_anomaly(anomaly: Anomaly) -> None:
     except Exception:  # noqa: BLE001 - want to keep emitting on DB failure
         logger.exception(
             "anomaly persist failed: session=%s kind=%s",
-            anomaly.session_id, anomaly.kind,
+            anomaly.session_id,
+            anomaly.kind,
         )
 
     await bus.emit(
@@ -505,5 +504,3 @@ async def list_anomalies(session_id: int) -> list[Anomaly]:
             )
         )
     return out
-
-
