@@ -104,9 +104,7 @@ def setup_otel() -> bool:
             reader = PeriodicExportingMetricReader(
                 OTLPMetricExporter(endpoint=settings.otel_endpoint)
             )
-            _meter_provider = MeterProvider(
-                resource=resource, metric_readers=[reader]
-            )
+            _meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
         except ImportError:
             # Trace-only is fine — Prometheus handles metrics.
             _meter_provider = None
@@ -139,7 +137,14 @@ def get_meter() -> Any | None:
 # in most Grafana dashboards; chosen so swarm rounds (~0.1-5s) and tail
 # LLM calls (~10s) all land in distinct buckets.
 _DEFAULT_BUCKETS: tuple[float, ...] = (
-    0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
 )
 
 
@@ -261,12 +266,8 @@ class PrometheusRegistry:
                     lines.append(
                         f"{name}_bucket{_format_labels(tuple(inf_labels))} {entry['count']}"
                     )
-                    lines.append(
-                        f"{name}_sum{_format_labels(key)} {_fmt(entry['sum'])}"
-                    )
-                    lines.append(
-                        f"{name}_count{_format_labels(key)} {entry['count']}"
-                    )
+                    lines.append(f"{name}_sum{_format_labels(key)} {_fmt(entry['sum'])}")
+                    lines.append(f"{name}_count{_format_labels(key)} {entry['count']}")
 
         # Trailing newline keeps Prometheus parser happy.
         return "\n".join(lines) + ("\n" if lines else "")
@@ -325,17 +326,11 @@ def record_round(
     """Record per-round telemetry. Safe to call from anywhere; never raises."""
     try:
         labels = {"session": str(session_id)}
-        prom_registry.observe(
-            "autonoma_round_duration_seconds", labels, float(duration_s)
-        )
+        prom_registry.observe("autonoma_round_duration_seconds", labels, float(duration_s))
         if llm_tokens:
-            prom_registry.inc(
-                "autonoma_llm_tokens_total", labels, float(llm_tokens)
-            )
+            prom_registry.inc("autonoma_llm_tokens_total", labels, float(llm_tokens))
         if errors:
-            prom_registry.inc(
-                "autonoma_round_errors_total", labels, float(errors)
-            )
+            prom_registry.inc("autonoma_round_errors_total", labels, float(errors))
         # ``round_number`` is captured for log correlation but not
         # exposed as a label — high-cardinality labels are a known
         # Prometheus footgun.
@@ -358,8 +353,6 @@ def record_anomaly(session_id: Any, kind: str) -> None:
 def record_sandbox_failure(reason: str) -> None:
     """Bump the sandbox failure counter for ``reason``."""
     try:
-        prom_registry.inc(
-            "autonoma_sandbox_failure_total", {"reason": str(reason)}
-        )
+        prom_registry.inc("autonoma_sandbox_failure_total", {"reason": str(reason)})
     except Exception:  # pragma: no cover
         logger.debug("record_sandbox_failure suppressed exception", exc_info=True)
