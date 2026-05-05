@@ -34,12 +34,8 @@ class ScheduleStore:
         return self._root / safe
 
     def _path(self, owner: str, sched_id: str) -> Path:
-        if not sched_id or any(
-            not (c.isalnum() or c in "-_") for c in sched_id
-        ):
-            raise ValueError(
-                "schedule id must be alphanumeric / dash / underscore only"
-            )
+        if not sched_id or any(not (c.isalnum() or c in "-_") for c in sched_id):
+            raise ValueError("schedule id must be alphanumeric / dash / underscore only")
         return self._user_dir(owner) / f"{sched_id}.json"
 
     # ── Mutation ─────────────────────────────────────────────────────
@@ -101,7 +97,8 @@ class ScheduleStore:
                     out.append(Schedule.model_validate_json(entry.read_text()))
                 except Exception:
                     logger.warning(
-                        "[scheduler] failed to load %s during iter_all", entry,
+                        "[scheduler] failed to load %s during iter_all",
+                        entry,
                         exc_info=True,
                     )
                     continue

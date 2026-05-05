@@ -78,9 +78,7 @@ class Schedule(BaseModel):
             # default until we add a parser.
             return False
         target_h, target_m = (int(p) for p in self.daily_at_utc.split(":"))
-        delta_minutes = abs(
-            (now.hour - target_h) * 60 + (now.minute - target_m)
-        )
+        delta_minutes = abs((now.hour - target_h) * 60 + (now.minute - target_m))
         if delta_minutes > window_minutes:
             return False
         if self.last_fired_at:

@@ -100,7 +100,9 @@ class SchedulerRunner:
         except Exception:
             logger.warning(
                 "[scheduler] fire_now failed to load schedule owner=%s sched_id=%s",
-                owner, sched_id, exc_info=True,
+                owner,
+                sched_id,
+                exc_info=True,
             )
             return False
         if not schedule.enabled:
@@ -119,9 +121,7 @@ class SchedulerRunner:
             except Exception:  # pragma: no cover — runner must survive
                 logger.exception("[scheduler] tick failed")
             try:
-                await asyncio.wait_for(
-                    self._stopping.wait(), timeout=_POLL_INTERVAL_SECONDS
-                )
+                await asyncio.wait_for(self._stopping.wait(), timeout=_POLL_INTERVAL_SECONDS)
             except asyncio.TimeoutError:
                 pass
 
@@ -144,9 +144,7 @@ class SchedulerRunner:
         try:
             schedule_store.save(schedule)
         except Exception as exc:
-            logger.warning(
-                f"[scheduler] failed to persist fire timestamp: {exc}"
-            )
+            logger.warning(f"[scheduler] failed to persist fire timestamp: {exc}")
 
         await bus.emit(
             "schedule.fire_requested",
@@ -160,7 +158,9 @@ class SchedulerRunner:
         elapsed = time.monotonic() - started
         logger.info(
             "[scheduler] fired schedule=%s reason=%s in %.3fs",
-            schedule.id, reason, elapsed,
+            schedule.id,
+            reason,
+            elapsed,
         )
 
 
