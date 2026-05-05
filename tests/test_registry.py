@@ -6,7 +6,6 @@ We use a per-test temp dir so each test gets a clean SQLite file.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
@@ -181,6 +180,7 @@ async def test_relationship_persistence():
 
     # Re-open the DB and verify the edge survived.
     from sqlalchemy import select
+
     from autonoma.db.engine import get_engine
     from autonoma.db.schema import relationships as rtbl
 
