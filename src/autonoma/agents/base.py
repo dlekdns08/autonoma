@@ -67,16 +67,18 @@ LLM_TIMEOUT_SECONDS = 60
 # Critical coordination messages are never crowded out by chat.
 _MSG_PRIORITY: dict[str, int] = {
     "task_assignment": 0,
-    "help_request":    1,
-    "help_response":   2,
-    "review_request":  3,
+    "help_request": 1,
+    "help_response": 2,
+    "review_request": 3,
     "review_response": 3,
-    "chat":            9,
+    "chat": 9,
 }
+
 
 def _msg_priority(msg: "AgentMessage") -> int:
     mt = msg.msg_type
     return _MSG_PRIORITY.get(mt.value if hasattr(mt, "value") else str(mt), 5)
+
 
 # Mood → reaction-bubble icon. Drives the small EmoteBubble that the
 # frontend paints above the sprite when an agent speaks. Unlisted moods
@@ -242,7 +244,9 @@ class AutonomousAgent:
         """Main autonomous loop: observe state, decide action, execute it."""
         # ── Feature 27: Graceful cancellation check ──
         if self._cancelled:
-            logger.info(f"[{self.name}] Skipping think_and_act: cancelled ({self._cancellation_reason})")
+            logger.info(
+                f"[{self.name}] Skipping think_and_act: cancelled ({self._cancellation_reason})"
+            )
             return {"agent": self.name, "action": "idle", "cancelled": True}
 
         circuit = _strategy_lookup(
@@ -262,9 +266,7 @@ class AutonomousAgent:
         situation = self._build_situation(project)
 
         try:
-            decision = await asyncio.wait_for(
-                self._decide(situation), timeout=LLM_TIMEOUT_SECONDS
-            )
+            decision = await asyncio.wait_for(self._decide(situation), timeout=LLM_TIMEOUT_SECONDS)
             self._consecutive_errors = 0
         except asyncio.TimeoutError:
             self._consecutive_errors += 1
@@ -331,12 +333,12 @@ class AutonomousAgent:
             # a direct assignment here bypassed the emitter and left the
             # UI on the pre-error mood until the next mood-tick caught up.
             await self._set_mood(Mood.FRUSTRATED)
-            self.memory.remember(f"Error in {action_type}: {str(e)[:60]}", "failure", self._round_number)
+            self.memory.remember(
+                f"Error in {action_type}: {str(e)[:60]}", "failure", self._round_number
+            )
             result = {"agent": self.name, "action": "error", "error": str(e)}
 
-        mood_fn = _strategy_lookup(
-            "mood.transition_strategy", self.policy.mood.transition_strategy
-        )
+        mood_fn = _strategy_lookup("mood.transition_strategy", self.policy.mood.transition_strategy)
         prev_mood = self.mood
         self.mood = mood_fn(self.mood, result, self._mood_rng)
         if prev_mood is not self.mood:
@@ -393,15 +395,21 @@ class AutonomousAgent:
                 logger.warning(
                     "[%s] critical inbox overflow: %d critical messages "
                     "(cap=%d) — agent is falling behind coordination",
-                    self.name, len(critical), MAX_INBOX_SIZE,
+                    self.name,
+                    len(critical),
+                    MAX_INBOX_SIZE,
                 )
 
     # ── Decision Engine (Harness-Aware) ───────────────────────────────
 
     def _build_situation(self, project: ProjectState) -> str:
         """Build a situation report for the LLM."""
-        open_tasks = [t for t in project.tasks if t.status in (TaskStatus.OPEN, TaskStatus.ASSIGNED)]
-        my_tasks = [t for t in project.tasks if t.assigned_to == self.name and t.status != TaskStatus.DONE]
+        open_tasks = [
+            t for t in project.tasks if t.status in (TaskStatus.OPEN, TaskStatus.ASSIGNED)
+        ]
+        my_tasks = [
+            t for t in project.tasks if t.assigned_to == self.name and t.status != TaskStatus.DONE
+        ]
         done_tasks = [t for t in project.tasks if t.status == TaskStatus.DONE]
         files = [f.path for f in project.files]
         recent_msgs = [
@@ -432,35 +440,35 @@ YOUR IDENTITY:
   Name: {self.persona.name}
   Species: {bones.species} {bones.species_emoji}
   Role: {self.persona.role}
-  Skills: {', '.join(self.persona.skills)}
-  Traits: {', '.join(t.value for t in bones.traits)}
+  Skills: {", ".join(self.persona.skills)}
+  Traits: {", ".join(t.value for t in bones.traits)}
   Catchphrase: "{bones.catchphrase}"
   Mood: {self.mood.value}
   Level: {stats.level} [{level_bar}] ({stats.xp}/{stats.xp_to_next_level} XP)
-  Achievements: {', '.join(stats.achievements) or 'None yet'}
-  Harness: {self.harness.name} (capabilities: {', '.join(c.value for c in self.harness.get_effective_capabilities())})
-  Current task: {self.current_task.title if self.current_task else 'None'}
+  Achievements: {", ".join(stats.achievements) or "None yet"}
+  Harness: {self.harness.name} (capabilities: {", ".join(c.value for c in self.harness.get_effective_capabilities())})
+  Current task: {self.current_task.title if self.current_task else "None"}
 
 MEMORIES:
 {self.memory.get_summary(private_formatter=_strategy_lookup("memory.summarization", self.policy.memory.summarization))}
 
 TEAM:
-  {chr(10).join(other_agents) if other_agents else 'You are alone'}
+  {chr(10).join(other_agents) if other_agents else "You are alone"}
 
 OPEN TASKS ({len(open_tasks)}):
-{chr(10).join(f'  [{t.id}] {t.title} (priority: {t.priority.value}, assigned: {t.assigned_to or "unassigned"})' for t in open_tasks[:10]) or '  None'}
+{chr(10).join(f"  [{t.id}] {t.title} (priority: {t.priority.value}, assigned: {t.assigned_to or 'unassigned'})" for t in open_tasks[:10]) or "  None"}
 
 MY ACTIVE TASKS ({len(my_tasks)}):
-{chr(10).join(f'  [{t.id}] {t.title} - {t.description[:80]}' for t in my_tasks[:5]) or '  None'}
+{chr(10).join(f"  [{t.id}] {t.title} - {t.description[:80]}" for t in my_tasks[:5]) or "  None"}
 
 COMPLETED ({len(done_tasks)}):
-{chr(10).join(f'  [{t.id}] {t.title}' for t in done_tasks[:5]) or '  None'}
+{chr(10).join(f"  [{t.id}] {t.title}" for t in done_tasks[:5]) or "  None"}
 
 FILES CREATED ({len(files)}):
-{chr(10).join(f'  {f}' for f in files[:15]) or '  None'}
+{chr(10).join(f"  {f}" for f in files[:15]) or "  None"}
 
 RECENT MESSAGES:
-{chr(10).join(f'  {m}' for m in recent_msgs) or '  None'}
+{chr(10).join(f"  {m}" for m in recent_msgs) or "  None"}
 """
 
         # Surface viewer / voice messages with a streamer-style nudge:
@@ -530,13 +538,12 @@ RECENT MESSAGES:
             from autonoma.world.diary_search import diary_index
 
             if len(diary_index) > 0:
-                results.extend(
-                    diary_index.search_text(query, agent=self.persona.name, top_n=3)
-                )
+                results.extend(diary_index.search_text(query, agent=self.persona.name, top_n=3))
         except Exception:
             logger.debug(
                 "_recall_relevant_diary keyword path failed for agent=%s",
-                self.persona.name, exc_info=True,
+                self.persona.name,
+                exc_info=True,
             )
 
         # Per-agent semantic recall (feature #5).
@@ -554,7 +561,8 @@ RECENT MESSAGES:
         except Exception:
             logger.debug(
                 "_recall_relevant_diary semantic path failed for agent=%s",
-                self.persona.name, exc_info=True,
+                self.persona.name,
+                exc_info=True,
             )
 
         return results[:6]  # cap so the prompt doesn't bloat
@@ -574,13 +582,11 @@ RECENT MESSAGES:
         """
         chunks: list[str] = []
         buf = ""
-        state: str = "SCAN"   # SCAN | EMIT | DONE
+        state: str = "SCAN"  # SCAN | EMIT | DONE
         speech_buf: list[str] = []
 
         cache_enabled = bool(
-            _strategy_lookup(
-                "cache.provider_cache", self.policy.cache.provider_cache
-            )()
+            _strategy_lookup("cache.provider_cache", self.policy.cache.provider_cache)()
         )
         async for chunk in self.client.stream(
             model=self._model,
@@ -653,8 +659,14 @@ RECENT MESSAGES:
         # capability that isn't in this harness.
         _effective_caps = {cap.value for cap in self.harness.get_effective_capabilities()}
         _all_actions = [
-            "work_on_task", "create_file", "send_message", "request_help",
-            "review_work", "spawn_agent", "complete_task", "run_code",
+            "work_on_task",
+            "create_file",
+            "send_message",
+            "request_help",
+            "review_work",
+            "spawn_agent",
+            "complete_task",
+            "run_code",
             "open_pr",
         ]
         _permitted = [a for a in _all_actions if a in _effective_caps]
@@ -704,9 +716,7 @@ Rules:
             # token is the long-run average for English + code; Korean
             # is denser (~2.0) but the cap is forgiving so we use the
             # higher ratio to avoid clipping legitimate runs.
-            self._total_tokens += int(
-                (len(system) + len(situation) + len(full_text)) / 3.5
-            )
+            self._total_tokens += int((len(system) + len(situation) + len(full_text)) / 3.5)
             return _extract_json(full_text, strategy=self.policy.action.json_extraction)
 
         except (LLMConnectionError, LLMRateLimitError) as e:
@@ -797,7 +807,10 @@ Rules:
             # fresh claims never drove the "now working" UI transition.
             if task is not None and claimed:
                 await bus.emit(
-                    "task.assigned", agent=self.name, task_id=task.id, title=task.title,
+                    "task.assigned",
+                    agent=self.name,
+                    task_id=task.id,
+                    title=task.title,
                 )
                 await bus.emit("task.started", agent=self.name, task_id=task.id)
             elif task is not None and started:
@@ -814,17 +827,16 @@ Rules:
 
         # Sanitize path — prevent directory traversal and injection.
         import os as _os
+
         # Collapse any ../ traversal sequences and strip leading slashes/dots.
         path = _os.path.normpath(path).lstrip("/").lstrip(".")
         # Remove null bytes and ASCII control characters.
-        path = re.sub(r'[\x00-\x1f\x7f]', '', path)
+        path = re.sub(r"[\x00-\x1f\x7f]", "", path)
         # Prevent deeply nested paths (cap at 5 directory levels).
         _parts = [p for p in path.split("/") if p and p != "."]
         path = "/".join(_parts[:5]) or "untitled.py"
 
-        artifact = FileArtifact(
-            path=path, content=content, created_by=self.name, description=desc
-        )
+        artifact = FileArtifact(path=path, content=content, created_by=self.name, description=desc)
         project.files.append(artifact)
 
         if self.current_task:
@@ -851,6 +863,7 @@ Rules:
         if getattr(settings, "ci_loop_enabled", False):
             try:
                 from autonoma.ci_loop import format_fix_task, run_ci_check
+
                 ci = await run_ci_check(path, content)
                 if not ci.ok:
                     fix_msg = AgentMessage(
@@ -977,11 +990,14 @@ Rules:
         output = decision.get("task_output", "")
 
         if not task_id:
-            logger.warning(
-                f"[{self.name}] complete_task called with no target_task_id — ignoring."
-            )
+            logger.warning(f"[{self.name}] complete_task called with no target_task_id — ignoring.")
             await self._set_state(AgentState.THINKING)
-            return {"agent": self.name, "action": "complete_task", "task_id": None, "completed": False}
+            return {
+                "agent": self.name,
+                "action": "complete_task",
+                "task_id": None,
+                "completed": False,
+            }
 
         task = next((t for t in project.tasks if t.id == task_id), None)
         if task is None:
@@ -989,7 +1005,12 @@ Rules:
                 f"[{self.name}] complete_task: task_id='{task_id}' not found in project — ignoring."
             )
             await self._set_state(AgentState.THINKING)
-            return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": False}
+            return {
+                "agent": self.name,
+                "action": "complete_task",
+                "task_id": task_id,
+                "completed": False,
+            }
 
         if task.assigned_to != self.name:
             logger.warning(
@@ -997,7 +1018,12 @@ Rules:
                 f"'{task.assigned_to}', not '{self.name}' — ignoring."
             )
             await self._set_state(AgentState.THINKING)
-            return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": False}
+            return {
+                "agent": self.name,
+                "action": "complete_task",
+                "task_id": task_id,
+                "completed": False,
+            }
 
         task.status = TaskStatus.DONE
         task.output = output
@@ -1006,13 +1032,9 @@ Rules:
         self.stats.tasks_completed += 1
         leveled_up = self.stats.add_xp(30)
         await self._set_mood(Mood.EXCITED if leveled_up else Mood.PROUD)
-        self.memory.remember(
-            f"Completed task: {task.title}", "success", self._round_number
-        )
+        self.memory.remember(f"Completed task: {task.title}", "success", self._round_number)
 
-        await bus.emit(
-            "task.completed", agent=self.name, task_id=task.id, title=task.title
-        )
+        await bus.emit("task.completed", agent=self.name, task_id=task.id, title=task.title)
         if leveled_up:
             await bus.emit(
                 "agent.level_up",
@@ -1023,13 +1045,16 @@ Rules:
 
         self.current_task = None
         self._check_and_emit_achievements()
-        return {"agent": self.name, "action": "complete_task", "task_id": task_id, "completed": True}
+        return {
+            "agent": self.name,
+            "action": "complete_task",
+            "task_id": task_id,
+            "completed": True,
+        }
 
     async def _action_run_code(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         """Execute LLM-authored code in a sandbox and feed the result back to the agent."""
-        allow_fn = _strategy_lookup(
-            "safety.code_execution", self.policy.safety.code_execution
-        )
+        allow_fn = _strategy_lookup("safety.code_execution", self.policy.safety.code_execution)
         if not allow_fn():
             # Gate checked before any sandbox work so ``disabled`` means
             # nothing reaches CodeSandbox at all. The error string is
@@ -1076,9 +1101,7 @@ Rules:
             result = await CodeSandbox(limits=limits).run(code, language)
         except Exception as exc:
             logger.error(f"[{self.name}] sandbox crashed: {exc}")
-            self.memory.remember(
-                f"Sandbox crashed: {str(exc)[:60]}", "failure", self._round_number
-            )
+            self.memory.remember(f"Sandbox crashed: {str(exc)[:60]}", "failure", self._round_number)
             return {"agent": self.name, "action": "run_code", "error": str(exc)}
 
         summary = result.summarize(max_chars=400)
@@ -1315,7 +1338,9 @@ Rules:
         newly_earned = check_achievements(self.stats)
         for ach_id in newly_earned:
             ach = ACHIEVEMENTS[ach_id]
-            self.memory.remember(f"Achievement unlocked: {ach['title']}", "success", self._round_number)
+            self.memory.remember(
+                f"Achievement unlocked: {ach['title']}", "success", self._round_number
+            )
             # Event emission is fire-and-forget since we can't await here
             # The swarm loop will pick it up
         # 2026-05 feature pack — persist newly-earned achievements (#12).
@@ -1338,9 +1363,7 @@ Rules:
     # producing the "Task was destroyed but it is pending" warning.
     _PENDING_ACHIEVEMENT_TASKS: "set[asyncio.Task[None]]" = set()
 
-    def _schedule_achievement_persist(
-        self, character_uuid: str, ids: list[str]
-    ) -> None:
+    def _schedule_achievement_persist(self, character_uuid: str, ids: list[str]) -> None:
         """Persist newly-earned achievements without blocking the
         synchronous decision loop, with proper task lifecycle handling.
 
@@ -1363,9 +1386,7 @@ Rules:
             # persist silently; the achievement event still emitted
             # via ``_emit_achievement_event`` (or whatever the swarm
             # chooses to do with it).
-            logger.debug(
-                "[achievements] persist skipped: no running loop"
-            )
+            logger.debug("[achievements] persist skipped: no running loop")
             return
 
         try:
@@ -1391,7 +1412,8 @@ Rules:
             if exc is not None:
                 logger.warning(
                     "[achievements] batch_record failed for %s: %s",
-                    character_uuid, exc,
+                    character_uuid,
+                    exc,
                 )
 
         task.add_done_callback(_on_done)
