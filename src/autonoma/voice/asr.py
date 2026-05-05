@@ -37,12 +37,10 @@ class AsrProvider(ABC):
     """Synchronous ASR provider — call ``transcribe`` from a worker thread."""
 
     @abstractmethod
-    def transcribe(self, audio_bytes: bytes, *, language: str = "en") -> TranscriptionResult:
-        ...
+    def transcribe(self, audio_bytes: bytes, *, language: str = "en") -> TranscriptionResult: ...
 
     @abstractmethod
-    def is_ready(self) -> bool:
-        ...
+    def is_ready(self) -> bool: ...
 
 
 class NoopAsrProvider(AsrProvider):
@@ -150,9 +148,7 @@ class CohereAsrProvider(AsrProvider):
             try:
                 model = model.to(device)
             except Exception as exc:  # pragma: no cover — runtime quirk
-                logger.warning(
-                    f"[asr] failed to move model to {device}, staying on CPU: {exc}"
-                )
+                logger.warning(f"[asr] failed to move model to {device}, staying on CPU: {exc}")
                 self._device = "cpu"
         self._model = model
         logger.info(
@@ -208,9 +204,7 @@ class CohereAsrProvider(AsrProvider):
                 self._scratch_path = tf.name
             with open(self._scratch_path, "wb") as f:
                 f.write(audio_bytes)
-            audio = load_audio(
-                self._scratch_path, sampling_rate=self.DEFAULT_SAMPLING_RATE
-            )
+            audio = load_audio(self._scratch_path, sampling_rate=self.DEFAULT_SAMPLING_RATE)
             # Empty/whitespace language → omit the kwarg entirely so
             # the processor uses its built-in language detection. We
             # don't pass ``language=None`` because some processor
@@ -226,9 +220,7 @@ class CohereAsrProvider(AsrProvider):
             # explicit ``.to(device)`` move in ``_ensure_loaded``. The
             # MPS path is happiest when input dtype matches the model.
             inputs = inputs.to(self._model.device, dtype=self._model.dtype)
-            outputs = self._model.generate(
-                **inputs, max_new_tokens=self.DEFAULT_MAX_NEW_TOKENS
-            )
+            outputs = self._model.generate(**inputs, max_new_tokens=self.DEFAULT_MAX_NEW_TOKENS)
             # ``model.generate`` returns a 2D tensor ``(batch, seq_len)``.
             # Newer transformers return a list from ``processor.decode``
             # when given a batch tensor — use ``batch_decode`` so the
@@ -301,8 +293,6 @@ async def warmup_asr_provider() -> None:
         # the FastAPI startup hook stays responsive (other startup
         # tasks like the TTS warmup run alongside).
         await anyio.to_thread.run_sync(provider._ensure_loaded)
-        logger.info(
-            f"[asr] {provider.model_id} warm-load complete (device={provider._device})"
-        )
+        logger.info(f"[asr] {provider.model_id} warm-load complete (device={provider._device})")
     except Exception:  # pragma: no cover — startup path
         logger.exception("[asr] warm-load failed; falling back to first-call lazy load")

@@ -169,9 +169,7 @@ async def verify_consent(
         # event loop. We accept any object exposing ``.transcribe`` so
         # tests can pass a plain stub without subclassing AsrProvider.
         transcribe = asr_client.transcribe  # type: ignore[attr-defined]
-        result = await asyncio.to_thread(
-            transcribe, audio_bytes, language=language
-        )
+        result = await asyncio.to_thread(transcribe, audio_bytes, language=language)
     except Exception as exc:
         logger.warning("[consent] ASR failed: %s", exc, exc_info=True)
         return ConsentResult(

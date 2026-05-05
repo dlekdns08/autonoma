@@ -148,17 +148,13 @@ async def create_profile(
                 )
             )
             row = (
-                await conn.execute(
-                    select(voice_profiles).where(voice_profiles.c.id == profile_id)
-                )
+                await conn.execute(select(voice_profiles).where(voice_profiles.c.id == profile_id))
             ).first()
     except Exception:
         voice_fs.delete_ref_audio(basename)
         raise
     if row is None:
-        raise RuntimeError(
-            f"create_profile: failed to read back inserted profile id={profile_id}"
-        )
+        raise RuntimeError(f"create_profile: failed to read back inserted profile id={profile_id}")
     return _row_to_summary(row)
 
 
@@ -228,9 +224,7 @@ async def get_profile(profile_id: str) -> Profile | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
-            await conn.execute(
-                select(voice_profiles).where(voice_profiles.c.id == profile_id)
-            )
+            await conn.execute(select(voice_profiles).where(voice_profiles.c.id == profile_id))
         ).first()
     if row is None:
         return None
@@ -266,14 +260,10 @@ async def delete_profile(profile_id: str) -> bool:
         # the DB row's FK integrity check is what succeeds last.
         basename_row = (
             await conn.execute(
-                select(voice_profiles.c.ref_audio_path).where(
-                    voice_profiles.c.id == profile_id
-                )
+                select(voice_profiles.c.ref_audio_path).where(voice_profiles.c.id == profile_id)
             )
         ).first()
-        result = await conn.execute(
-            delete(voice_profiles).where(voice_profiles.c.id == profile_id)
-        )
+        result = await conn.execute(delete(voice_profiles).where(voice_profiles.c.id == profile_id))
     deleted = result.rowcount > 0
     if deleted and basename_row is not None:
         basename = basename_row._mapping["ref_audio_path"]
@@ -309,24 +299,16 @@ async def get_binding(vrm_file: str) -> Binding | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
-            await conn.execute(
-                select(voice_bindings).where(voice_bindings.c.vrm_file == vrm_file)
-            )
+            await conn.execute(select(voice_bindings).where(voice_bindings.c.vrm_file == vrm_file))
         ).first()
     return _row_to_binding(row) if row else None
 
 
-async def upsert_binding(
-    *, vrm_file: str, profile_id: str, updated_by: str | None
-) -> Binding:
+async def upsert_binding(*, vrm_file: str, profile_id: str, updated_by: str | None) -> Binding:
     engine = get_engine()
     async with engine.begin() as conn:
         existing = (
-            await conn.execute(
-                select(voice_bindings).where(
-                    voice_bindings.c.vrm_file == vrm_file
-                )
-            )
+            await conn.execute(select(voice_bindings).where(voice_bindings.c.vrm_file == vrm_file))
         ).first()
         if existing is None:
             await conn.execute(
@@ -343,16 +325,10 @@ async def upsert_binding(
                 .values(profile_id=profile_id, updated_by=updated_by)
             )
         row = (
-            await conn.execute(
-                select(voice_bindings).where(
-                    voice_bindings.c.vrm_file == vrm_file
-                )
-            )
+            await conn.execute(select(voice_bindings).where(voice_bindings.c.vrm_file == vrm_file))
         ).first()
     if row is None:
-        raise RuntimeError(
-            f"upsert_binding: failed to read back voice binding vrm_file={vrm_file}"
-        )
+        raise RuntimeError(f"upsert_binding: failed to read back voice binding vrm_file={vrm_file}")
     return _row_to_binding(row)
 
 

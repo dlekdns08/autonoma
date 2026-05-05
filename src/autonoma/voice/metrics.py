@@ -58,9 +58,7 @@ _state = _Counters()
 # simplifies the call sites.
 
 
-def record_transcribe(
-    *, stage: str, ok: bool, duration_ms: int, error: str | None = None
-) -> None:
+def record_transcribe(*, stage: str, ok: bool, duration_ms: int, error: str | None = None) -> None:
     """Hook called from the ASR codepath.
 
     ``stage`` is one of ``"batch"`` (single POST), ``"partial"`` (one
@@ -89,6 +87,7 @@ def record_transcribe(
 
 def _now() -> float:
     import time as _t
+
     return _t.time()
 
 

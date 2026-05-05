@@ -27,14 +27,7 @@ def _vrm_files() -> tuple[str, ...]:
     side uses.
     """
     here = Path(__file__).resolve()
-    candidate = (
-        here.parents[3]
-        / "web"
-        / "src"
-        / "components"
-        / "vtuber"
-        / "vrmCatalog.json"
-    )
+    candidate = here.parents[3] / "web" / "src" / "components" / "vtuber" / "vrmCatalog.json"
     try:
         raw = json.loads(candidate.read_text(encoding="utf-8"))
     except FileNotFoundError:

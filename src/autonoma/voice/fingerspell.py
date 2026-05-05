@@ -37,30 +37,83 @@ from typing import Any
 
 # 19 initial (choseong / 초성) consonants.
 JAMO_INITIAL: list[str] = [
-    "ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ",
-    "ㄹ", "ㅁ", "ㅂ", "ㅃ", "ㅅ",
-    "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ",
-    "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+    "ㄱ",
+    "ㄲ",
+    "ㄴ",
+    "ㄷ",
+    "ㄸ",
+    "ㄹ",
+    "ㅁ",
+    "ㅂ",
+    "ㅃ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅉ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
 ]
 
 # 21 medial (jungseong / 중성) vowels.
 JAMO_MEDIAL: list[str] = [
-    "ㅏ", "ㅐ", "ㅑ", "ㅒ", "ㅓ",
-    "ㅔ", "ㅕ", "ㅖ", "ㅗ", "ㅘ",
-    "ㅙ", "ㅚ", "ㅛ", "ㅜ", "ㅝ",
-    "ㅞ", "ㅟ", "ㅠ", "ㅡ", "ㅢ",
+    "ㅏ",
+    "ㅐ",
+    "ㅑ",
+    "ㅒ",
+    "ㅓ",
+    "ㅔ",
+    "ㅕ",
+    "ㅖ",
+    "ㅗ",
+    "ㅘ",
+    "ㅙ",
+    "ㅚ",
+    "ㅛ",
+    "ㅜ",
+    "ㅝ",
+    "ㅞ",
+    "ㅟ",
+    "ㅠ",
+    "ㅡ",
+    "ㅢ",
     "ㅣ",
 ]
 
 # 28 final (jongseong / 종성) consonants — index 0 is the empty final
 # (no batchim). The remaining 27 cover single + cluster finals.
 JAMO_FINAL: list[str] = [
-    "",   "ㄱ", "ㄲ", "ㄳ", "ㄴ",
-    "ㄵ", "ㄶ", "ㄷ", "ㄹ", "ㄺ",
-    "ㄻ", "ㄼ", "ㄽ", "ㄾ", "ㄿ",
-    "ㅀ", "ㅁ", "ㅂ", "ㅄ", "ㅅ",
-    "ㅆ", "ㅇ", "ㅈ", "ㅊ", "ㅋ",
-    "ㅌ", "ㅍ", "ㅎ",
+    "",
+    "ㄱ",
+    "ㄲ",
+    "ㄳ",
+    "ㄴ",
+    "ㄵ",
+    "ㄶ",
+    "ㄷ",
+    "ㄹ",
+    "ㄺ",
+    "ㄻ",
+    "ㄼ",
+    "ㄽ",
+    "ㄾ",
+    "ㄿ",
+    "ㅀ",
+    "ㅁ",
+    "ㅂ",
+    "ㅄ",
+    "ㅅ",
+    "ㅆ",
+    "ㅇ",
+    "ㅈ",
+    "ㅊ",
+    "ㅋ",
+    "ㅌ",
+    "ㅍ",
+    "ㅎ",
 ]
 
 _HANGUL_BASE = 0xAC00
@@ -136,20 +189,59 @@ def text_to_jamo(text: str) -> list[str]:
 
 _JAMO_NAME = {
     # initials
-    "ㄱ": "기역", "ㄲ": "쌍기역", "ㄴ": "니은", "ㄷ": "디귿", "ㄸ": "쌍디귿",
-    "ㄹ": "리을", "ㅁ": "미음", "ㅂ": "비읍", "ㅃ": "쌍비읍", "ㅅ": "시옷",
-    "ㅆ": "쌍시옷", "ㅇ": "이응", "ㅈ": "지읒", "ㅉ": "쌍지읒", "ㅊ": "치읓",
-    "ㅋ": "키읔", "ㅌ": "티읕", "ㅍ": "피읖", "ㅎ": "히읗",
+    "ㄱ": "기역",
+    "ㄲ": "쌍기역",
+    "ㄴ": "니은",
+    "ㄷ": "디귿",
+    "ㄸ": "쌍디귿",
+    "ㄹ": "리을",
+    "ㅁ": "미음",
+    "ㅂ": "비읍",
+    "ㅃ": "쌍비읍",
+    "ㅅ": "시옷",
+    "ㅆ": "쌍시옷",
+    "ㅇ": "이응",
+    "ㅈ": "지읒",
+    "ㅉ": "쌍지읒",
+    "ㅊ": "치읓",
+    "ㅋ": "키읔",
+    "ㅌ": "티읕",
+    "ㅍ": "피읖",
+    "ㅎ": "히읗",
     # medials
-    "ㅏ": "아", "ㅐ": "애", "ㅑ": "야", "ㅒ": "얘", "ㅓ": "어",
-    "ㅔ": "에", "ㅕ": "여", "ㅖ": "예", "ㅗ": "오", "ㅘ": "와",
-    "ㅙ": "왜", "ㅚ": "외", "ㅛ": "요", "ㅜ": "우", "ㅝ": "워",
-    "ㅞ": "웨", "ㅟ": "위", "ㅠ": "유", "ㅡ": "으", "ㅢ": "의",
+    "ㅏ": "아",
+    "ㅐ": "애",
+    "ㅑ": "야",
+    "ㅒ": "얘",
+    "ㅓ": "어",
+    "ㅔ": "에",
+    "ㅕ": "여",
+    "ㅖ": "예",
+    "ㅗ": "오",
+    "ㅘ": "와",
+    "ㅙ": "왜",
+    "ㅚ": "외",
+    "ㅛ": "요",
+    "ㅜ": "우",
+    "ㅝ": "워",
+    "ㅞ": "웨",
+    "ㅟ": "위",
+    "ㅠ": "유",
+    "ㅡ": "으",
+    "ㅢ": "의",
     "ㅣ": "이",
     # cluster finals not in the initial list
-    "ㄳ": "기역시옷", "ㄵ": "니은지읒", "ㄶ": "니은히읗", "ㄺ": "리을기역",
-    "ㄻ": "리을미음", "ㄼ": "리을비읍", "ㄽ": "리을시옷", "ㄾ": "리을티읕",
-    "ㄿ": "리을피읖", "ㅀ": "리을히읗", "ㅄ": "비읍시옷",
+    "ㄳ": "기역시옷",
+    "ㄵ": "니은지읒",
+    "ㄶ": "니은히읗",
+    "ㄺ": "리을기역",
+    "ㄻ": "리을미음",
+    "ㄼ": "리을비읍",
+    "ㄽ": "리을시옷",
+    "ㄾ": "리을티읕",
+    "ㄿ": "리을피읖",
+    "ㅀ": "리을히읗",
+    "ㅄ": "비읍시옷",
 }
 
 
@@ -224,43 +316,51 @@ def fingerspell_plan(
             for jamo in (initial, medial, *(("" if final is None else final),)):
                 if not jamo:
                     continue
-                plan.append({
-                    "kind": "jamo",
-                    "pose": JAMO_TO_HANDPOSE[jamo]["id"],
-                    "jamo": jamo,
-                    "surface": ch,
-                    "hold_ms": hold,
-                    "transition_ms": transition,
-                })
+                plan.append(
+                    {
+                        "kind": "jamo",
+                        "pose": JAMO_TO_HANDPOSE[jamo]["id"],
+                        "jamo": jamo,
+                        "surface": ch,
+                        "hold_ms": hold,
+                        "transition_ms": transition,
+                    }
+                )
             continue
         # Pass-through char — could be a bare jamo, a space, or punct.
         if ch in JAMO_TO_HANDPOSE:
-            plan.append({
-                "kind": "jamo",
-                "pose": JAMO_TO_HANDPOSE[ch]["id"],
-                "jamo": ch,
-                "surface": ch,
-                "hold_ms": hold,
-                "transition_ms": transition,
-            })
+            plan.append(
+                {
+                    "kind": "jamo",
+                    "pose": JAMO_TO_HANDPOSE[ch]["id"],
+                    "jamo": ch,
+                    "surface": ch,
+                    "hold_ms": hold,
+                    "transition_ms": transition,
+                }
+            )
         elif ch.isspace():
-            plan.append({
-                "kind": "space",
-                "pose": None,
-                "jamo": None,
-                "surface": ch,
-                "hold_ms": hold,
-                "transition_ms": transition,
-            })
+            plan.append(
+                {
+                    "kind": "space",
+                    "pose": None,
+                    "jamo": None,
+                    "surface": ch,
+                    "hold_ms": hold,
+                    "transition_ms": transition,
+                }
+            )
         else:
-            plan.append({
-                "kind": "punct",
-                "pose": None,
-                "jamo": None,
-                "surface": ch,
-                "hold_ms": hold,
-                "transition_ms": transition,
-            })
+            plan.append(
+                {
+                    "kind": "punct",
+                    "pose": None,
+                    "jamo": None,
+                    "surface": ch,
+                    "hold_ms": hold,
+                    "transition_ms": transition,
+                }
+            )
     return plan
 
 
