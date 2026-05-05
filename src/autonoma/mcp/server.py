@@ -360,9 +360,7 @@ async def _dispatch(method: str, params: dict[str, Any]) -> Any:
             logger.exception("[mcp] tool %s crashed", name)
             raise _RpcError(_INTERNAL_ERROR, f"tool error: {exc}")
         return {
-            "content": [
-                {"type": "text", "text": json.dumps(result, ensure_ascii=False)}
-            ],
+            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
             "isError": False,
         }
     raise _RpcError(_METHOD_NOT_FOUND, f"unknown method: {method}")
@@ -445,6 +443,4 @@ async def jsonrpc(
     except _RpcError as exc:
         return _envelope_error(req_id, exc.code, exc.message)
 
-    return JSONResponse(
-        content={"jsonrpc": "2.0", "id": req_id, "result": result}
-    )
+    return JSONResponse(content={"jsonrpc": "2.0", "id": req_id, "result": result})
