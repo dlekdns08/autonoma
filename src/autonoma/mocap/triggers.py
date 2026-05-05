@@ -84,14 +84,7 @@ def _load_vrm_files() -> frozenset[str] | None:
     import json
 
     here = Path(__file__).resolve()
-    candidate = (
-        here.parents[3]
-        / "web"
-        / "src"
-        / "components"
-        / "vtuber"
-        / "vrmCatalog.json"
-    )
+    candidate = here.parents[3] / "web" / "src" / "components" / "vtuber" / "vrmCatalog.json"
     try:
         raw = json.loads(candidate.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):

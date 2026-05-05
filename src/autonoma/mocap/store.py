@@ -104,9 +104,7 @@ def _row_to_binding(row: Any) -> Binding:
 # ── clips ──────────────────────────────────────────────────────────────
 
 
-async def create_clip(
-    *, owner_user_id: str, validated: ValidatedClip
-) -> ClipSummary:
+async def create_clip(*, owner_user_id: str, validated: ValidatedClip) -> ClipSummary:
     clip_id = str(uuid.uuid4())
     engine = get_engine()
     async with engine.begin() as conn:
@@ -123,15 +121,9 @@ async def create_clip(
                 size_bytes=validated.size_bytes,
             )
         )
-        row = (
-            await conn.execute(
-                select(mocap_clips).where(mocap_clips.c.id == clip_id)
-            )
-        ).first()
+        row = (await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))).first()
     if row is None:
-        raise RuntimeError(
-            f"create_clip: failed to read back inserted clip id={clip_id}"
-        )
+        raise RuntimeError(f"create_clip: failed to read back inserted clip id={clip_id}")
     return _row_to_summary(row)
 
 
@@ -147,9 +139,7 @@ async def list_clips_for_user(user_id: str) -> list[ClipSummary]:
     async with engine.connect() as conn:
         # Owner's own clips.
         owner_rows = (
-            await conn.execute(
-                select(mocap_clips).where(mocap_clips.c.owner_user_id == user_id)
-            )
+            await conn.execute(select(mocap_clips).where(mocap_clips.c.owner_user_id == user_id))
         ).all()
 
         # Clips referenced by any binding — surfaces shared clips the
@@ -157,9 +147,7 @@ async def list_clips_for_user(user_id: str) -> list[ClipSummary]:
         bound_rows = (
             await conn.execute(
                 select(mocap_clips).where(
-                    mocap_clips.c.id.in_(
-                        select(mocap_bindings.c.clip_id).distinct()
-                    )
+                    mocap_clips.c.id.in_(select(mocap_bindings.c.clip_id).distinct())
                 )
             )
         ).all()
@@ -175,9 +163,7 @@ async def list_clips_for_user(user_id: str) -> list[ClipSummary]:
 async def get_clip_summary(clip_id: str) -> ClipSummary | None:
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))
-        ).first()
+        row = (await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))).first()
     return _row_to_summary(row) if row else None
 
 
@@ -191,9 +177,7 @@ async def get_clip_payload(clip_id: str) -> tuple[ClipSummary, str] | None:
     """
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))
-        ).first()
+        row = (await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))).first()
     if row is None:
         return None
     summary = _row_to_summary(row)
@@ -218,9 +202,7 @@ async def rename_clip(clip_id: str, new_name: str) -> ClipSummary | None:
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(
-            update(mocap_clips)
-            .where(mocap_clips.c.id == clip_id)
-            .values(name=new_name)
+            update(mocap_clips).where(mocap_clips.c.id == clip_id).values(name=new_name)
         )
         if result.rowcount == 0:
             return None
@@ -232,9 +214,9 @@ async def rename_clip(clip_id: str, new_name: str) -> ClipSummary | None:
         # rename time rather than on every fetch.
         payload_row = (
             await conn.execute(
-                select(
-                    mocap_clips.c.payload_gz, mocap_clips.c.size_bytes
-                ).where(mocap_clips.c.id == clip_id)
+                select(mocap_clips.c.payload_gz, mocap_clips.c.size_bytes).where(
+                    mocap_clips.c.id == clip_id
+                )
             )
         ).first()
         if payload_row is not None:
@@ -255,7 +237,10 @@ async def rename_clip(clip_id: str, new_name: str) -> ClipSummary | None:
                     logger.warning(
                         "rename_clip: payload size for %s changed by %d bytes "
                         "(old=%d new=%d) — unexpected for a name-only edit",
-                        clip_id, new_size - old_size, old_size, new_size,
+                        clip_id,
+                        new_size - old_size,
+                        old_size,
+                        new_size,
                     )
                 await conn.execute(
                     update(mocap_clips)
@@ -265,14 +250,13 @@ async def rename_clip(clip_id: str, new_name: str) -> ClipSummary | None:
             except Exception as exc:
                 logger.warning(
                     "rename_clip: failed to refresh embedded name for %s: %s",
-                    clip_id, exc,
+                    clip_id,
+                    exc,
                 )
                 # Name was updated on the summary; payload stays stale
                 # but playback works (just shows old internal name).
 
-        row = (
-            await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))
-        ).first()
+        row = (await conn.execute(select(mocap_clips).where(mocap_clips.c.id == clip_id))).first()
     return _row_to_summary(row) if row else None
 
 
@@ -281,9 +265,7 @@ async def delete_clip(clip_id: str) -> bool:
     references the clip (FK ON DELETE RESTRICT)."""
     engine = get_engine()
     async with engine.begin() as conn:
-        result = await conn.execute(
-            delete(mocap_clips).where(mocap_clips.c.id == clip_id)
-        )
+        result = await conn.execute(delete(mocap_clips).where(mocap_clips.c.id == clip_id))
     return result.rowcount > 0
 
 
@@ -336,9 +318,7 @@ async def list_orphan_clips(
     stmt = (
         select(mocap_clips)
         .select_from(
-            mocap_clips.outerjoin(
-                mocap_bindings, mocap_clips.c.id == mocap_bindings.c.clip_id
-            )
+            mocap_clips.outerjoin(mocap_bindings, mocap_clips.c.id == mocap_bindings.c.clip_id)
         )
         .where(mocap_bindings.c.clip_id.is_(None))
         .where(mocap_clips.c.last_accessed_at < threshold_sql)
@@ -356,9 +336,9 @@ async def clip_is_bound(clip_id: str) -> bool:
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                select(mocap_bindings.c.vrm_file).where(
-                    mocap_bindings.c.clip_id == clip_id
-                ).limit(1)
+                select(mocap_bindings.c.vrm_file)
+                .where(mocap_bindings.c.clip_id == clip_id)
+                .limit(1)
             )
         ).first()
     return row is not None
@@ -374,9 +354,7 @@ async def list_bindings() -> list[Binding]:
     return [_row_to_binding(r) for r in rows]
 
 
-async def get_binding(
-    vrm_file: str, kind: str, value: str
-) -> Binding | None:
+async def get_binding(vrm_file: str, kind: str, value: str) -> Binding | None:
     engine = get_engine()
     async with engine.connect() as conn:
         row = (
@@ -455,9 +433,7 @@ async def upsert_binding(
     return _row_to_binding(row)
 
 
-async def delete_binding(
-    *, vrm_file: str, trigger_kind: str, trigger_value: str
-) -> bool:
+async def delete_binding(*, vrm_file: str, trigger_kind: str, trigger_value: str) -> bool:
     engine = get_engine()
     async with engine.begin() as conn:
         result = await conn.execute(

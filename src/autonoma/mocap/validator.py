@@ -177,14 +177,10 @@ def _check_quat_track(name: str, track: Any, frame_count: int) -> None:
 
 def _check_scalar_track(name: str, track: Any, frame_count: int) -> None:
     if not isinstance(track, dict):
-        raise MocapValidationError(
-            "bad_expression_track", f"expression '{name}' not an object"
-        )
+        raise MocapValidationError("bad_expression_track", f"expression '{name}' not an object")
     data = track.get("data")
     if not isinstance(data, list):
-        raise MocapValidationError(
-            "bad_expression_data", f"expression '{name}' data not a list"
-        )
+        raise MocapValidationError("bad_expression_data", f"expression '{name}' data not a list")
     if len(data) != frame_count:
         raise MocapValidationError(
             "expression_length_mismatch",
@@ -261,9 +257,7 @@ def validate_payload(
     if not _is_finite_number(duration_s) or duration_s <= 0:
         raise MocapValidationError("bad_duration")
     if duration_s > MAX_CLIP_DURATION_S:
-        raise MocapValidationError(
-            "clip_too_long", f"max duration {MAX_CLIP_DURATION_S}s"
-        )
+        raise MocapValidationError("clip_too_long", f"max duration {MAX_CLIP_DURATION_S}s")
 
     frame_count = decoded.get("frameCount")
     if not isinstance(frame_count, int) or frame_count < 2:
