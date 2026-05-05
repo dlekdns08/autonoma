@@ -108,7 +108,7 @@ select = ["E", "F", "B", "I"]
 # - B905 (zip strict): same — broad cleanup deferred.
 # - B007 (unused loop var): often intentional iteration counters.
 # - F841 (unused local): often diagnostic-only references kept for repl.
-ignore = ["E501", "B008", "B904", "B905", "B007", "F841"]
+ignore = ["E501", "E402", "B008", "B904", "B905", "B007", "F841"]
 
 [tool.ruff.lint.per-file-ignores]
 # __init__.py files re-export symbols intentionally — they are the
