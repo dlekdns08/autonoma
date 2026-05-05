@@ -99,6 +99,7 @@ async def run_ci_check(
             target, cleanup = p, p
         except OSError:
             import tempfile
+
             fd, tmp = tempfile.mkstemp(suffix=p.suffix, prefix="ci_loop_")
             os.close(fd)
             target = Path(tmp)
@@ -139,7 +140,9 @@ async def _check_python(file_path: str, target: Path, started: float, timeout: f
     try:
         compile(src, str(target), "exec")
     except SyntaxError as e:
-        return _result(file_path, False, f"SyntaxError: {e.msg} at line {e.lineno}", started, "ast.parse")
+        return _result(
+            file_path, False, f"SyntaxError: {e.msg} at line {e.lineno}", started, "ast.parse"
+        )
     if shutil.which("ruff"):
         rc, out, err = await _run(["ruff", "check", str(target)], timeout=timeout)
         if rc == 0:
@@ -151,8 +154,17 @@ async def _check_python(file_path: str, target: Path, started: float, timeout: f
 async def _check_ts(file_path: str, target: Path, started: float, timeout: float) -> CIResult:
     if not shutil.which("npx"):
         return _result(file_path, True, "tsc not available", started, "")
-    cmd = ["npx", "--no-install", "tsc", "--noEmit",
-           "--target", "es2022", "--module", "esnext", str(target)]
+    cmd = [
+        "npx",
+        "--no-install",
+        "tsc",
+        "--noEmit",
+        "--target",
+        "es2022",
+        "--module",
+        "esnext",
+        str(target),
+    ]
     rc, out, err = await _run(cmd, timeout=timeout)
     cmd_str = " ".join(cmd)
     # ``--no-install`` reports "could not determine executable" when tsc
@@ -177,10 +189,13 @@ async def _check_js(file_path: str, target: Path, started: float, timeout: float
 
 async def _check_json(file_path: str, target: Path, started: float) -> CIResult:
     import json
+
     try:
         json.loads(target.read_text(encoding="utf-8", errors="replace"))
     except json.JSONDecodeError as e:
-        return _result(file_path, False, f"JSONDecodeError: {e.msg} at line {e.lineno}", started, "json.load")
+        return _result(
+            file_path, False, f"JSONDecodeError: {e.msg} at line {e.lineno}", started, "json.load"
+        )
     except OSError as e:
         return _result(file_path, False, f"OSError: {e}", started, "json.load")
     return _result(file_path, True, "ok", started, "json.load")
