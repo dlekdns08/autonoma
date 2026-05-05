@@ -5,6 +5,7 @@ check so routers don't each reimplement it. Resolves through the live
 ``_sessions`` map (populated by api.py) — modules that can't import
 ``api`` directly use this instead.
 """
+
 from __future__ import annotations
 
 from typing import Any

@@ -172,9 +172,7 @@ async def _on_schedule_fire_requested(**data: Any) -> None:
     owner = str(data.get("owner") or "").strip()
     preset_id = str(data.get("preset_id") or "").strip()
     if not goal or not owner:
-        logger.warning(
-            "[headless] dropping schedule.fire_requested with empty goal/owner"
-        )
+        logger.warning("[headless] dropping schedule.fire_requested with empty goal/owner")
         return
     from autonoma import api as _api
 

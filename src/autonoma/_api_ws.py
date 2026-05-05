@@ -38,19 +38,13 @@ class ConnectionManager:
             self.connections.remove(ws)
         logger.info(f"[WS] Client disconnected ({len(self.connections)} total)")
 
-    async def send_to_ws(
-        self, ws: WebSocket, event_type: str, data: dict[str, Any]
-    ) -> bool:
+    async def send_to_ws(self, ws: WebSocket, event_type: str, data: dict[str, Any]) -> bool:
         """Send a single event to one websocket. Returns False on failure."""
         try:
-            await ws.send_text(
-                json.dumps({"event": event_type, "data": _serialize(data)})
-            )
+            await ws.send_text(json.dumps({"event": event_type, "data": _serialize(data)}))
             return True
         except Exception:
-            logger.exception(
-                "[ws] send_to_ws failed for event=%s", event_type
-            )
+            logger.exception("[ws] send_to_ws failed for event=%s", event_type)
             return False
 
     async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
