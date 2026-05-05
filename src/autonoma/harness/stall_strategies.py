@@ -23,7 +23,6 @@ from typing import Any
 from autonoma.harness.strategies import register
 from autonoma.models import Task, TaskStatus
 
-
 StallPlan = dict[str, Any]
 
 
