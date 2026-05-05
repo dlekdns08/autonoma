@@ -175,9 +175,7 @@ class VibeVoiceClient(BaseTTSClient):
                 # ValueError we treat it as success (the registry
                 # already has a mapping equivalent enough for our
                 # downstream lookup).
-                return original.__func__(
-                    cls, config_class, model_class, exist_ok=exist_ok
-                )
+                return original.__func__(cls, config_class, model_class, exist_ok=exist_ok)
             except ValueError as exc:
                 msg = str(exc)
                 if "already used by a Transformers model" in msg:
@@ -317,10 +315,7 @@ class VibeVoiceClient(BaseTTSClient):
         # ``-streaming`` markers route to the streaming family;
         # everything else (including the default 1.5B) routes to the
         # offline family.
-        is_realtime_id = (
-            "realtime" in self.model_id.lower()
-            or "streaming" in self.model_id.lower()
-        )
+        is_realtime_id = "realtime" in self.model_id.lower() or "streaming" in self.model_id.lower()
 
         if is_realtime_id:
             _model_candidates = [
@@ -377,9 +372,7 @@ class VibeVoiceClient(BaseTTSClient):
             cls = getattr(mod, cls_name, None)
             if cls is not None:
                 ProcessorCls = cls
-                logger.info(
-                    "[tts/vibevoice] using %s from %s", cls_name, mod_path
-                )
+                logger.info("[tts/vibevoice] using %s from %s", cls_name, mod_path)
                 break
 
         if ModelCls is None or ProcessorCls is None:
@@ -502,9 +495,19 @@ class VibeVoiceClient(BaseTTSClient):
         # synthesis), pass it through untouched.
         text_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         already_scripted = any(
-            ln.lower().startswith(("speaker 1:", "speaker 2:", "speaker 3:",
-                                    "speaker 4:", "speaker 5:", "speaker 6:",
-                                    "speaker 7:", "speaker 8:", "speaker 9:"))
+            ln.lower().startswith(
+                (
+                    "speaker 1:",
+                    "speaker 2:",
+                    "speaker 3:",
+                    "speaker 4:",
+                    "speaker 5:",
+                    "speaker 6:",
+                    "speaker 7:",
+                    "speaker 8:",
+                    "speaker 9:",
+                )
+            )
             for ln in text_lines
         )
         script_text = text if already_scripted else f"Speaker 1: {text}"
@@ -565,14 +568,14 @@ class VibeVoiceClient(BaseTTSClient):
             # first since that's the only non-training entry point
             # the dir() inspection turned up.
             "forward_speech_features",
-            "generate",          # transformers canonical
-            "generate_speech",   # tts-specific
+            "generate",  # transformers canonical
+            "generate_speech",  # tts-specific
             "generate_audio",
             "synthesize",
             "tts",
             "infer",
             "sample",
-            "forward",           # last-resort: encoder-decoder pass
+            "forward",  # last-resort: encoder-decoder pass
         )
         method_called: str | None = None
         outputs = None
@@ -599,12 +602,14 @@ class VibeVoiceClient(BaseTTSClient):
                     # log and try the next candidate. Don't raise yet.
                     logger.debug(
                         "[tts/vibevoice] %s rejected kwargs (%s); trying next",
-                        name, exc,
+                        name,
+                        exc,
                     )
                     continue
         if outputs is None or method_called is None:
             available = [
-                m for m in dir(self._model)
+                m
+                for m in dir(self._model)
                 if not m.startswith("_") and callable(getattr(self._model, m, None))
             ]
             raise TTSError(
@@ -626,8 +631,7 @@ class VibeVoiceClient(BaseTTSClient):
                 audio_array = decoded[0] if decoded else None
             except Exception as exc:
                 logger.debug(
-                    "[tts] processor.batch_decode failed (%s); "
-                    "falling back to raw outputs",
+                    "[tts] processor.batch_decode failed (%s); falling back to raw outputs",
                     exc,
                 )
                 audio_array = outputs
@@ -686,9 +690,7 @@ class VibeVoiceClient(BaseTTSClient):
                     # least-surprising choice and is already present.
                     import librosa  # type: ignore[import-not-found]
 
-                    data = librosa.resample(
-                        data, orig_sr=src_sr, target_sr=DEFAULT_SAMPLE_RATE
-                    )
+                    data = librosa.resample(data, orig_sr=src_sr, target_sr=DEFAULT_SAMPLE_RATE)
                 return data.astype(np.float32)
             except Exception:
                 # Fallback for non-WAV containers (mp3/ogg/webm) —
@@ -697,9 +699,7 @@ class VibeVoiceClient(BaseTTSClient):
 
                 import librosa  # type: ignore[import-not-found]
 
-                with tempfile.NamedTemporaryFile(
-                    suffix=".bin", delete=False
-                ) as tf:
+                with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
                     tf.write(ref_audio)
                     tmp = tf.name
                 try:

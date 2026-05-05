@@ -368,9 +368,7 @@ class OmniVoiceTTSClient(BaseTTSClient):
         # forward — we set it per-call so a single process can still
         # run non-skip generations (e.g. for a test profile that
         # needs CFG for quality).
-        skip_uncond = (
-            settings.tts_skip_uncond_forward and gen_config.guidance_scale == 0
-        )
+        skip_uncond = settings.tts_skip_uncond_forward and gen_config.guidance_scale == 0
 
         def _run() -> bytes:
             prev = getattr(model, "_autonoma_skip_uncond", False)

@@ -82,6 +82,7 @@ def _float32_to_wav(samples: Any, sample_rate: int) -> bytes:
         wf.writeframes(pcm16)
     return buf.getvalue()
 
+
 _shared_client: "OmniVoiceMlxClient | None" = None
 
 
@@ -89,8 +90,7 @@ def get_shared_client() -> "OmniVoiceMlxClient":
     global _shared_client
     if _shared_client is None:
         _shared_client = OmniVoiceMlxClient(
-            model_id=getattr(settings, "omnivoice_mlx_model_id", "")
-            or DEFAULT_MODEL_ID,
+            model_id=getattr(settings, "omnivoice_mlx_model_id", "") or DEFAULT_MODEL_ID,
         )
     return _shared_client
 
@@ -147,9 +147,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
         # one thread keeps the model + every generate on a single
         # stream and cleanly serialises the MLX ops without an
         # extra lock.
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="autonoma-mlx"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autonoma-mlx")
 
     def is_loaded(self) -> bool:
         return self._model is not None
@@ -202,7 +200,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
             mx.set_default_stream(stream)
         except Exception as exc:
             logger.debug(
-                "[tts/omnivoice-mlx] set_default_stream skipped: %s", exc,
+                "[tts/omnivoice-mlx] set_default_stream skipped: %s",
+                exc,
             )
         try:
             logger.info("[tts/omnivoice-mlx] loading %s …", self.model_id)
@@ -340,9 +339,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 try:
                     stream = mx.new_stream(mx.cpu)
                 except Exception as exc2:
-                    raise TTSError(
-                        f"mlx stream init failed: {exc2}"
-                    ) from exc2
+                    raise TTSError(f"mlx stream init failed: {exc2}") from exc2
 
             try:
                 mx.set_default_stream(stream)
@@ -351,7 +348,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 # newer wheels — non-fatal, the ``with`` block below
                 # still binds the stream for the generate path.
                 logger.debug(
-                    "[tts/omnivoice-mlx] set_default_stream skipped: %s", exc,
+                    "[tts/omnivoice-mlx] set_default_stream skipped: %s",
+                    exc,
                 )
 
             kwargs: dict[str, Any] = {"text": text}
@@ -379,7 +377,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
                         # *something* back instead of a hard fail.
                         logger.warning(
                             "[tts/omnivoice-mlx] generate kwargs rejected "
-                            "(%s); retrying with text-only call", exc,
+                            "(%s); retrying with text-only call",
+                            exc,
                         )
                         results = list(self._model.generate(text))
                     for r in results:
@@ -414,9 +413,7 @@ class OmniVoiceMlxClient(BaseTTSClient):
                 raise TTSError(f"mlx model.generate failed: {exc}") from exc
 
             if not results:
-                logger.warning(
-                    "[tts/omnivoice-mlx] generate produced no results"
-                )
+                logger.warning("[tts/omnivoice-mlx] generate produced no results")
                 return b""
 
             if not audio_chunks:

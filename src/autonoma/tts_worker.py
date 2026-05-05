@@ -40,18 +40,18 @@ from autonoma.tts import BaseTTSClient, TTSError, create_tts_client, tts_config_
 logger = logging.getLogger(__name__)
 
 
-MAX_TEXT_CHARS = 2000      # hard ceiling per utterance (safety rail).
-                           # Raised from 500 after OmniVoice perf tuning
-                           # made long-form synthesis feasible — 500
-                           # silently truncated the tail of anything
-                           # longer than ~3-4 sentences. OmniVoice's
-                           # internal chunker (audio_chunk_duration)
-                           # handles long text natively; this ceiling
-                           # is here only to cap obviously-runaway
-                           # input (e.g. agent emitting an entire wiki
-                           # page).
-MAX_QUEUE_DEPTH = 64       # drop new jobs once the queue is this long
-SYNTH_CONCURRENCY = 2      # how many parallel synth HTTP calls allowed
+MAX_TEXT_CHARS = 2000  # hard ceiling per utterance (safety rail).
+# Raised from 500 after OmniVoice perf tuning
+# made long-form synthesis feasible — 500
+# silently truncated the tail of anything
+# longer than ~3-4 sentences. OmniVoice's
+# internal chunker (audio_chunk_duration)
+# handles long text natively; this ceiling
+# is here only to cap obviously-runaway
+# input (e.g. agent emitting an entire wiki
+# page).
+MAX_QUEUE_DEPTH = 64  # drop new jobs once the queue is this long
+SYNTH_CONCURRENCY = 2  # how many parallel synth HTTP calls allowed
 
 
 @dataclass
@@ -354,6 +354,7 @@ class TTSWorker:
         index = 0
         try:
             from autonoma.tts_synth import synthesize_streaming
+
             async for chunk in synthesize_streaming(
                 self._client,
                 text=job.text,

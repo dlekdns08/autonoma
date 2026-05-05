@@ -75,6 +75,7 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
     if cfg.provider == "omnivoice":
         try:
             from autonoma.tts_omnivoice import get_shared_client
+
             return get_shared_client()
         except ImportError as exc:
             logger.error(
@@ -93,6 +94,7 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
             from autonoma.tts_omnivoice_mlx import (
                 get_shared_client as get_mlx_client,
             )
+
             return get_mlx_client()
         except ImportError as exc:
             logger.error(
@@ -108,6 +110,7 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
         # from "transformers/torch missing".
         try:
             from autonoma.tts_vibevoice import get_shared_client as get_vv_client
+
             return get_vv_client()
         except ImportError as exc:
             logger.error(
@@ -122,6 +125,7 @@ def create_tts_client(cfg: TTSConfig) -> BaseTTSClient:
 
 def tts_config_from_settings() -> TTSConfig:
     from autonoma.config import settings
+
     return TTSConfig(provider=settings.tts_provider)
 
 
