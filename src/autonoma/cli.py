@@ -45,8 +45,12 @@ def cli() -> None:
 @click.option("--name", "-n", default=None, help="Project name")
 @click.option("--rounds", "-r", default=30, help="Maximum rounds")
 @click.option("--no-animate", is_flag=True, help="Disable animated TUI")
-@click.option("--output", "-o", default=None, type=click.Path(), help="Output directory for generated files")
-def build(description: str, name: str | None, rounds: int, no_animate: bool, output: str | None) -> None:
+@click.option(
+    "--output", "-o", default=None, type=click.Path(), help="Output directory for generated files"
+)
+def build(
+    description: str, name: str | None, rounds: int, no_animate: bool, output: str | None
+) -> None:
     """Build a project from a description using autonomous agents."""
     console.print(BANNER)
 
@@ -86,10 +90,12 @@ def interactive() -> None:
     description = Prompt.ask("[bold cyan]What should it do?[/]")
     rounds = int(Prompt.ask("[bold cyan]Max rounds[/]", default="30"))
 
-    console.print(Panel(
-        f"[bold]{name}[/]: {description}\nRounds: {rounds}",
-        title="[bold cyan]Configuration[/]",
-    ))
+    console.print(
+        Panel(
+            f"[bold]{name}[/]: {description}\nRounds: {rounds}",
+            title="[bold cyan]Configuration[/]",
+        )
+    )
 
     if Prompt.ask("Start?", choices=["y", "n"], default="y") != "y":
         return
@@ -117,11 +123,13 @@ def demo() -> None:
 
     engine = AutonomaEngine(console)
     try:
-        asyncio.run(engine.run(
-            name="url-shortener",
-            description="A URL shortener service with FastAPI, SQLite storage, click tracking, and a simple HTML frontend",
-            max_rounds=20,
-        ))
+        asyncio.run(
+            engine.run(
+                name="url-shortener",
+                description="A URL shortener service with FastAPI, SQLite storage, click tracking, and a simple HTML frontend",
+                max_rounds=20,
+            )
+        )
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Interrupted.[/]")
 
