@@ -24,7 +24,7 @@ import asyncio
 from typing import Any
 
 from autonoma.harness.strategies import register
-from autonoma.llm import LLMConnectionError, LLMRateLimitError
+from autonoma.llm import LLMRateLimitError
 
 
 @register("action.llm_error_handling", "backoff")
