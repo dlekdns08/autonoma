@@ -28,8 +28,12 @@ from sqlalchemy import (
     insert,
     or_,
     select,
-    update as sa_update,
+)
+from sqlalchemy import (
     delete as sa_delete,
+)
+from sqlalchemy import (
+    update as sa_update,
 )
 
 from autonoma.db.engine import get_engine, init_db
