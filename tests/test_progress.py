@@ -1,16 +1,14 @@
 """Tests for the progress tracking system."""
 
-import json
 
-import pytest
 
 from autonoma.models import (
+    AgentPersona,
     FileArtifact,
     ProjectState,
     Task,
     TaskPriority,
     TaskStatus,
-    AgentPersona,
 )
 from autonoma.progress import ProgressTracker
 
