@@ -4525,46 +4525,20 @@ app.include_router(_vision_router.router)
 # matters only for FastAPI's first-match rule and these all live under
 # fresh prefixes. Each lazy-imports settings on demand so importing the
 # router is cheap.
-from autonoma.routers import (
-    ab_compare as _ab_compare_router,
-)
-from autonoma.routers import (
-    achievements as _achievements_router,
-)
-from autonoma.routers import (
-    anomalies as _anomalies_router,
-)
 from autonoma.routers import (  # noqa: E402
+    ab_compare as _ab_compare_router,
+    achievements as _achievements_router,
+    anomalies as _anomalies_router,
     coordinator as _coordinator_router,
-)
-from autonoma.routers import (
     fingerspell as _fingerspell_router,
-)
-from autonoma.routers import (
     highlights as _highlights_router,
-)
-from autonoma.routers import (
     inspire as _inspire_router,
-)
-from autonoma.routers import (
     live_share as _live_share_router,
-)
-from autonoma.routers import (
     metrics as _metrics_router,
-)
-from autonoma.routers import (
     mocap_live as _mocap_live_router,
-)
-from autonoma.routers import (
     persona_breed as _persona_breed_router,
-)
-from autonoma.routers import (
     quests as _quests_router,
-)
-from autonoma.routers import (
     viewer_betting as _viewer_betting_router,
-)
-from autonoma.routers import (
     voice_consent as _voice_consent_router,
 )
 
