@@ -26,7 +26,6 @@ from typing import Any, Literal, get_args, get_origin
 
 from autonoma.harness.policy import HarnessPolicyContent
 
-
 # ── Per-run metrics accumulator ──────────────────────────────────────────
 # Tracks harness-level events within the *current* run. Reset each time a
 # new run starts (``record_run_start`` calls ``_RUN_METRICS.reset()``).
