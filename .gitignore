@@ -15,7 +15,17 @@ logs/
 .hf-cache/
 .secrets/
 
+# Test/coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # Next.js
 web/node_modules/
 web/.next/
 web/out/
+
+# Vitest / TS build cache
+web/coverage/
+web/tsconfig.tsbuildinfo
