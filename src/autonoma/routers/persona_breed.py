@@ -40,9 +40,7 @@ def _bad_request(code: str, message: str) -> HTTPException:
     )
 
 
-@router.post(
-    "/api/personas/breed", status_code=http_status.HTTP_201_CREATED
-)
+@router.post("/api/personas/breed", status_code=http_status.HTTP_201_CREATED)
 async def breed(
     payload: dict[str, Any],
     user: User = Depends(require_active_user),
@@ -52,13 +50,9 @@ async def breed(
     name = str(payload.get("name") or "").strip()
 
     if not parent_a_id or not parent_b_id:
-        raise _bad_request(
-            "missing_parent", "parent_a_id, parent_b_id가 모두 필요합니다."
-        )
+        raise _bad_request("missing_parent", "parent_a_id, parent_b_id가 모두 필요합니다.")
     if parent_a_id == parent_b_id:
-        raise _bad_request(
-            "same_parent", "동일한 페르소나끼리는 교배할 수 없습니다."
-        )
+        raise _bad_request("same_parent", "동일한 페르소나끼리는 교배할 수 없습니다.")
     if not (1 <= len(name) <= 64):
         raise _bad_request("invalid_name", "이름은 1-64자여야 합니다.")
 
@@ -69,9 +63,7 @@ async def breed(
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
-                select(personas).where(
-                    personas.c.id.in_([parent_a_id, parent_b_id])
-                )
+                select(personas).where(personas.c.id.in_([parent_a_id, parent_b_id]))
             )
         ).all()
     by_id = {r._mapping["id"]: r._mapping for r in rows}

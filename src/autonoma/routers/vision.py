@@ -64,7 +64,10 @@ async def vision_observe(
     if not settings.vision_agent_enabled:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "vision_disabled", "message": "Vision Agent is disabled. Set AUTONOMA_VISION_AGENT_ENABLED=true."},
+            detail={
+                "code": "vision_disabled",
+                "message": "Vision Agent is disabled. Set AUTONOMA_VISION_AGENT_ENABLED=true.",
+            },
         )
 
     now = time.monotonic()
@@ -76,7 +79,9 @@ async def vision_observe(
     if not raw:
         raise HTTPException(400, detail={"code": "empty_frame", "message": "frame is empty"})
     if len(raw) > 4 * 1024 * 1024:
-        raise HTTPException(413, detail={"code": "frame_too_large", "message": "frame must be <= 4 MB"})
+        raise HTTPException(
+            413, detail={"code": "frame_too_large", "message": "frame must be <= 4 MB"}
+        )
 
     mime = frame.content_type or "image/jpeg"
     b64 = base64.b64encode(raw).decode("ascii")
@@ -112,8 +117,8 @@ _VISION_SYSTEM = (
     "handoff opportunity. Otherwise stay silent (acted=false). Keep "
     "messages to <=2 sentences, friendly and helpful. Respond STRICTLY "
     "as a single JSON object and nothing else, matching:\n"
-    "  {\"acted\": boolean, \"agent\": string, \"message\": string, "
-    "\"reason\": string}"
+    '  {"acted": boolean, "agent": string, "message": string, '
+    '"reason": string}'
 )
 
 
@@ -214,7 +219,7 @@ async def _decide_reaction(
         end = raw.rfind("}")
         if start >= 0 and end > start:
             try:
-                parsed = _json.loads(raw[start:end + 1])
+                parsed = _json.loads(raw[start : end + 1])
             except _json.JSONDecodeError:
                 return {"acted": False, "reason": "unparseable"}
         else:

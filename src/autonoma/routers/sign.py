@@ -67,12 +67,14 @@ async def list_clips(
         except (OSError, json.JSONDecodeError):
             continue
         frames = data.get("frames") or []
-        clips.append({
-            "name": fp.stem,
-            "frames": len(frames),
-            "duration_ms": int(data.get("duration_ms") or 0),
-            "language": data.get("language", "ksl"),
-        })
+        clips.append(
+            {
+                "name": fp.stem,
+                "frames": len(frames),
+                "duration_ms": int(data.get("duration_ms") or 0),
+                "language": data.get("language", "ksl"),
+            }
+        )
     return {"clips": clips}
 
 
@@ -86,7 +88,9 @@ async def play_clip(
         raise HTTPException(400, detail={"code": "invalid_clip_name"})
     fp = _clips_dir() / f"{name}.json"
     if not fp.exists():
-        raise HTTPException(404, detail={"code": "clip_not_found", "message": f"클립 {name} 을 찾을 수 없습니다."})
+        raise HTTPException(
+            404, detail={"code": "clip_not_found", "message": f"클립 {name} 을 찾을 수 없습니다."}
+        )
     try:
         clip_data = json.loads(fp.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -159,14 +163,16 @@ def _greedy_plan(tokens: list[str], dictionary: dict[str, str]) -> list[dict[str
     while i < n:
         matched = False
         for span in range(min(MAX_NGRAM, n - i), 0, -1):
-            surface = " ".join(tokens[i:i + span])
+            surface = " ".join(tokens[i : i + span])
             clip = dictionary.get(surface.lower())
             if clip:
-                plan.append({
-                    "kind": "phrase" if span > 1 else "word",
-                    "clip": clip,
-                    "surface": surface,
-                })
+                plan.append(
+                    {
+                        "kind": "phrase" if span > 1 else "word",
+                        "clip": clip,
+                        "surface": surface,
+                    }
+                )
                 i += span
                 matched = True
                 break
@@ -176,11 +182,13 @@ def _greedy_plan(tokens: list[str], dictionary: dict[str, str]) -> list[dict[str
         word = tokens[i]
         for ch in word:
             clip = dictionary.get(f"ksl_letter:{ch}".lower())
-            plan.append({
-                "kind": "fingerspell",
-                "clip": clip or "",  # empty = frontend skips / shows placeholder
-                "surface": ch,
-            })
+            plan.append(
+                {
+                    "kind": "fingerspell",
+                    "clip": clip or "",  # empty = frontend skips / shows placeholder
+                    "surface": ch,
+                }
+            )
         i += 1
     return plan
 
@@ -215,14 +223,20 @@ async def translate_text(
     if not text:
         raise HTTPException(400, detail={"code": "empty_text", "message": "text가 비어 있습니다."})
     if len(text) > 2000:
-        raise HTTPException(400, detail={"code": "text_too_long", "message": "text는 2000자 이하여야 합니다."})
+        raise HTTPException(
+            400, detail={"code": "text_too_long", "message": "text는 2000자 이하여야 합니다."}
+        )
 
     dictionary = _load_dictionary()
     tokens = _tokenize(text)
     plan = _greedy_plan(tokens, dictionary)
     covered = sum(1 for step in plan if step["kind"] in ("word", "phrase"))
-    total_tokens_in_plan = max(1, covered + sum(1 for step in plan if step["kind"] == "fingerspell"))
-    missing = [step["surface"] for step in plan if step["kind"] == "fingerspell" and not step["clip"]]
+    total_tokens_in_plan = max(
+        1, covered + sum(1 for step in plan if step["kind"] == "fingerspell")
+    )
+    missing = [
+        step["surface"] for step in plan if step["kind"] == "fingerspell" and not step["clip"]
+    ]
 
     emit = bool(payload.get("emit"))
     if emit:
@@ -277,7 +291,13 @@ async def upload_clip(
         )
     frames = payload.get("frames")
     if not isinstance(frames, list) or not frames:
-        raise HTTPException(400, detail={"code": "invalid_frames", "message": "frames는 비어있지 않은 배열이어야 합니다."})
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_frames",
+                "message": "frames는 비어있지 않은 배열이어야 합니다.",
+            },
+        )
     tokens_raw = payload.get("tokens") or [name]
     tokens = [str(t).strip() for t in tokens_raw if isinstance(t, str) and str(t).strip()]
     clip = {

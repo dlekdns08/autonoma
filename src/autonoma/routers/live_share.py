@@ -106,12 +106,14 @@ def _build_card(room: Any) -> dict[str, Any]:
                 mood_str = (
                     mood.value if mood is not None and hasattr(mood, "value") else str(mood or "")
                 )
-                agents_preview.append({
-                    "name": str(name),
-                    "emoji": str(emoji),
-                    "role": str(role),
-                    "mood": mood_str,
-                })
+                agents_preview.append(
+                    {
+                        "name": str(name),
+                        "emoji": str(emoji),
+                        "role": str(role),
+                        "mood": mood_str,
+                    }
+                )
         except Exception:
             # Swarm internals racing with us — better an empty preview
             # than a 500 on the directory page.

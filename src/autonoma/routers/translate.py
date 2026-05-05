@@ -81,10 +81,7 @@ _TRANSLATE_SYSTEM = (
 async def _translate_via_llm(text: str, from_lang: str, to_lang: str) -> str:
     config = llm_config_from_settings()
     client = create_llm_client(config)
-    user_msg = (
-        f"Translate from {from_lang} to {to_lang}. "
-        f"Output only the translation.\n\n{text}"
-    )
+    user_msg = f"Translate from {from_lang} to {to_lang}. Output only the translation.\n\n{text}"
     response = await client.create(
         model=config.model,
         max_tokens=512,
@@ -122,11 +119,7 @@ async def translate(
             },
         )
     from_lang = (payload.get("from_lang") or "auto").strip().lower()
-    to_lang = (
-        payload.get("to_lang")
-        or settings.tts_default_language
-        or "en"
-    ).strip().lower()
+    to_lang = (payload.get("to_lang") or settings.tts_default_language or "en").strip().lower()
     if from_lang == to_lang and from_lang != "auto":
         return {
             "text": text,

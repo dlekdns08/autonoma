@@ -77,7 +77,8 @@ def _load_consent(profile_id: str) -> dict[str, Any] | None:
         # see that something went wrong rather than have the evidence
         # silently swept away.
         logger.warning(
-            "[consent] failed to read consent file for profile_id=%s", profile_id,
+            "[consent] failed to read consent file for profile_id=%s",
+            profile_id,
             exc_info=True,
         )
         return None

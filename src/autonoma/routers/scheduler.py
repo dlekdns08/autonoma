@@ -31,9 +31,7 @@ router = APIRouter(tags=["scheduler"])
 
 
 def _err(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 @router.get("/api/schedules")

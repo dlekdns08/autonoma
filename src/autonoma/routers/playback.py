@@ -45,6 +45,7 @@ def _decode_state(raw: Any) -> dict[str, Any]:
     if isinstance(raw, (bytes, bytearray, memoryview)):
         try:
             import gzip
+
             text = gzip.decompress(bytes(raw)).decode("utf-8")
         except OSError:
             text = bytes(raw).decode("utf-8", errors="replace")
@@ -79,14 +80,19 @@ async def playback_frames(
         m = r._mapping
         raw = m["state_json"]
         size = (
-            len(raw.encode("utf-8")) if isinstance(raw, str)
-            else len(bytes(raw)) if raw is not None else 0
+            len(raw.encode("utf-8"))
+            if isinstance(raw, str)
+            else len(bytes(raw))
+            if raw is not None
+            else 0
         )
-        frames.append({
-            "round": int(m["round_number"]),
-            "at": str(m["created_at"]),
-            "size_bytes": size,
-        })
+        frames.append(
+            {
+                "round": int(m["round_number"]),
+                "at": str(m["created_at"]),
+                "size_bytes": size,
+            }
+        )
     return {"session_id": session_id, "frames": frames}
 
 

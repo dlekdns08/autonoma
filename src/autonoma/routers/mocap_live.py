@@ -200,9 +200,7 @@ async def mocap_live(
         now = time.monotonic()
         elapsed = now - bucket_last
         if elapsed > 0:
-            bucket_tokens = min(
-                bucket_capacity, bucket_tokens + elapsed * refill_per_sec
-            )
+            bucket_tokens = min(bucket_capacity, bucket_tokens + elapsed * refill_per_sec)
             bucket_last = now
         if bucket_tokens >= 1.0:
             bucket_tokens -= 1.0
@@ -219,9 +217,7 @@ async def mocap_live(
             except Exception:
                 # Any other receive error: log and stop. We don't try to
                 # keep the socket alive past a transport-level fault.
-                logger.warning(
-                    "[mocap_live] receive failed; closing", exc_info=True
-                )
+                logger.warning("[mocap_live] receive failed; closing", exc_info=True)
                 break
 
             try:
@@ -277,9 +273,7 @@ async def mocap_live(
                     blendshapes = _clamp_blendshapes(blends_raw)
                     if blendshapes is None:
                         frames_dropped += 1
-                        logger.debug(
-                            "[mocap_live] malformed blendshapes, frame dropped"
-                        )
+                        logger.debug("[mocap_live] malformed blendshapes, frame dropped")
                         continue
 
                 root: dict[str, list[float]] | None = None
@@ -326,9 +320,7 @@ async def mocap_live(
                 frames_dropped=frames_dropped,
             )
         except Exception:
-            logger.warning(
-                "[mocap_live] failed to emit session_ended", exc_info=True
-            )
+            logger.warning("[mocap_live] failed to emit session_ended", exc_info=True)
         try:
             await ws.close()
         except Exception:

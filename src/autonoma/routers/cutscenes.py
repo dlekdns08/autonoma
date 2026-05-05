@@ -39,9 +39,7 @@ router = APIRouter(tags=["cutscenes"])
 
 
 def _err(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 @router.get("/api/cutscenes")
@@ -228,6 +226,7 @@ async def _on_bus_event(event_name: str, data: dict[str, Any]) -> None:
             continue
         if not _matches_trigger(cutscene, event_name, data):
             continue
+
         # Re-use the same fan-out as the manual play endpoint.
         async def _runner(cs: Cutscene) -> None:
             await bus.emit(

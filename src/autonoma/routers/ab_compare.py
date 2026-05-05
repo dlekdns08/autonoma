@@ -27,9 +27,7 @@ router = APIRouter(tags=["ab-compare"])
 
 
 def _err(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 def _coerce_session_id(raw: Any, field_name: str) -> int:

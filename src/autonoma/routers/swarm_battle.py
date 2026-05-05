@@ -85,11 +85,18 @@ async def accept_invite(
     invite_id = str(payload.get("invite_id") or "")
     inv = _invites.get(invite_id)
     if inv is None:
-        raise HTTPException(404, detail={"code": "invite_not_found", "message": "해당 초대장을 찾을 수 없습니다."})
+        raise HTTPException(
+            404, detail={"code": "invite_not_found", "message": "해당 초대장을 찾을 수 없습니다."}
+        )
     if inv.accepted_by:
-        raise HTTPException(409, detail={"code": "already_accepted", "message": "이미 수락된 초대장입니다."})
+        raise HTTPException(
+            409, detail={"code": "already_accepted", "message": "이미 수락된 초대장입니다."}
+        )
     if inv.owner_user_id == user.id:
-        raise HTTPException(400, detail={"code": "cannot_self_accept", "message": "본인의 초대장은 수락할 수 없습니다."})
+        raise HTTPException(
+            400,
+            detail={"code": "cannot_self_accept", "message": "본인의 초대장은 수락할 수 없습니다."},
+        )
     inv.accepted_by = user.id
     return {
         "invite_id": inv.id,
@@ -142,6 +149,7 @@ def _resolve_if_ready(inv: _Invite) -> dict[str, Any] | None:
     if inv.owner_score is None or inv.challenger_score is None:
         return None
     a, b = inv.owner_score, inv.challenger_score
+
     # Tie-break: completed wins; then fewer rounds; then higher XP.
     def _key(s: dict[str, Any]) -> tuple[int, int, int]:
         return (
@@ -149,6 +157,7 @@ def _resolve_if_ready(inv: _Invite) -> dict[str, Any] | None:
             -int(s["rounds_used"]),
             int(s["team_xp"]),
         )
+
     if _key(a) > _key(b):
         winner = "owner"
     elif _key(b) > _key(a):

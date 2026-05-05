@@ -45,7 +45,10 @@ def _verify_secret(signature: str | None) -> None:
     if not expected:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "live_disabled", "message": "Live webhook is disabled. Set AUTONOMA_LIVE_WEBHOOK_SECRET."},
+            detail={
+                "code": "live_disabled",
+                "message": "Live webhook is disabled. Set AUTONOMA_LIVE_WEBHOOK_SECRET.",
+            },
         )
     if not signature or not hmac.compare_digest(signature, expected):
         raise HTTPException(
@@ -121,8 +124,7 @@ async def live_chat_bridge(
     drop_reason = _is_moderated(username, text)
     if drop_reason is not None:
         logger.info(
-            f"[live/chat] dropped source={source} user={username[:32]!r} "
-            f"reason={drop_reason}"
+            f"[live/chat] dropped source={source} user={username[:32]!r} reason={drop_reason}"
         )
         return {"status": "dropped"}
 
@@ -168,7 +170,9 @@ async def live_donation(
     _verify_secret(x_autonoma_signature)
     amount_cents = int(payload.get("amount_cents") or 0)
     if amount_cents <= 0:
-        raise HTTPException(400, detail={"code": "invalid_amount", "message": "amount_cents must be > 0"})
+        raise HTTPException(
+            400, detail={"code": "invalid_amount", "message": "amount_cents must be > 0"}
+        )
     await _fire_donation(
         amount_cents=amount_cents,
         currency=str(payload.get("currency") or "USD"),
@@ -291,7 +295,16 @@ async def live_schedule(
 # rendering predictable on the 3D/pixel stages and prevents abuse via
 # unicode joiners / arbitrary text.
 ALLOWED_REACTIONS: tuple[str, ...] = (
-    "👍", "❤️", "🔥", "😂", "😮", "🎉", "👏", "💯", "🤔", "🙏",
+    "👍",
+    "❤️",
+    "🔥",
+    "😂",
+    "😮",
+    "🎉",
+    "👏",
+    "💯",
+    "🤔",
+    "🙏",
 )
 # Per-user rate limit: ``REACTION_RATE_LIMIT`` reactions per
 # ``REACTION_RATE_WINDOW_S`` seconds. Stored in-process — fine for a
@@ -320,10 +333,7 @@ def _check_reaction_rate(user_id: str) -> bool:
     # ``len(...) % 100 == 0`` triggers ~once per 100 reactions across
     # all users, keeping the amortised cost negligible.
     if len(_reaction_buckets) % 100 == 0 and _reaction_buckets:
-        stale = [
-            uid for uid, b in _reaction_buckets.items()
-            if not b or b[-1] < cutoff
-        ]
+        stale = [uid for uid, b in _reaction_buckets.items() if not b or b[-1] < cutoff]
         for uid in stale:
             _reaction_buckets.pop(uid, None)
 

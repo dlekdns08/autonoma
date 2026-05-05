@@ -32,9 +32,7 @@ router = APIRouter(prefix="/api/coordinator", tags=["coordinator"])
 
 
 def _err(status: int, code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 def _require_token(x_autonoma_coord_token: Optional[str]) -> None:
@@ -53,9 +51,7 @@ def _require_token(x_autonoma_coord_token: Optional[str]) -> None:
             "coordinator_disabled",
             "coordinator_token is not configured on this server",
         )
-    if not x_autonoma_coord_token or not hmac.compare_digest(
-        x_autonoma_coord_token, expected
-    ):
+    if not x_autonoma_coord_token or not hmac.compare_digest(x_autonoma_coord_token, expected):
         raise _err(401, "invalid_token", "X-Autonoma-Coord-Token mismatch")
 
 
@@ -100,9 +96,7 @@ async def enqueue_match(
     # Try to pair right away so callers can see if their invite found
     # an opponent on this same call.
     pairs = await coordinator_store.pair_pending_matches()
-    paired = next(
-        ((a, b) for a, b in pairs if saved.id in (a.id, b.id)), None
-    )
+    paired = next(((a, b) for a, b in pairs if saved.id in (a.id, b.id)), None)
     response: dict[str, Any] = {"invite": saved.model_dump(mode="json")}
     if paired is not None:
         a, b = paired

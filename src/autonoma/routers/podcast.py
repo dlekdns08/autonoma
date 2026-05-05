@@ -194,7 +194,7 @@ async def _generate_chunk(state: _SessionState) -> list[dict[str, str]]:
     listener_block = ""
     if state.pending_user_input:
         listener_block = (
-            f"\nA live listener just commented: \"{state.pending_user_input}\"\n"
+            f'\nA live listener just commented: "{state.pending_user_input}"\n'
             "The next turns should naturally acknowledge or react to this input — "
             "do NOT ignore it.\n"
         )
@@ -432,9 +432,7 @@ async def _orchestrator(state: _SessionState) -> None:
     await _emit(
         "podcast.started",
         session_id=state.id,
-        participants=[
-            {"name": p.name, "vrm_file": p.vrm_file} for p in state.spec.participants
-        ],
+        participants=[{"name": p.name, "vrm_file": p.vrm_file} for p in state.spec.participants],
     )
     try:
         while state.turns_played < state.spec.max_total_turns:
@@ -455,9 +453,7 @@ async def _orchestrator(state: _SessionState) -> None:
             for turn in chunk:
                 state.history.append(turn)
             if state.pending_user_input:
-                state.history.append(
-                    {"speaker": "listener", "text": state.pending_user_input}
-                )
+                state.history.append({"speaker": "listener", "text": state.pending_user_input})
                 state.pending_user_input = None
             for turn in chunk:
                 if state.interrupt_event.is_set():

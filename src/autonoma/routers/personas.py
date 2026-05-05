@@ -98,13 +98,19 @@ async def create_persona(
     name = str(payload.get("name") or "").strip()
     seed_string = str(payload.get("seed_string") or "").strip()
     if not (1 <= len(name) <= 64):
-        raise HTTPException(400, detail={"code": "invalid_name", "message": "이름은 1-64자여야 합니다."})
+        raise HTTPException(
+            400, detail={"code": "invalid_name", "message": "이름은 1-64자여야 합니다."}
+        )
     if not (1 <= len(seed_string) <= 255):
-        raise HTTPException(400, detail={"code": "invalid_seed", "message": "seed_string은 1-255자여야 합니다."})
+        raise HTTPException(
+            400, detail={"code": "invalid_seed", "message": "seed_string은 1-255자여야 합니다."}
+        )
     pid = str(uuid.uuid4())
     tags = payload.get("tags") or []
     if not isinstance(tags, list):
-        raise HTTPException(400, detail={"code": "invalid_tags", "message": "tags는 리스트여야 합니다."})
+        raise HTTPException(
+            400, detail={"code": "invalid_tags", "message": "tags는 리스트여야 합니다."}
+        )
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(
@@ -125,7 +131,10 @@ async def create_persona(
     if row is None:
         raise HTTPException(
             status_code=404,
-            detail={"code": "persona_not_found", "message": "방금 생성된 페르소나를 다시 읽지 못했습니다."},
+            detail={
+                "code": "persona_not_found",
+                "message": "방금 생성된 페르소나를 다시 읽지 못했습니다.",
+            },
         )
     return {"persona": _row_to_bundle(row._mapping)}
 
@@ -144,7 +153,9 @@ async def import_persona(
     signal organically.
     """
     if str(bundle.get("bundle_version") or "") != PERSONA_BUNDLE_VERSION:
-        raise HTTPException(400, detail={"code": "bad_bundle_version", "message": "지원하지 않는 번들 버전입니다."})
+        raise HTTPException(
+            400, detail={"code": "bad_bundle_version", "message": "지원하지 않는 번들 버전입니다."}
+        )
     payload = {
         "name": bundle.get("name"),
         "seed_string": bundle.get("seed_string"),
@@ -185,5 +196,11 @@ async def toggle_publish(
             .values(is_public=1 if make_public else 0)
         )
     if result.rowcount == 0:
-        raise HTTPException(404, detail={"code": "persona_not_found", "message": "해당 페르소나를 찾을 수 없거나 권한이 없습니다."})
+        raise HTTPException(
+            404,
+            detail={
+                "code": "persona_not_found",
+                "message": "해당 페르소나를 찾을 수 없거나 권한이 없습니다.",
+            },
+        )
     return {"status": "ok", "is_public": str(make_public).lower()}

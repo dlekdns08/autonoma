@@ -106,9 +106,7 @@ bus.on("quest.completed", _on_quest_terminal)
 
 def _err(status: int, code: str, message: str) -> HTTPException:
     """Standard structured-error helper, matches the rest of the routers."""
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 # ── Request models ────────────────────────────────────────────────────
@@ -123,12 +121,14 @@ class CompleteBody(BaseModel):
     """``round_number`` is optional from the wire; the operator can
     pass the current round explicitly or let the server default to 0
     (useful when completing leftover cards at session teardown)."""
+
     round_number: int = 0
 
 
 class ActivateBody(BaseModel):
     """``round_number`` defaults to 0 if the host doesn't pass one —
     that mirrors the completion endpoint's permissive default."""
+
     round_number: int = 0
 
 

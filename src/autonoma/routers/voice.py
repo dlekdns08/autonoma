@@ -75,9 +75,7 @@ ALLOWED_VOICE_MIMES = {
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def _voice_error(
-    status_code: int, code: str, message: str, **extra: Any
-) -> HTTPException:
+def _voice_error(status_code: int, code: str, message: str, **extra: Any) -> HTTPException:
     """Structured error response for the /voice UI.
 
     ``detail`` is a dict so the frontend can branch on ``code`` (stable
@@ -129,7 +127,8 @@ def _infer_duration_from_wav(data: bytes) -> float:
     except Exception:
         logger.warning(
             "WAV duration parse failed (%d bytes); returning 0.0",
-            len(data), exc_info=True,
+            len(data),
+            exc_info=True,
         )
         return 0.0
 
@@ -158,12 +157,15 @@ async def voice_create_profile(
     if not (1 <= len(name) <= 128):
         raise _voice_error(400, "invalid_name", "이름은 1자 이상 128자 이하여야 합니다.")
     if not (1 <= len(ref_text) <= 2048):
-        raise _voice_error(400, "invalid_ref_text", "레퍼런스 대본은 1자 이상 2048자 이하여야 합니다.")
+        raise _voice_error(
+            400, "invalid_ref_text", "레퍼런스 대본은 1자 이상 2048자 이하여야 합니다."
+        )
 
     declared_mime = (ref_audio.content_type or "").lower()
     if declared_mime and declared_mime not in ALLOWED_VOICE_MIMES:
         raise _voice_error(
-            400, "unsupported_audio_mime",
+            400,
+            "unsupported_audio_mime",
             "지원하지 않는 오디오 형식입니다. WAV, MP3, OGG, WebM 중 하나를 올려 주세요.",
         )
 
@@ -172,14 +174,16 @@ async def voice_create_profile(
         raise _voice_error(400, "empty_audio", "오디오 파일이 비어 있습니다.")
     if len(data) > MAX_VOICE_REF_BYTES:
         raise _voice_error(
-            413, "audio_too_large",
+            413,
+            "audio_too_large",
             f"오디오 파일이 너무 큽니다 (최대 {MAX_VOICE_REF_BYTES // (1024 * 1024)} MB).",
         )
 
     sniffed = _sniff_audio_mime(data)
     if sniffed is None:
         raise _voice_error(
-            400, "unrecognized_audio",
+            400,
+            "unrecognized_audio",
             "오디오 포맷을 인식할 수 없습니다. 파일이 손상되었거나 지원하지 않는 컨테이너입니다.",
         )
 
@@ -187,12 +191,14 @@ async def voice_create_profile(
     if sniffed == "audio/wav" and duration > 0:
         if duration < MIN_VOICE_REF_DURATION_S:
             raise _voice_error(
-                400, "audio_too_short",
+                400,
+                "audio_too_short",
                 f"레퍼런스 오디오가 너무 짧습니다 (최소 {MIN_VOICE_REF_DURATION_S:.0f}초).",
             )
         if duration > MAX_VOICE_REF_DURATION_S:
             raise _voice_error(
-                400, "audio_too_long",
+                400,
+                "audio_too_long",
                 f"레퍼런스 오디오가 너무 깁니다 (최대 {MAX_VOICE_REF_DURATION_S:.0f}초).",
             )
     summary = await voice_service.create_profile(
@@ -234,14 +240,16 @@ async def voice_delete_profile(
         raise _voice_error(403, "not_owner", "이 프로필을 삭제할 권한이 없습니다.")
     if await voice_service.profile_is_bound(profile_id):
         raise _voice_error(
-            409, "profile_in_use",
+            409,
+            "profile_in_use",
             "이 프로필은 캐릭터에 바인딩되어 있어 삭제할 수 없습니다. 먼저 바인딩을 해제해 주세요.",
         )
     try:
         ok = await voice_service.delete_profile(profile_id)
     except _VoiceIntegrityError:
         raise _voice_error(
-            409, "profile_in_use",
+            409,
+            "profile_in_use",
             "이 프로필은 캐릭터에 바인딩되어 있어 삭제할 수 없습니다.",
         )
     if not ok:
@@ -283,7 +291,8 @@ async def voice_test_profile(
         from autonoma.tts_synth import classify_synth_error, synthesize_collected
     except ImportError as exc:
         raise _voice_error(
-            503, "tts_unavailable",
+            503,
+            "tts_unavailable",
             "서버에 TTS 모듈이 설치되지 않았습니다.",
             detail_raw=str(exc),
         )
@@ -309,7 +318,8 @@ async def voice_test_profile(
         raise _voice_error(503, code, message, detail_raw=str(exc))
     if not result.audio:
         raise _voice_error(
-            503, "empty_synthesis",
+            503,
+            "empty_synthesis",
             "합성 결과가 비어 있습니다. 레퍼런스 오디오/대본을 확인해 주세요.",
         )
     return FastAPIResponse(content=result.audio, media_type="audio/wav")
@@ -352,9 +362,7 @@ async def voice_upsert_binding(
     return {"binding": binding.to_dict()}
 
 
-@router.delete(
-    "/api/voice-bindings", status_code=http_status.HTTP_204_NO_CONTENT
-)
+@router.delete("/api/voice-bindings", status_code=http_status.HTTP_204_NO_CONTENT)
 async def voice_delete_binding(
     vrm_file: str = Query(...),
     _user: User = Depends(require_active_user),
@@ -439,9 +447,7 @@ async def voice_transcribe(
         # keeps serving other requests while the model decodes.
         import anyio
 
-        result = await anyio.to_thread.run_sync(
-            lambda: provider.transcribe(raw, language=lang)
-        )
+        result = await anyio.to_thread.run_sync(lambda: provider.transcribe(raw, language=lang))
     except RuntimeError as exc:
         # Most likely the ASR extras aren't installed. Log internally
         # but don't echo the exception text to the client — a stack
@@ -643,18 +649,33 @@ async def voice_stream(ws: WebSocket) -> None:
     # "auto-detect" and is also accepted. Anything else (e.g. injection
     # attempts, accidental long strings) falls back to the default to
     # avoid handing arbitrary text into the model's language hint slot.
-    _LANG_ALLOWED: frozenset[str] = frozenset({
-        "", "ko", "en", "ja", "zh", "es", "fr", "de", "it", "pt",
-        "ru", "ar", "hi", "vi", "id", "th", "tr", "pl", "nl",
-    })
+    _LANG_ALLOWED: frozenset[str] = frozenset(
+        {
+            "",
+            "ko",
+            "en",
+            "ja",
+            "zh",
+            "es",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "ru",
+            "ar",
+            "hi",
+            "vi",
+            "id",
+            "th",
+            "tr",
+            "pl",
+            "nl",
+        }
+    )
     raw_lang = str(first.get("language") or "").strip().lower()
     if raw_lang not in _LANG_ALLOWED:
         raw_lang = ""
-    language = (
-        raw_lang
-        or _settings.voice_asr_default_language
-        or "en"
-    )
+    language = raw_lang or _settings.voice_asr_default_language or "en"
     target_raw = str(first.get("target") or "").strip()
     target = target_raw or None
     # ``route`` defaults true for backward compat. The /voice studio page
@@ -706,18 +727,14 @@ async def voice_stream(ws: WebSocket) -> None:
         snapshot = bytes(buffer)
         try:
             result = await _transcribe_snapshot(snapshot)
-            _asr_metrics.record_transcribe(
-                stage="partial", ok=True, duration_ms=result.duration_ms
-            )
+            _asr_metrics.record_transcribe(stage="partial", ok=True, duration_ms=result.duration_ms)
             text = (result.text or "").strip()
             if text and text != last_partial_text and not closed:
                 last_partial_text = text
                 await ws.send_json({"type": "partial", "text": text})
         except Exception as exc:
             logger.warning("[voice/stream] partial transcribe failed: %s", exc)
-            _asr_metrics.record_transcribe(
-                stage="partial", ok=False, duration_ms=0, error=str(exc)
-            )
+            _asr_metrics.record_transcribe(stage="partial", ok=False, duration_ms=0, error=str(exc))
         finally:
             transcribe_busy = False
 
@@ -853,16 +870,12 @@ async def voice_stream(ws: WebSocket) -> None:
     try:
         final_result = await _transcribe_snapshot(bytes(buffer))
         final_text = (final_result.text or "").strip()
-        _asr_metrics.record_transcribe(
-            stage="final", ok=True, duration_ms=final_result.duration_ms
-        )
+        _asr_metrics.record_transcribe(stage="final", ok=True, duration_ms=final_result.duration_ms)
     except Exception as exc:
         # Log internally with traceback; respond with a generic message
         # so we don't echo internal exception text out to the WS client.
         logger.exception("[voice/stream] final transcribe failed")
-        _asr_metrics.record_transcribe(
-            stage="final", ok=False, duration_ms=0, error=str(exc)
-        )
+        _asr_metrics.record_transcribe(stage="final", ok=False, duration_ms=0, error=str(exc))
         try:
             await ws.send_json(
                 {

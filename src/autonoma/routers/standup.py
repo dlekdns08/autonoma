@@ -126,18 +126,25 @@ async def generate_standup(
     if not settings.standup_enabled:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "standup_disabled", "message": "Standup is disabled. Set AUTONOMA_STANDUP_ENABLED=true."},
+            detail={
+                "code": "standup_disabled",
+                "message": "Standup is disabled. Set AUTONOMA_STANDUP_ENABLED=true.",
+            },
         )
     lines = payload.get("lines") or []
     if not isinstance(lines, list) or not lines:
-        raise HTTPException(400, detail={"code": "empty_script", "message": "lines 배열이 필요합니다."})
+        raise HTTPException(
+            400, detail={"code": "empty_script", "message": "lines 배열이 필요합니다."}
+        )
 
     title = str(payload.get("title") or _dt.datetime.now().strftime("%Y-%m-%d standup"))
     parts: list[bytes] = []
     transcript_lines: list[str] = [f"# {title}", ""]
     for i, line in enumerate(lines):
         if not isinstance(line, dict):
-            raise HTTPException(400, detail={"code": "bad_line", "message": f"line #{i} is not an object"})
+            raise HTTPException(
+                400, detail={"code": "bad_line", "message": f"line #{i} is not an object"}
+            )
         agent = str(line.get("agent") or "Speaker")
         text = str(line.get("text") or "").strip()
         if not text:

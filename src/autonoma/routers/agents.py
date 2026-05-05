@@ -42,9 +42,7 @@ async def _find_character(identifier: str) -> dict[str, Any] | None:
     async with engine.connect() as conn:
         # UUID first
         row = (
-            await conn.execute(
-                select(characters).where(characters.c.character_uuid == identifier)
-            )
+            await conn.execute(select(characters).where(characters.c.character_uuid == identifier))
         ).first()
         if row is None:
             # Fall back to newest-alive by name; names can collide, so we
@@ -71,7 +69,10 @@ async def agent_profile(
     if not char:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
-            detail={"code": "agent_not_found", "message": "해당 이름/uuid의 캐릭터를 찾을 수 없습니다."},
+            detail={
+                "code": "agent_not_found",
+                "message": "해당 이름/uuid의 캐릭터를 찾을 수 없습니다.",
+            },
         )
     uuid = char["character_uuid"]
     engine = get_engine()
@@ -172,8 +173,11 @@ async def pin_note(
         )
     char = await _find_character(uuid)
     if char is None:
-        raise HTTPException(404, detail={"code": "agent_not_found", "message": "해당 캐릭터를 찾을 수 없습니다."})
+        raise HTTPException(
+            404, detail={"code": "agent_not_found", "message": "해당 캐릭터를 찾을 수 없습니다."}
+        )
     from sqlalchemy import insert
+
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(

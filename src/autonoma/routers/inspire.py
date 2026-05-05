@@ -214,11 +214,7 @@ def _parse_suggestions(raw: str) -> list[dict[str, str]]:
 
     if len(bullets) < 5:
         # Fallback: any non-empty, non-trivial line.
-        bullets = [
-            ln.strip()
-            for ln in lines
-            if ln.strip() and not ln.strip().startswith("#")
-        ]
+        bullets = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
     out: list[dict[str, str]] = []
     for line in bullets:
@@ -229,7 +225,7 @@ def _parse_suggestions(raw: str) -> list[dict[str, str]]:
         if m:
             effort = m.group(1).lower()
             # Strip the matched effort tag out of the displayed text.
-            line = (line[: m.start()] + line[m.end():]).strip()
+            line = (line[: m.start()] + line[m.end() :]).strip()
         # Trim trailing punctuation orphans left by the strip.
         line = line.strip(" -—–:()[],.").strip()
         if not line:
@@ -305,10 +301,7 @@ async def inspire(
             status_code=422,
             detail={
                 "code": "bad_focus",
-                "message": (
-                    "focus must be one of: "
-                    + ", ".join(sorted(_ALLOWED_FOCUS))
-                ),
+                "message": ("focus must be one of: " + ", ".join(sorted(_ALLOWED_FOCUS))),
             },
         )
 

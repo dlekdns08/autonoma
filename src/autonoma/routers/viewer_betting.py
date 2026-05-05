@@ -61,9 +61,7 @@ router = APIRouter(prefix="/api/betting", tags=["betting"])
 
 def _err(status: int, code: str, message: str) -> HTTPException:
     """Standard structured-error helper, matches the rest of the routers."""
-    return HTTPException(
-        status_code=status, detail={"code": code, "message": message}
-    )
+    return HTTPException(status_code=status, detail={"code": code, "message": message})
 
 
 def _check_enabled() -> None:
@@ -106,9 +104,7 @@ class OpenMarketBody(BaseModel):
     session_id: int = Field(..., description="live session id")
     market_id: str = Field(..., description="caller-supplied stable handle")
     question: str = Field(..., description="market question shown to viewers")
-    closes_at_round: int = Field(
-        0, description="round number at which betting auto-locks"
-    )
+    closes_at_round: int = Field(0, description="round number at which betting auto-locks")
 
 
 class PlaceBetBody(BaseModel):

@@ -47,7 +47,7 @@ def _extract_mention(text: str) -> tuple[str | None, str]:
     if not m:
         return None, text
     agent = m.group(1)
-    remaining = (text[: m.start()] + text[m.end():]).strip()
+    remaining = (text[: m.start()] + text[m.end() :]).strip()
     return agent, remaining
 
 
@@ -64,22 +64,31 @@ async def slack_events(
             detail={"code": "slack_bridge_disabled", "message": "Slack bridge is not configured."},
         )
     if not x_slack_signature or not x_slack_request_timestamp:
-        raise HTTPException(401, detail={"code": "missing_signature", "message": "Slack signature headers missing."})
+        raise HTTPException(
+            401, detail={"code": "missing_signature", "message": "Slack signature headers missing."}
+        )
     try:
         ts = int(x_slack_request_timestamp)
     except ValueError:
-        raise HTTPException(401, detail={"code": "bad_timestamp", "message": "bad X-Slack-Request-Timestamp"})
+        raise HTTPException(
+            401, detail={"code": "bad_timestamp", "message": "bad X-Slack-Request-Timestamp"}
+        )
     if abs(time.time() - ts) > 60 * 5:
-        raise HTTPException(401, detail={"code": "stale_request", "message": "replay window exceeded"})
+        raise HTTPException(
+            401, detail={"code": "stale_request", "message": "replay window exceeded"}
+        )
 
     body = await request.body()
     basestring = b"v0:" + str(ts).encode() + b":" + body
     digest = "v0=" + hmac.new(secret.encode(), basestring, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(digest, x_slack_signature):
-        raise HTTPException(401, detail={"code": "bad_signature", "message": "Slack signature mismatch"})
+        raise HTTPException(
+            401, detail={"code": "bad_signature", "message": "Slack signature mismatch"}
+        )
 
     # Slack sends URL-verification challenge on app setup.
     import json
+
     try:
         payload = json.loads(body.decode("utf-8") or "{}")
     except json.JSONDecodeError:
@@ -113,6 +122,7 @@ async def slack_events(
 # normalized chat events here. We only verify a shared secret + funnel
 # through the ExternalInputRouter so rate limits, polls, and swarm
 # injection are unified across every external source.
+
 
 @router.post("/api/bridges/livechat/event")
 async def livechat_event(
@@ -155,9 +165,7 @@ async def livechat_event(
                 "message": "Live chat bridge is not configured.",
             },
         )
-    if not x_autonoma_signature or not hmac.compare_digest(
-        x_autonoma_signature, secret
-    ):
+    if not x_autonoma_signature or not hmac.compare_digest(x_autonoma_signature, secret):
         raise HTTPException(
             401,
             detail={"code": "bad_signature", "message": "bad signature"},
@@ -319,7 +327,10 @@ async def discord_webhook(
     if not secret:
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "discord_bridge_disabled", "message": "Discord bridge is not configured."},
+            detail={
+                "code": "discord_bridge_disabled",
+                "message": "Discord bridge is not configured.",
+            },
         )
     if not x_autonoma_signature or not hmac.compare_digest(x_autonoma_signature, secret):
         raise HTTPException(401, detail={"code": "bad_signature", "message": "bad signature"})
