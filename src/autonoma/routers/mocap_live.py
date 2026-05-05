@@ -49,7 +49,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from autonoma.auth import read_session_token, SESSION_COOKIE_NAME
+from autonoma.auth import SESSION_COOKIE_NAME, read_session_token
 from autonoma.event_bus import bus
 
 logger = logging.getLogger(__name__)
