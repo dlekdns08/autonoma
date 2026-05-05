@@ -17,7 +17,6 @@ from autonoma.mocap.triggers import (
     validate_trigger,
 )
 
-
 # ── validate_trigger: happy paths ────────────────────────────────────
 
 
