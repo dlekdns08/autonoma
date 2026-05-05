@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-
 JPEG_MAGIC = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01"
 
 
