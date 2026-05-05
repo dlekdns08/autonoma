@@ -12,11 +12,8 @@ for a director-led demo) without touching ``AgentSwarm``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from autonoma.harness.strategies import register
 from autonoma.models import ProjectState, TaskStatus
-
 
 # ── loop.exit_condition ───────────────────────────────────────────────
 #
