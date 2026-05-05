@@ -35,7 +35,7 @@ import time
 import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import (
     Depends,
@@ -59,7 +59,6 @@ from autonoma.auth import (
     SESSION_COOKIE_NAME,
     hash_password,
     is_guest_user_id,
-    issue_session_token,
     new_guest_user_id,
     read_session_token,
     require_active_user,
@@ -79,7 +78,7 @@ from autonoma.db.users import (
 )
 from autonoma.event_bus import bus
 from autonoma.harness.policy import HarnessPolicyContent, default_policy_content
-from autonoma.llm import LLMConfig, llm_config_from_settings
+from autonoma.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -320,13 +319,12 @@ def _build_admin_llm_config() -> LLMConfig | None:
 # routing and lifespan. Re-exported here so call sites and tests that
 # do ``from autonoma.api import manager`` (etc.) continue to work.
 
-from autonoma._api_ws import (
+from autonoma._api_ws import (  # noqa: F401 — re-exported for callers
     ConnectionManager,
     _make_event_message,
     _serialize,
     manager,
 )
-
 
 # ── Event Bridge: bus → WebSocket ─────────────────────────────────────────
 
@@ -1206,7 +1204,7 @@ app = FastAPI(title="Autonoma API", version="0.1.0", lifespan=lifespan)
 # Session cookie + CORS helpers live in ``_api_cookies`` — re-exported
 # here so the existing call sites (``auth_login``/``auth_logout``/
 # ``auth_guest`` etc.) keep working unchanged.
-from autonoma._api_cookies import (  # noqa: E402
+from autonoma._api_cookies import (  # noqa: E402, F401 — re-exported
     _clear_session_cookie,
     _cookie_is_secure,
     _cookie_samesite,
@@ -4243,12 +4241,13 @@ app.include_router(_translate_router.router)
 # Re-export so call sites (``mcp/server.py``, scheduler bus handlers,
 # tests that patch ``api_module._on_schedule_fire_requested``) keep
 # working unchanged.
-from autonoma._api_headless import (  # noqa: E402
+from autonoma._api_headless import (  # noqa: E402, F401 — re-exported
     _HeadlessWebSocket,
     _next_headless_session_id,
     _on_schedule_fire_requested,
     _run_swarm_headless,
 )
+
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)

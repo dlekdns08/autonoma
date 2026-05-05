@@ -27,6 +27,23 @@ from autonoma.voice import store as voice_store
 pytestmark = pytest.mark.usefixtures("fresh_db")
 
 
+@pytest.fixture(autouse=True)
+async def _ensure_db_initialized(fresh_db):
+    """Tests that don't create a user first never trigger ``init_db``,
+    which is what creates ``voice_profiles`` / ``voice_bindings``.
+    Force the migration here so even read-only tests find the tables.
+
+    Depends on ``fresh_db`` so the engine reset happens *before* we run
+    migrations against the per-test tmp_path — otherwise this fixture
+    can resolve first against a stale engine and fresh_db then wipes
+    our work.
+    """
+    from autonoma.db.engine import init_db
+
+    await init_db()
+    yield
+
+
 async def _make_user(username: str = "voice-user") -> str:
     from autonoma.db.users import create_user
 
@@ -107,12 +124,33 @@ async def test_create_profile_cleans_up_file_when_db_insert_fails():
 
 
 async def test_list_profile_summaries_orders_newest_first():
+    """``ORDER BY created_at DESC`` puts newer rows first.
+
+    SQLite's ``CURRENT_TIMESTAMP`` is second-resolution, so two profiles
+    created back-to-back tie. We backdate ``a`` by an hour to force a
+    distinct timestamp and exercise the real ordering.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update as sa_update
+
+    from autonoma.db.engine import get_engine
+    from autonoma.db.schema import voice_profiles
+
     a = await _create_default_profile("voiceA")
     b = await _create_default_profile("voiceB")
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa_update(voice_profiles)
+            .where(voice_profiles.c.id == a.id)
+            .values(created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1))
+        )
+
     rows = await voice_store.list_profile_summaries()
     ids = [r.id for r in rows]
-    assert ids[0] == b.id, "newest must come first"
-    assert ids[1] == a.id
+    assert ids == [b.id, a.id], "newer profile must come first"
 
 
 async def test_get_profile_falls_back_to_legacy_blob():
