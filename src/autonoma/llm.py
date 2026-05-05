@@ -80,22 +80,25 @@ async def _call_with_retry(
         try:
             return await asyncio.wait_for(do_call(), timeout=timeout)
         except asyncio.TimeoutError:
-            last_exc = LLMConnectionError(
-                f"{label}: request timed out after {timeout:.0f}s"
-            )
+            last_exc = LLMConnectionError(f"{label}: request timed out after {timeout:.0f}s")
             logger.warning(
                 "[llm] %s timed out (attempt %d/%d)",
-                label, attempt + 1, max_retries + 1,
+                label,
+                attempt + 1,
+                max_retries + 1,
             )
         except (LLMConnectionError, LLMRateLimitError) as exc:
             last_exc = exc
             logger.warning(
                 "[llm] %s transient error (attempt %d/%d): %s",
-                label, attempt + 1, max_retries + 1, _sanitize(exc),
+                label,
+                attempt + 1,
+                max_retries + 1,
+                _sanitize(exc),
             )
         if attempt >= max_retries:
             break
-        delay = LLM_RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.3)
+        delay = LLM_RETRY_BASE_DELAY * (2**attempt) + random.uniform(0.0, 0.3)
         await asyncio.sleep(delay)
     if last_exc is None:
         raise RuntimeError("LLM retry exhausted without exception captured")
@@ -169,7 +172,7 @@ class LLMConfig:
     provider: Literal["anthropic", "openai", "vllm"]
     api_key: str
     model: str
-    base_url: str = ""       # required for vLLM; ignored for others
+    base_url: str = ""  # required for vLLM; ignored for others
     max_tokens: int = 8192
     temperature: float = 0.1
 
@@ -249,6 +252,7 @@ def _is_temperature_deprecation_error(exc: Exception) -> bool:
 class AnthropicLLMClient(BaseLLMClient):
     def __init__(self, api_key: str) -> None:
         import anthropic
+
         self._client = anthropic.AsyncAnthropic(api_key=api_key or None)
 
     async def create(
@@ -335,7 +339,8 @@ class AnthropicLLMClient(BaseLLMClient):
             # re-raise unchanged so callers can still discriminate by type.
             logger.error(
                 "Anthropic create() failed: model=%s error=%s",
-                model, _sanitize(exc),
+                model,
+                _sanitize(exc),
             )
             raise
 
@@ -478,9 +483,7 @@ class OpenAILLMClient(BaseLLMClient):
                 raise LLMAuthError(_sanitize(exc)) from exc
 
         try:
-            response = await _call_with_retry(
-                _do, label=f"openai.create({self._provider}/{model})"
-            )
+            response = await _call_with_retry(_do, label=f"openai.create({self._provider}/{model})")
             text = response.choices[0].message.content or ""
             usage = response.usage
             return LLMResponse(
@@ -496,7 +499,9 @@ class OpenAILLMClient(BaseLLMClient):
             # surfaces the real reason a fallback was taken.
             logger.error(
                 "OpenAI-compatible create() failed: provider=%s model=%s error=%s",
-                self._provider, model, _sanitize(exc),
+                self._provider,
+                model,
+                _sanitize(exc),
             )
             raise
 
@@ -524,6 +529,7 @@ class OpenAILLMClient(BaseLLMClient):
 
         try:
             from openai import APIConnectionError, AuthenticationError, RateLimitError
+
             async with await self._client.chat.completions.create(**create_kwargs) as stream_ctx:
                 async for chunk in stream_ctx:
                     delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -532,6 +538,7 @@ class OpenAILLMClient(BaseLLMClient):
         except Exception as exc:
             try:
                 from openai import APIConnectionError, AuthenticationError, RateLimitError
+
                 if isinstance(exc, APIConnectionError):
                     raise LLMConnectionError(str(exc)) from exc
                 if isinstance(exc, RateLimitError):
@@ -563,11 +570,14 @@ def create_llm_client(config: LLMConfig) -> BaseLLMClient:
 def llm_config_from_settings() -> LLMConfig:
     """Build a LLMConfig from the global server settings (for CLI / admin use)."""
     from autonoma.config import settings
+
     return LLMConfig(
         provider=settings.provider,
         api_key=(
-            settings.anthropic_api_key if settings.provider == "anthropic"
-            else settings.openai_api_key if settings.provider == "openai"
+            settings.anthropic_api_key
+            if settings.provider == "anthropic"
+            else settings.openai_api_key
+            if settings.provider == "openai"
             else settings.vllm_api_key
         ),
         model=settings.model,
