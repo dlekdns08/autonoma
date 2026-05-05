@@ -129,11 +129,17 @@ def open_pull_request(
     try:
         subprocess.run(
             ["git", "-C", str(repo), "checkout", "-b", branch],
-            check=True, capture_output=True, text=True, env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         subprocess.run(
             ["git", "-C", str(repo), "add", "-A"],
-            check=True, capture_output=True, text=True, env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         commit_msg = (
             f"{title}\n\nCo-Authored-By: {agent_name} "
@@ -141,20 +147,37 @@ def open_pull_request(
         )
         subprocess.run(
             ["git", "-C", str(repo), "commit", "-m", commit_msg, "--allow-empty"],
-            check=True, capture_output=True, text=True, env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         subprocess.run(
             ["git", "-C", str(repo), "push", "-u", "origin", branch],
-            check=True, capture_output=True, text=True, env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         pr = subprocess.run(
-            ["gh", "pr", "create",
-             "--title", title,
-             "--body", body,
-             "--base", base,
-             "--head", branch],
-            check=True, capture_output=True, text=True,
-            cwd=str(repo), env=env,
+            [
+                "gh",
+                "pr",
+                "create",
+                "--title",
+                title,
+                "--body",
+                body,
+                "--base",
+                base,
+                "--head",
+                branch,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=env,
         )
         url = pr.stdout.strip().splitlines()[-1] if pr.stdout.strip() else ""
         return GitPRResult(ok=True, url=url)
