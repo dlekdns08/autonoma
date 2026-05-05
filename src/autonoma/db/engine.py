@@ -20,7 +20,8 @@ import logging
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from sqlalchemy import event, inspect as sa_inspect, text
+from sqlalchemy import event, text
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from autonoma.config import settings
@@ -434,8 +435,8 @@ async def init_db() -> None:
     # tables on the shared ``metadata`` before the baseline migration
     # runs. Done here (rather than at module top) to avoid a circular
     # import — both modules depend on ``db.engine``.
-    from autonoma.db import users as _users_module  # noqa: F401
     from autonoma.db import harness_policies as _harness_policies_module  # noqa: F401
+    from autonoma.db import users as _users_module  # noqa: F401
 
     async with _init_lock:
         if _initialized:
