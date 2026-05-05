@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 # ``fresh_db`` lives in tests/conftest.py so every DB-touching test uses
 # the same scratch-DB recipe. Locally-scoped fixtures here are only for
