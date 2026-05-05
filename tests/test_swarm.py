@@ -1,6 +1,5 @@
 """Tests for agent swarm."""
 
-import pytest
 
 from autonoma.agents.swarm import AgentSwarm
 from autonoma.models import Position
