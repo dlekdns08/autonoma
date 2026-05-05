@@ -26,6 +26,11 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # docker-compose.prod.yml uses Compose-extension tags (e.g.
+        # ``!override``) that the stock YAML parser doesn't understand.
+        # Compose itself validates these on ``docker compose config`` so
+        # excluding them here just opts out of redundant linting.
+        exclude: ^docker-compose.*\.yml$
       - id: check-added-large-files
         args: [--maxkb=1024]
       - id: check-merge-conflict

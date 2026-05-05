@@ -57,11 +57,15 @@ jobs:
           fi
 
       - name: Run Python tests with coverage
+        # Threshold is set to 55% — slightly below the current 58%
+        # baseline so we catch regressions without forcing a coverage
+        # push every PR. Bump as the suite grows.
         run: |
           uv run pytest tests/ \
             --cov=src/autonoma \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml:coverage.xml \
+            --cov-fail-under=55 \
             -v
 
       - name: Coverage summary
