@@ -3,7 +3,6 @@
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
-    AgentState,
     FileArtifact,
     MessageType,
     Position,
