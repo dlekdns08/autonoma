@@ -14,7 +14,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 # ``fresh_db`` is shared across the DB-touching test suite (see
 # tests/conftest.py).
