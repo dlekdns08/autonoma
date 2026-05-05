@@ -84,9 +84,7 @@ class ABReport:
         """JSON-serialisable form. ``anomaly_counts`` keys become strings
         because JSON object keys must be strings."""
         out = asdict(self)
-        out["anomaly_counts"] = {
-            str(k): v for k, v in self.anomaly_counts.items()
-        }
+        out["anomaly_counts"] = {str(k): v for k, v in self.anomaly_counts.items()}
         return out
 
 
@@ -285,9 +283,7 @@ async def list_recent_runs(limit: int = 20) -> list[dict[str, Any]]:
     engine = get_engine()
     async with engine.connect() as conn:
         result = await conn.execute(
-            select(run_summary)
-            .order_by(desc(run_summary.c.id))
-            .limit(limit)
+            select(run_summary).order_by(desc(run_summary.c.id)).limit(limit)
         )
         rows = result.all()
     return [_row_to_dict(r) for r in rows]
