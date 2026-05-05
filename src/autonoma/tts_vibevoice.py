@@ -214,7 +214,7 @@ class VibeVoiceClient(BaseTTSClient):
         serving other endpoints while a multi-GB load is in flight.
         """
         try:
-            import torch  # type: ignore[import-not-found]
+            import torch  # type: ignore[import-not-found]  # noqa: F401 — availability probe
         except ImportError as exc:
             self._load_error = "torch is required for VibeVoice"
             logger.error("[tts/vibevoice] %s: %s", self._load_error, exc)
@@ -255,7 +255,7 @@ class VibeVoiceClient(BaseTTSClient):
         self._patch_transformers_register_idempotent()
 
         try:
-            import vibevoice  # type: ignore[import-not-found]
+            import vibevoice  # type: ignore[import-not-found]  # noqa: F401 — availability probe
         except ImportError as exc:
             msg = str(exc)
             if "No module named 'vibevoice'" in msg:
