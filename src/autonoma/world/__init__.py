@@ -55,18 +55,12 @@ logger = logging.getLogger(__name__)
 # cheaper to extract in follow-up PRs than to untangle all at once.
 
 from autonoma.world._events import _fire_event
-from autonoma.world.personality import (
-    CATCHPHRASES,
-    EVOLVED_EMOJIS,
-    EVOLVED_SPECIES,
-    MOOD_CONTAGION_STRENGTH,
-    SPECIES,
-    SPECIES_EMOJIS,
-    AgentBones,
-    Mood,
-    Trait,
-    _mulberry32,
-    apply_mood_contagion,
+from autonoma.world.encounters import (
+    ALTERNATE_OUTCOMES,
+    GhostAgent,
+    GhostRealm,
+    MultiverseChoice,
+    MultiverseEngine,
 )
 from autonoma.world.environment import (
     SEASON_EMOJIS,
@@ -87,14 +81,19 @@ from autonoma.world.inner_life import (
     Dream,
     DreamEngine,
 )
-from autonoma.world.encounters import (
-    ALTERNATE_OUTCOMES,
-    GhostAgent,
-    GhostRealm,
-    MultiverseChoice,
-    MultiverseEngine,
+from autonoma.world.personality import (
+    CATCHPHRASES,
+    EVOLVED_EMOJIS,
+    EVOLVED_SPECIES,
+    MOOD_CONTAGION_STRENGTH,
+    SPECIES,
+    SPECIES_EMOJIS,
+    AgentBones,
+    Mood,
+    Trait,
+    _mulberry32,
+    apply_mood_contagion,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. Relationship & Trust Graph
@@ -2133,7 +2132,12 @@ class PostOffice:
     ) -> Letter | None:
         """Auto-generate a letter based on relationship trust level."""
         # Already sent a letter this round?
-        recent = [l for l in self.all_letters if l.sender == sender and l.recipient == recipient and l.round_number == round_number]
+        recent = [
+            letter for letter in self.all_letters
+            if letter.sender == sender
+            and letter.recipient == recipient
+            and letter.round_number == round_number
+        ]
         if recent:
             return None
 
