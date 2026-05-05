@@ -1,6 +1,5 @@
 """Tests for the expanded world system - all 21 subsystems."""
 
-import pytest
 
 from autonoma.world import (
     ACHIEVEMENTS,
@@ -17,11 +16,8 @@ from autonoma.world import (
     Debate,
     DebateArena,
     DebateOutcome,
-    Dream,
     DreamEngine,
-    FortuneCookie,
     FortuneCookieJar,
-    GhostAgent,
     GhostRealm,
     GossipNetwork,
     Guild,
@@ -29,14 +25,11 @@ from autonoma.world import (
     GuildRole,
     HindsightNote,
     Leaderboard,
-    Letter,
     MemoryEntry,
     Mood,
     MultiverseEngine,
     NarrativeEngine,
-    NarrativeEvent,
     PostOffice,
-    Quest,
     QuestBoard,
     QuestStatus,
     Relationship,
@@ -44,7 +37,6 @@ from autonoma.world import (
     ReputationScore,
     Season,
     TimeOfDay,
-    Trade,
     TradingPost,
     Trait,
     Weather,
@@ -54,7 +46,6 @@ from autonoma.world import (
     WorldEventType,
     check_achievements,
 )
-
 
 # ── Agent Personality (Deterministic Bones) ───────────────────────────────
 
