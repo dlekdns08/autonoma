@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from autonoma.agents.base import AutonomousAgent, MOOD_EMOTE
+from autonoma.agents.base import MOOD_EMOTE, AutonomousAgent
 from autonoma.event_bus import bus
 from autonoma.models import AgentPersona
 from autonoma.world import Mood
