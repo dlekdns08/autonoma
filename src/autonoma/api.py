@@ -228,35 +228,9 @@ _install_owner_resolver(_resolve_session_owner)
 # headless launcher never goes near the inbound loop, so that path is
 # never exercised.
 
-class _HeadlessWebSocket:
-    """Drop-everything WebSocket stub for backend-only runs."""
-
-    client_state: int = 1  # CONNECTED — keeps starlette guards happy
-
-    async def accept(self, *_a: Any, **_kw: Any) -> None:
-        return None
-
-    async def send_text(self, _msg: str) -> None:
-        return None
-
-    async def send_json(self, _payload: Any) -> None:
-        return None
-
-    async def close(self, *_a: Any, **_kw: Any) -> None:
-        return None
-
-
-# Synthetic session ids for headless runs come from a negative-ranged
-# counter so they can never collide with the positive ids issued by
-# ``_next_session_id`` for real WebSocket connections. We use
-# ``itertools.count`` (which is atomic in CPython) so concurrent
-# headless launches can't race the read-modify-write of a plain
-# ``int -= 1`` global. Step is -1 starting from -1.
-_headless_id_counter: itertools.count[int] = itertools.count(-1, -1)
-
-
-def _next_headless_session_id() -> int:
-    return next(_headless_id_counter)
+# Headless runner symbols (``_HeadlessWebSocket``, ``_next_headless_session_id``,
+# ``_run_swarm_headless``, ``_on_schedule_fire_requested``) live in
+# ``autonoma._api_headless`` — re-exported below near where they're used.
 _rooms: dict[int, RoomState] = {}
 # Lookup by short code (uppercase A-Z + 2-9 — no I/O/0/1 to avoid
 # misreads when someone reads it aloud).
@@ -340,93 +314,18 @@ def _build_admin_llm_config() -> LLMConfig | None:
     return None
 
 
-# ── Connection Manager ────────────────────────────────────────────────────
+# ── Connection Manager / serializers ─────────────────────────────────────
+#
+# Lifted into ``autonoma._api_ws`` so this module can stay focused on
+# routing and lifespan. Re-exported here so call sites and tests that
+# do ``from autonoma.api import manager`` (etc.) continue to work.
 
-class ConnectionManager:
-    """Tracks live WebSocket connections and provides routed delivery.
-
-    Events are never fanned out to all connections anymore — each event
-    belongs to a single session and is sent only to that session's ws.
-    ``broadcast`` is kept for the rare system-wide message but should be
-    used sparingly now that swarms are per-session.
-    """
-
-    def __init__(self) -> None:
-        self.connections: list[WebSocket] = []
-
-    async def connect(self, ws: WebSocket) -> None:
-        await ws.accept()
-        self.connections.append(ws)
-        logger.info(f"[WS] Client connected ({len(self.connections)} total)")
-
-    def disconnect(self, ws: WebSocket) -> None:
-        if ws in self.connections:
-            self.connections.remove(ws)
-        logger.info(f"[WS] Client disconnected ({len(self.connections)} total)")
-
-    async def send_to_ws(
-        self, ws: WebSocket, event_type: str, data: dict[str, Any]
-    ) -> bool:
-        """Send a single event to one websocket. Returns False on failure."""
-        try:
-            await ws.send_text(
-                json.dumps({"event": event_type, "data": _serialize(data)})
-            )
-            return True
-        except Exception:
-            logger.exception(
-                "[ws] send_to_ws failed for event=%s", event_type
-            )
-            return False
-
-    async def broadcast(self, event_type: str, data: dict[str, Any]) -> None:
-        """Fan out an event to every live connection (system-wide only)."""
-        message = _make_event_message(event_type, data)
-        disconnected: list[WebSocket] = []
-        # Snapshot the connection list — a concurrent disconnect must not
-        # mutate the list we're iterating over (TOCTOU).
-        for ws in list(self.connections):
-            try:
-                await ws.send_text(message)
-            except Exception as exc:
-                logger.warning(
-                    "[ws] broadcast send failed for event=%s; dropping client: %s",
-                    event_type,
-                    exc,
-                )
-                disconnected.append(ws)
-        for ws in disconnected:
-            if ws in self.connections:
-                self.connections.remove(ws)
-
-
-manager = ConnectionManager()
-
-# ── Serialization Helper ──────────────────────────────────────────────────
-
-def _serialize(obj: Any) -> Any:
-    """Make event data JSON-serializable."""
-    if isinstance(obj, dict):
-        return {k: _serialize(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_serialize(item) for item in obj]
-    if hasattr(obj, "value"):  # Enum
-        return obj.value
-    if hasattr(obj, "__dataclass_fields__"):  # dataclass
-        return {k: _serialize(getattr(obj, k)) for k in obj.__dataclass_fields__}
-    return obj
-
-
-def _make_event_message(event_type: str, data: dict[str, Any]) -> str:
-    """Serialize an event to a JSON string ready to send over WebSocket.
-
-    Caches the serialized payload so high-frequency events (agent.emote,
-    agent.state) that fan out to N viewers don't re-serialize N times.
-    The cache key is (event_type, id(data)) — since ``data`` is the raw
-    **kwargs dict built inside the bus emit call it is created fresh each
-    time, so id collisions across calls are not a concern.
-    """
-    return json.dumps({"event": event_type, "data": _serialize(data)})
+from autonoma._api_ws import (
+    ConnectionManager,
+    _make_event_message,
+    _serialize,
+    manager,
+)
 
 
 # ── Event Bridge: bus → WebSocket ─────────────────────────────────────────
@@ -1304,38 +1203,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Autonoma API", version="0.1.0", lifespan=lifespan)
 
-def _resolve_cors_origins() -> list[str]:
-    """Compose the CORS allow-list from the deployment environment.
-
-    Dev mode hardcodes the localhost ports so the Next dev server and the
-    docker-compose web container both work with zero config. Prod starts
-    from an empty baseline and requires an explicit
-    ``AUTONOMA_CORS_ALLOW_ORIGINS`` — wildcarding under
-    ``allow_credentials=True`` is unsafe, so we never fall back to ``*``.
-    """
-    origins: list[str] = []
-    if settings.environment == "development":
-        # Dev origins; production origins should come from env via settings
-        # (AUTONOMA_CORS_ALLOW_ORIGINS), never hardcoded here.
-        origins.extend([
-            "http://localhost:3000", "http://127.0.0.1:3000",
-            "http://localhost:3478", "http://127.0.0.1:3478",
-        ])
-    extra = [
-        o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()
-    ]
-    for origin in extra:
-        if origin not in origins:
-            origins.append(origin)
-    if not origins:
-        logger.warning(
-            "[cors] No origins configured for environment=%s. "
-            "Set AUTONOMA_CORS_ALLOW_ORIGINS to the browser origin(s) "
-            "that should be allowed to call this API.",
-            settings.environment,
-        )
-    return origins
-
+# Session cookie + CORS helpers live in ``_api_cookies`` — re-exported
+# here so the existing call sites (``auth_login``/``auth_logout``/
+# ``auth_guest`` etc.) keep working unchanged.
+from autonoma._api_cookies import (  # noqa: E402
+    _clear_session_cookie,
+    _cookie_is_secure,
+    _cookie_samesite,
+    _resolve_cors_origins,
+    _set_session_cookie,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1344,51 +1221,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def _cookie_is_secure() -> bool:
-    """Secure cookies in production, lax in development.
-
-    We can't know whether we're behind HTTPS from Python alone, so treat
-    the presence of ``session_secret`` as the signal: if an operator has
-    set a durable secret they've configured this for real deployment.
-    Tests and local dev that don't set one get non-Secure cookies so
-    they work over plain http://localhost.
-    """
-    return bool(settings.session_secret)
-
-
-def _cookie_samesite() -> Literal["lax", "strict"]:
-    """Lax in development, strict once a session_secret is configured.
-
-    Same signal as ``_cookie_is_secure`` — an operator who has set a durable
-    secret has signed up for real deployment semantics. Lax is required for
-    typical dev setups where the Next.js dev server (port 3000) and the
-    FastAPI process (3479) are different origins but same site.
-    """
-    return "strict" if settings.session_secret else "lax"
-
-
-def _set_session_cookie(response: FastAPIResponse, user_id: str) -> None:
-    token = issue_session_token(user_id)
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=_cookie_is_secure(),
-        samesite=_cookie_samesite(),
-        path="/",
-    )
-
-
-def _clear_session_cookie(response: FastAPIResponse) -> None:
-    response.delete_cookie(
-        key=SESSION_COOKIE_NAME,
-        path="/",
-        httponly=True,
-        secure=_cookie_is_secure(),
-        samesite=_cookie_samesite(),
-    )
 
 
 # ── /api/auth/* ───────────────────────────────────────────────────────
@@ -4407,128 +4239,16 @@ from autonoma.routers import translate as _translate_router  # noqa: E402
 app.include_router(_translate_router.router)
 
 
-# ── Headless swarm launcher ──────────────────────────────────────────
-
-
-async def _run_swarm_headless(
-    *,
-    goal: str,
-    owner_user_id: str,
-    preset_id: str = "",
-    max_rounds: int = 30,
-    label: str = "",
-) -> int:
-    """Run a swarm without a connected WebSocket session.
-
-    Used by the cron scheduler (and any future backend trigger) so
-    "rebuild the docs every night" doesn't require a tab to be open.
-    The run goes through the same ``_run_swarm`` loop as a foreground
-    job — checkpoints, run summary, replay data, and observability
-    rollups all populate the same tables as a normal run.
-
-    Returns the synthetic session id (always negative) so the caller
-    can correlate logs / replay URLs.
-    """
-    sid = _next_headless_session_id()
-    sess = SessionState(
-        ws=_HeadlessWebSocket(),  # type: ignore[arg-type]
-        session_id=sid,
-        owner_user_id=owner_user_id,
-        room_id=sid,
-    )
-    _sessions[sid] = sess
-
-    # Resolve the policy from the preset if one was named, otherwise
-    # leave it None so the swarm picks up the system default. The
-    # admin-only flag is False — scheduled runs don't get to flip
-    # admin-only knobs even if the operator marked the preset admin-y.
-    policy: HarnessPolicyContent | None = None
-    overrides: dict[str, Any] | None = None
-    if preset_id:
-        try:
-            from autonoma.db.harness_policies import get_policy_by_id
-
-            preset = await get_policy_by_id(preset_id)
-            if preset is not None:
-                policy = HarnessPolicyContent.model_validate(preset.content)
-        except Exception as exc:
-            logger.warning(
-                "[headless] preset %s lookup failed (%s) — using defaults",
-                preset_id,
-                exc,
-            )
-
-    # Use whatever provider config the operator has in settings.
-    llm_config = llm_config_from_settings()
-
-    logger.info(
-        "[headless] launching session=%s owner=%s preset=%s label=%s goal=%r",
-        sid,
-        owner_user_id,
-        preset_id or "default",
-        label or "-",
-        goal[:80],
-    )
-
-    # Tag the event loop's contextvar so bus emits originating in this
-    # run get routed to the right session — exactly mirroring the
-    # foreground ``start`` command's setup.
-    import contextvars as _cv
-
-    ctx = _cv.copy_context()
-    ctx.run(_current_session_id.set, sid)
-
-    async def _runner() -> None:
-        try:
-            await _run_swarm(
-                session_id=sid,
-                goal=goal,
-                max_rounds=max_rounds,
-                llm_config=llm_config,
-                policy=policy,
-                preset_id=preset_id or None,
-                overrides=overrides,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "[headless:%s] unhandled error during _run_swarm "
-                "(preset=%s, max_rounds=%s, goal=%r)",
-                sid,
-                preset_id or None,
-                max_rounds,
-                (goal[:80] + "...") if len(goal) > 80 else goal,
-            )
-        finally:
-            _sessions.pop(sid, None)
-
-    asyncio.create_task(_runner(), context=ctx, name=f"headless-swarm-{sid}")
-    return sid
-
-
-async def _on_schedule_fire_requested(**data: Any) -> None:
-    """Bus handler: a schedule fired → kick off a headless swarm run."""
-    goal = str(data.get("goal") or "").strip()
-    owner = str(data.get("owner") or "").strip()
-    preset_id = str(data.get("preset_id") or "").strip()
-    if not goal or not owner:
-        logger.warning(
-            "[headless] dropping schedule.fire_requested with empty goal/owner"
-        )
-        return
-    sid = await _run_swarm_headless(
-        goal=goal,
-        owner_user_id=owner,
-        preset_id=preset_id,
-        label=f"schedule:{data.get('schedule_id')}",
-    )
-    await bus.emit(
-        "schedule.fire_dispatched",
-        schedule_id=data.get("schedule_id"),
-        session_id=sid,
-        owner=owner,
-    )
+# ── Headless swarm launcher (extracted) ──────────────────────────────
+# Re-export so call sites (``mcp/server.py``, scheduler bus handlers,
+# tests that patch ``api_module._on_schedule_fire_requested``) keep
+# working unchanged.
+from autonoma._api_headless import (  # noqa: E402
+    _HeadlessWebSocket,
+    _next_headless_session_id,
+    _on_schedule_fire_requested,
+    _run_swarm_headless,
+)
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)
