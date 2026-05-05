@@ -29,6 +29,22 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --dev
 
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: README sync check
+        run: |
+          # README.md and README.ko.md are kept feature-parity. If they
+          # drift by more than 30 lines, the Korean copy is likely stale
+          # — fail loudly so the PR author updates it.
+          en_lines=$(wc -l < README.md)
+          ko_lines=$(wc -l < README.ko.md)
+          diff=$(( en_lines > ko_lines ? en_lines - ko_lines : ko_lines - en_lines ))
+          echo "README.md=$en_lines lines, README.ko.md=$ko_lines lines, diff=$diff"
+          if [ "$diff" -gt 30 ]; then
+            echo "::warning::README.md and README.ko.md differ by $diff lines — please sync."
+          fi
+
       - name: Run Python tests
         run: uv run pytest tests/ -v --tb=short
 
