@@ -13,6 +13,7 @@ def test_swarm_init():
 def test_spawn_agent():
     swarm = AgentSwarm()
     agent = swarm.spawn_agent("Coder", "writes code", ["python"], emoji="⚡", color="green")
+    assert agent is not None
     assert agent.name == "Coder"
     assert "Coder" in swarm.agents
     assert agent.persona.emoji == "⚡"
@@ -35,6 +36,7 @@ def test_spawn_positions():
 def test_tick_animations():
     swarm = AgentSwarm()
     agent = swarm.spawn_agent("Mover", "moves", ["moving"])
+    assert agent is not None
     agent.position = Position(x=0, y=0)
     agent.target_position = Position(x=10, y=10)
 
