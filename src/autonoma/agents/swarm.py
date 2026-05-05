@@ -273,8 +273,7 @@ class AgentSwarm:
             legacy_bits: list[str] = []
             if live.runs_survived or live.runs_died:
                 legacy_bits.append(
-                    f"Career: {live.runs_survived} runs survived, "
-                    f"{live.runs_died} runs died."
+                    f"Career: {live.runs_survived} runs survived, {live.runs_died} runs died."
                 )
             if live.past_wills:
                 legacy_bits.append(f"Past last words: {live.past_wills[0]}")
@@ -282,7 +281,9 @@ class AgentSwarm:
                 legacy_bits.append(f"Epitaph on file: {live.past_epitaphs[0]}")
             if legacy_bits:
                 agent.memory.remember(
-                    " ".join(legacy_bits), memory_type="lesson", round_number=0,
+                    " ".join(legacy_bits),
+                    memory_type="lesson",
+                    round_number=0,
                 )
 
     async def _finish_registry(self, project: ProjectState) -> None:
@@ -324,22 +325,23 @@ class AgentSwarm:
                 to_uuid = name_to_uuid.get(to)
                 if not (frm_uuid and to_uuid):
                     continue
-                rel_payload.append({
-                    "from_uuid": frm_uuid,
-                    "to_uuid": to_uuid,
-                    "trust": rel.trust,
-                    "familiarity": rel.familiarity,
-                    "shared_tasks": rel.shared_tasks,
-                    "conflicts": rel.conflicts,
-                    "sentiment": rel.sentiment,
-                    "last_interaction": rel.last_interaction[:500],
-                })
+                rel_payload.append(
+                    {
+                        "from_uuid": frm_uuid,
+                        "to_uuid": to_uuid,
+                        "trust": rel.trust,
+                        "familiarity": rel.familiarity,
+                        "shared_tasks": rel.shared_tasks,
+                        "conflicts": rel.conflicts,
+                        "sentiment": rel.sentiment,
+                        "last_interaction": rel.last_interaction[:500],
+                    }
+                )
 
             # Survivors: every hydrated character whose name wasn't marked dead.
             dead_names = {d["name"] for d in self._deaths if "name" in d}
             survivors = [
-                c.character_uuid for c in self.registry.cached()
-                if c.name not in dead_names
+                c.character_uuid for c in self.registry.cached() if c.name not in dead_names
             ]
             # Map death payloads to the registry's uuids (names can die before
             # their uuid is on the payload).
@@ -347,12 +349,14 @@ class AgentSwarm:
             for d in self._deaths:
                 uid = d.get("character_uuid") or self.registry.resolve_name(d.get("name", ""))
                 if uid:
-                    death_rows.append({
-                        "character_uuid": uid,
-                        "round": d.get("round", self._round),
-                        "cause": d.get("cause", "unknown"),
-                        "epitaph": d.get("epitaph", ""),
-                    })
+                    death_rows.append(
+                        {
+                            "character_uuid": uid,
+                            "round": d.get("round", self._round),
+                            "cause": d.get("cause", "unknown"),
+                            "epitaph": d.get("epitaph", ""),
+                        }
+                    )
             will_rows: list[dict[str, str]] = []
             for w in self._wills:
                 uid = w.get("character_uuid") or self.registry.resolve_name(w.get("name", ""))
@@ -386,6 +390,7 @@ class AgentSwarm:
                     is_retirement_eligible,
                     retire_character,
                 )
+
                 for surv in survivors:
                     uid = surv.get("character_uuid") or self.registry.resolve_name(
                         surv.get("name", "")
@@ -410,6 +415,7 @@ class AgentSwarm:
             try:
                 from autonoma.anomaly import AnomalyDetector
                 from autonoma.context import current_session_id
+
                 sid = current_session_id.get(None) or 0
                 self._anomaly_detector = AnomalyDetector(session_id=int(sid or 0))
             except Exception:
@@ -420,15 +426,14 @@ class AgentSwarm:
             return
         try:
             from autonoma.anomaly import record_anomaly
+
             # Feed current per-agent mood snapshot into the detector so the
             # mood_drift rule has data; speech/file/error events are pushed
             # by their own emit sites.
             for name, ag in self.agents.items():
                 mood = getattr(ag, "mood", None)
                 mood_str = (
-                    mood.value
-                    if mood is not None and hasattr(mood, "value")
-                    else str(mood or "")
+                    mood.value if mood is not None and hasattr(mood, "value") else str(mood or "")
                 )
                 if mood_str:
                     self._anomaly_detector.record_mood(name, mood_str, self._round)
@@ -446,6 +451,7 @@ class AgentSwarm:
         self._memoir_last_round = self._round
         try:
             from autonoma.memory.memoir import compact_memoir, should_compact
+
             for name, ag in self.agents.items():
                 uid = self.registry.resolve_name(name) if self.registry else None
                 if not uid:
@@ -465,6 +471,7 @@ class AgentSwarm:
             return
         try:
             from autonoma.world.retirement import summon_ghost_for_round
+
             ghost = await summon_ghost_for_round(
                 self._round,
                 list(self.agents.keys()),
@@ -507,9 +514,7 @@ class AgentSwarm:
             # the check entirely. Token totals come from each agent's
             # rough char-based estimator (see BaseAgent._decide).
             total_tokens = sum(a.total_tokens for a in self.agents.values())
-            budget_fn = _strategy_lookup(
-                "budget.enforcement", self.policy.budget.enforcement
-            )
+            budget_fn = _strategy_lookup("budget.enforcement", self.policy.budget.enforcement)
             verdict = budget_fn(total_tokens, self.policy.budget.tokens_per_run)
             if verdict == "warn":
                 await bus.emit(
@@ -520,9 +525,9 @@ class AgentSwarm:
                 )
             elif verdict == "stop":
                 logger.info(
-                    "[Swarm] budget cap reached at round %d "
-                    "(used=%d cap=%d) — stopping",
-                    self._round, total_tokens,
+                    "[Swarm] budget cap reached at round %d (used=%d cap=%d) — stopping",
+                    self._round,
+                    total_tokens,
                     self.policy.budget.tokens_per_run,
                 )
                 await bus.emit(
@@ -543,6 +548,7 @@ class AgentSwarm:
             # each get a fair share of synthesis credits.
             if settings.tts_enabled:
                 from autonoma.tts_worker import get_default_worker
+
                 get_default_worker().reset_round_budget()
 
             # ── Tick World Clock ──
@@ -564,7 +570,9 @@ class AgentSwarm:
                     relationships.append({"from": a, "to": b, "trust": rel.trust})
 
             await bus.emit(
-                "swarm.round", round=self._round, max_rounds=max_rounds,
+                "swarm.round",
+                round=self._round,
+                max_rounds=max_rounds,
                 sky=self.world_clock.sky_line,
                 relationships=relationships,
             )
@@ -592,9 +600,7 @@ class AgentSwarm:
                 logger.warning("[Swarm] Director timed out")
                 director_result = {"action": "timeout"}
 
-            exit_fn = _strategy_lookup(
-                "loop.exit_condition", self.policy.loop.exit_condition
-            )
+            exit_fn = _strategy_lookup("loop.exit_condition", self.policy.loop.exit_condition)
             should_exit, reason = exit_fn(project, director_result.get("action"))
             if should_exit:
                 exit_reason = reason
@@ -608,7 +614,8 @@ class AgentSwarm:
             # Skip any agent currently in post-recovery cooldown so the
             # swarm doesn't keep hammering a struggling LLM path.
             other_agents = [
-                a for name, a in self.agents.items()
+                a
+                for name, a in self.agents.items()
                 if name != "Director" and not self._agent_in_cooldown(name)
             ]
             if other_agents:
@@ -632,7 +639,9 @@ class AgentSwarm:
                             error=str(result),
                         )
                         # Ghost creation on 3+ errors
-                        if agent.stats.errors >= 3 and agent.name not in [g.name for g in self.ghost_realm.ghosts]:
+                        if agent.stats.errors >= 3 and agent.name not in [
+                            g.name for g in self.ghost_realm.ghosts
+                        ]:
                             self._create_ghost(agent, "errors")
                     elif isinstance(result, dict):
                         # Track relationships from actions
@@ -934,7 +943,9 @@ class AgentSwarm:
             return self.agents[name]
 
         if len(self.agents) >= settings.max_agents:
-            logger.warning(f"[Swarm] Cannot spawn '{name}': max agents ({settings.max_agents}) reached")
+            logger.warning(
+                f"[Swarm] Cannot spawn '{name}': max agents ({settings.max_agents}) reached"
+            )
             return None
 
         # Match role to a harness for capability enforcement
@@ -976,12 +987,19 @@ class AgentSwarm:
         # Narrate the spawn
         if agent.bones:
             self.narrative.narrate_spawn(
-                name, agent.bones.species, role, agent.bones.rarity, self._round,
+                name,
+                agent.bones.species,
+                role,
+                agent.bones.rarity,
+                self._round,
             )
 
         logger.info(
             "[Swarm] spawned agent name=%s role=%s skills=%d (total=%d)",
-            name, role, len(persona.skills), len(self.agents),
+            name,
+            role,
+            len(persona.skills),
+            len(self.agents),
         )
         return agent
 
@@ -999,6 +1017,7 @@ class AgentSwarm:
 
         # Narrate the event
         from autonoma.world import NarrativeEvent
+
         self.narrative._add(
             NarrativeEvent.WORLD_EVENT,
             f"{event.title} — {event.description}",
@@ -1024,7 +1043,9 @@ class AgentSwarm:
                 if target:
                     target.stats.add_xp(25)
                     await target._set_mood(Mood.EXCITED)
-                    target.memory.remember("Flash of inspiration! Bonus XP!", "success", self._round)
+                    target.memory.remember(
+                        "Flash of inspiration! Bonus XP!", "success", self._round
+                    )
             event.resolved = True
 
         elif event.event_type == WorldEventType.CHALLENGE:
@@ -1057,7 +1078,9 @@ class AgentSwarm:
                 apprentice_name, apprentice = agents_by_level[0]
                 apprentice.stats.add_xp(20)
                 self.relationships.record(mentor_name, apprentice_name, "mentored", positive=True)
-                self.relationships.record(apprentice_name, mentor_name, "learned from", positive=True)
+                self.relationships.record(
+                    apprentice_name, mentor_name, "learned from", positive=True
+                )
             event.resolved = True
 
         elif event.event_type == WorldEventType.TREASURE_FOUND:
@@ -1096,7 +1119,11 @@ class AgentSwarm:
             for other_name in self.agents:
                 if other_name != agent.name and other_name != "Director":
                     self.gossip.observe(
-                        other_name, agent.name, "completed a task", "positive", self._round,
+                        other_name,
+                        agent.name,
+                        "completed a task",
+                        "positive",
+                        self._round,
                     )
             # Narrative
             species = agent.bones.species if agent.bones else "agent"
@@ -1111,7 +1138,11 @@ class AgentSwarm:
             for other_name in self.agents:
                 if other_name != agent.name:
                     self.gossip.observe(
-                        other_name, agent.name, "created a file", "positive", self._round,
+                        other_name,
+                        agent.name,
+                        "created a file",
+                        "positive",
+                        self._round,
                     )
 
     # ── Agent Movement ─────────────────────────────────────────────────
@@ -1155,7 +1186,8 @@ class AgentSwarm:
         """
         keywords = self.CHANNEL_ROLES.get(channel, [])
         matched = [
-            name for name, agent in self.agents.items()
+            name
+            for name, agent in self.agents.items()
             if name != "Director" and any(kw in agent.persona.role.lower() for kw in keywords)
         ]
         if not matched:
@@ -1347,7 +1379,9 @@ class AgentSwarm:
             # spawn learns about it and can move on.
             logger.error(
                 "[Swarm] _on_spawn_request crashed for requester=%s name=%s",
-                requester, name, exc_info=exc,
+                requester,
+                name,
+                exc_info=exc,
             )
             try:
                 await bus.emit(
@@ -1360,7 +1394,8 @@ class AgentSwarm:
             except Exception:  # pragma: no cover — last-ditch
                 logger.exception(
                     "[Swarm] failed to emit agent.spawn_failed for name=%s requester=%s",
-                    name, requester,
+                    name,
+                    requester,
                 )
 
     async def _on_recovery_needed(
@@ -1389,7 +1424,9 @@ class AgentSwarm:
         self._agent_cooldown_until[agent] = now + cooldown_seconds
         logger.warning(
             "[Swarm] agent.recovery_needed for %s (pattern=%s) — cooldown %.0fs",
-            agent, pattern, cooldown_seconds,
+            agent,
+            pattern,
+            cooldown_seconds,
         )
         try:
             await bus.emit(
@@ -1511,6 +1548,7 @@ class AgentSwarm:
             newly_earned = check_achievements(agent.stats, agent_name=name)
             for ach_id in newly_earned:
                 from autonoma.world import ACHIEVEMENTS as ACH
+
                 title = ACH[ach_id]["title"]
                 self.narrative.narrate_achievement(name, title, self._round)
                 logger.info(f"[Achievement] {name} earned '{title}'")
@@ -1520,7 +1558,9 @@ class AgentSwarm:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         loop.create_task(
-                            bus.emit("achievement.earned", agent=name, achievement_id=ach_id, title=title)
+                            bus.emit(
+                                "achievement.earned", agent=name, achievement_id=ach_id, title=title
+                            )
                         )
                 except Exception as _exc:
                     logger.warning(f"[Achievement] Could not emit event for '{title}': {_exc}")
@@ -1529,22 +1569,30 @@ class AgentSwarm:
             if agent.bones:
                 old_species = agent.bones.species
                 evolved_species, evolved_emoji = agent.bones.get_evolved_form(agent.stats.level)
-                if evolved_species != old_species and not hasattr(agent, '_last_evolved_species'):
-                    self.narrative.narrate_evolution(name, old_species, evolved_species, self._round)
+                if evolved_species != old_species and not hasattr(agent, "_last_evolved_species"):
+                    self.narrative.narrate_evolution(
+                        name, old_species, evolved_species, self._round
+                    )
                     agent._last_evolved_species = evolved_species
                     logger.info(f"[Evolution] {name}: {old_species} -> {evolved_species}")
-                elif evolved_species != getattr(agent, '_last_evolved_species', old_species):
+                elif evolved_species != getattr(agent, "_last_evolved_species", old_species):
                     self.narrative.narrate_evolution(
-                        name, getattr(agent, '_last_evolved_species', old_species),
-                        evolved_species, self._round,
+                        name,
+                        getattr(agent, "_last_evolved_species", old_species),
+                        evolved_species,
+                        self._round,
                     )
                     agent._last_evolved_species = evolved_species
 
             # Update leaderboard
             if agent.bones:
                 self.leaderboard.update(
-                    name, agent.stats, agent.bones,
-                    self.relationships, self.gossip, self.debate_arena,
+                    name,
+                    agent.stats,
+                    agent.bones,
+                    self.relationships,
+                    self.gossip,
+                    self.debate_arena,
                 )
 
         # Decay all relationship trust values slightly each round so that
@@ -1562,7 +1610,9 @@ class AgentSwarm:
             if cookie:
                 await bus.emit("fortune.given", agent=name, fortune=cookie.fortune)
                 self.agents[name].memory.remember(
-                    f"🥠 Fortune: {cookie.fortune}", "observation", self._round,
+                    f"🥠 Fortune: {cookie.fortune}",
+                    "observation",
+                    self._round,
                 )
 
     async def pickup_fortune_cookie(self, agent_name: str) -> None:
@@ -1576,7 +1626,9 @@ class AgentSwarm:
         agent.stats.add_xp(5)
         await agent._set_mood(Mood.EXCITED)
         agent.memory.remember(
-            f"🥠 Opened fortune cookie: {cookie.fortune}", "observation", self._round,
+            f"🥠 Opened fortune cookie: {cookie.fortune}",
+            "observation",
+            self._round,
         )
         logger.info(f"[Fortune] {agent_name} picked up cookie: {cookie.fortune}")
         await bus.emit(
@@ -1587,10 +1639,16 @@ class AgentSwarm:
             condition=cookie.condition,
         )
         await bus.emit(
-            "agent.speech", agent=agent_name, text=cookie.fortune, mood="excited",
+            "agent.speech",
+            agent=agent_name,
+            text=cookie.fortune,
+            mood="excited",
         )
         await bus.emit(
-            "agent.emote", agent=agent_name, icon="🥠", ttl_ms=2500,
+            "agent.emote",
+            agent=agent_name,
+            icon="🥠",
+            ttl_ms=2500,
         )
 
     async def _check_fortune(self, agent_name: str, action: str) -> None:
@@ -1602,7 +1660,9 @@ class AgentSwarm:
                 agent.stats.add_xp(cookie.bonus_xp)
                 await agent._set_mood(Mood.EXCITED)
                 agent.memory.remember(
-                    f"Fortune fulfilled! +{cookie.bonus_xp}XP!", "success", self._round,
+                    f"Fortune fulfilled! +{cookie.bonus_xp}XP!",
+                    "success",
+                    self._round,
                 )
                 self.quest_board.check_completion(agent_name, "fortune_fulfilled", self._round)
                 logger.info(f"[Fortune] {agent_name} fulfilled: {cookie.fortune}")
@@ -1647,9 +1707,11 @@ class AgentSwarm:
             agent.memory.remember(f"💤 Dream: {dream.content[:60]}", "observation", self._round)
 
             # Diary entry
-            if hasattr(agent, 'diary') and agent.diary:
+            if hasattr(agent, "diary") and agent.diary:
                 agent.diary.write(
-                    "dream_reflection", agent.mood, self._round,
+                    "dream_reflection",
+                    agent.mood,
+                    self._round,
                     weather=self.world_clock.weather.value,
                     time_of_day="night",
                     dream=dream.content[:40],
@@ -1660,7 +1722,9 @@ class AgentSwarm:
                 self.quest_board.check_completion(name, "prophetic_dream", self._round)
 
             await bus.emit(
-                "agent.dream", agent=name, dream=dream.content[:60],
+                "agent.dream",
+                agent=name,
+                dream=dream.content[:60],
                 dream_type=dream.dream_type,
             )
 
@@ -1674,8 +1738,11 @@ class AgentSwarm:
             if boss:
                 await bus.emit("boss.escaped", name=boss.name)
                 self.multiverse.record_branch(
-                    self._round, f"Boss {boss.name} escaped!",
-                    "Boss got away", "We defeated the boss", "boss_defeated",
+                    self._round,
+                    f"Boss {boss.name} escaped!",
+                    "Boss got away",
+                    "We defeated the boss",
+                    "boss_defeated",
                 )
                 # Phase 4-C: a wipe is just a raid that didn't finish.
                 await self._finalize_raid(base_xp=0, defeated=False)
@@ -1686,20 +1753,31 @@ class AgentSwarm:
                 self.agents[n].stats.level for n in agent_names if n in self.agents
             ) // max(1, len(agent_names))
 
-            boss = self.boss_arena.maybe_spawn_boss(self._round, avg_level, agent_count=len(agent_names))
+            boss = self.boss_arena.maybe_spawn_boss(
+                self._round, avg_level, agent_count=len(agent_names)
+            )
             if boss:
                 # Boss always appears at the centre of the War Room (the
                 # middle HQ room). Percent-space coords the frontend Stage
                 # uses directly.
                 await bus.emit(
-                    "boss.appeared", name=boss.name, species=boss.species,
-                    level=boss.level, hp=boss.max_hp, max_hp=boss.max_hp,
-                    x=52.0, y=54.0,
+                    "boss.appeared",
+                    name=boss.name,
+                    species=boss.species,
+                    level=boss.level,
+                    hp=boss.max_hp,
+                    max_hp=boss.max_hp,
+                    x=52.0,
+                    y=54.0,
                 )
                 self.narrative._add(
-                    __import__("autonoma.world", fromlist=["NarrativeEvent"]).NarrativeEvent.WORLD_EVENT,
+                    __import__(
+                        "autonoma.world", fromlist=["NarrativeEvent"]
+                    ).NarrativeEvent.WORLD_EVENT,
                     f"☠ BOSS APPEARED: {boss.name} the {boss.species}! ☠",
-                    self._round, [], dramatic_weight=4,
+                    self._round,
+                    [],
+                    dramatic_weight=4,
                 )
                 # Phase 4-C: kick off a guild raid if any guild qualifies.
                 await self._maybe_start_raid(boss)
@@ -1712,7 +1790,9 @@ class AgentSwarm:
                 if agent and agent.bones:
                     hp_before = boss.hp
                     result = self.boss_arena.agent_attack(
-                        name, agent.bones.stats, agent.stats.level,
+                        name,
+                        agent.bones.stats,
+                        agent.stats.level,
                     )
                     if result:
                         damage = max(0, hp_before - boss.hp)
@@ -1751,11 +1831,15 @@ class AgentSwarm:
                 )
                 # Phase 4-C: settle the raid and award guild bonus XP.
                 await self._finalize_raid(
-                    base_xp=xp_reward + bonus_xp, defeated=True,
+                    base_xp=xp_reward + bonus_xp,
+                    defeated=True,
                 )
                 self.multiverse.record_branch(
-                    self._round, f"Defeated {boss.name}!",
-                    "Team victory!", "Boss escaped", "boss_defeated",
+                    self._round,
+                    f"Defeated {boss.name}!",
+                    "Team victory!",
+                    "Boss escaped",
+                    "boss_defeated",
                 )
                 # Check quest
                 if self.world_clock.weather.value == "stormy":
@@ -1877,7 +1961,11 @@ class AgentSwarm:
             if not frm_agent or not frm_agent.bones:
                 continue
             letter = self.post_office.check_and_send(
-                frm, to, rel.trust, frm_agent.bones.species, self._round,
+                frm,
+                to,
+                rel.trust,
+                frm_agent.bones.species,
+                self._round,
             )
             if letter:
                 logger.info(f"[Letter] {letter}")
@@ -1897,8 +1985,12 @@ class AgentSwarm:
                 if not friend_agent or not friend_agent.bones:
                     continue
                 trade = self.trading_post.auto_trade(
-                    name, friend, agent.bones.stats, friend_agent.bones.stats,
-                    self.relationships.get(name, friend).trust, self._round,
+                    name,
+                    friend,
+                    agent.bones.stats,
+                    friend_agent.bones.stats,
+                    self.relationships.get(name, friend).trust,
+                    self._round,
                 )
                 if trade:
                     logger.info(f"[Trade] {trade}")
@@ -1911,7 +2003,12 @@ class AgentSwarm:
         emoji = agent.bones.species_emoji if agent.bones else "👻"
         memories = [m.text for m in agent.memory.private[-5:]]
         self.ghost_realm.create_ghost(
-            agent.name, species, emoji, cause, self._round, memories,
+            agent.name,
+            species,
+            emoji,
+            cause,
+            self._round,
+            memories,
         )
         logger.info(f"[Ghost] {agent.name} became a ghost ({cause})")
         # Schedule a small funeral so survivors who knew the deceased
@@ -1936,19 +2033,23 @@ class AgentSwarm:
             if last_thought
             else f"{agent.name} the {species} — fell at R{self._round} to {cause}."
         )
-        self._deaths.append({
-            "character_uuid": uid,
-            "name": agent.name,
-            "round": self._round,
-            "cause": cause,
-            "epitaph": epitaph,
-        })
-        if last_thought:
-            self._wills.append({
+        self._deaths.append(
+            {
                 "character_uuid": uid,
                 "name": agent.name,
-                "text": last_thought,
-            })
+                "round": self._round,
+                "cause": cause,
+                "epitaph": epitaph,
+            }
+        )
+        if last_thought:
+            self._wills.append(
+                {
+                    "character_uuid": uid,
+                    "name": agent.name,
+                    "text": last_thought,
+                }
+            )
 
     async def _hold_funeral(self, deceased_name: str) -> None:
         """Have the deceased's closest survivors deliver brief eulogies.
@@ -2030,6 +2131,7 @@ class AgentSwarm:
                 self.multiverse.record_branch(
                     self._round,
                     f"{agent.name} completed quest '{quest.title}'",
-                    "Quest completed!", "Quest was skipped",
+                    "Quest completed!",
+                    "Quest was skipped",
                     "task_complete",
                 )
