@@ -19,7 +19,6 @@ agent loop.
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
 
 # Lazy-import ``AgentBones``/``Trait`` lazily inside the function to
 # keep this module dependency-light (it'd otherwise pull half of
