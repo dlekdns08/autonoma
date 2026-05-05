@@ -391,15 +391,20 @@ class AgentSwarm:
                     retire_character,
                 )
 
-                for surv in survivors:
-                    uid = surv.get("character_uuid") or self.registry.resolve_name(
-                        surv.get("name", "")
-                    )
+                # Walk every cached character that wasn't marked dead.
+                # ``survivors`` above is a list of bare uuids (str), so it
+                # has no level / runs metadata attached — read it from
+                # the registry's cached LiveCharacter rows instead.
+                for surv in self.registry.cached():
+                    if surv.name in dead_names:
+                        continue
+                    uid = surv.character_uuid
                     if not uid:
                         continue
-                    runs = int(surv.get("runs_survived", 0) or 0)
-                    level = int(surv.get("level", 1) or 1)
-                    if is_retirement_eligible(runs, level):
+                    if is_retirement_eligible(
+                        int(surv.runs_survived or 0),
+                        int(surv.level or 1),
+                    ):
                         await retire_character(
                             uid,
                             project_uuid=getattr(project, "uuid", None),
