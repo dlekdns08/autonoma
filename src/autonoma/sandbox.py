@@ -143,6 +143,7 @@ def _sanitized_env(workdir: Path) -> dict[str, str]:
 
 # ── rlimit preexec (POSIX) ──────────────────────────────────────────────────
 
+
 def _make_preexec(limits: SandboxLimits):
     """Build the ``preexec_fn`` that applies rlimits to the sandboxed child.
 
@@ -192,6 +193,7 @@ def _make_preexec(limits: SandboxLimits):
 
 # ── seatbelt profile (macOS) ────────────────────────────────────────────────
 
+
 def _macos_profile(workdir: Path) -> str:
     # Seatbelt subpath rules compare against the resolved path, so we must
     # use realpath — /var -> /private/var aliasing otherwise denies our writes.
@@ -225,6 +227,7 @@ def _macos_profile(workdir: Path) -> str:
 
 # ── backend detection ───────────────────────────────────────────────────────
 
+
 def _detect_backend() -> str:
     system = platform.system()
     if system == "Darwin" and shutil.which("sandbox-exec"):
@@ -256,6 +259,7 @@ def backend_info() -> dict[str, object]:
 
 # ── core sandbox ────────────────────────────────────────────────────────────
 
+
 class CodeSandbox:
     """Run short, agent-authored programs with filesystem + network isolation.
 
@@ -276,9 +280,15 @@ class CodeSandbox:
     async def _run_locked(self, code: str, language: Language) -> SandboxResult:
         if language == Language.NODE and not shutil.which("node"):
             return SandboxResult(
-                ok=False, exit_code=127, stdout="", stderr="node not installed",
-                duration_sec=0.0, truncated=False, backend=self.backend,
-                language=language.value, error="interpreter_missing",
+                ok=False,
+                exit_code=127,
+                stdout="",
+                stderr="node not installed",
+                duration_sec=0.0,
+                truncated=False,
+                backend=self.backend,
+                language=language.value,
+                error="interpreter_missing",
             )
 
         # ``mkdtemp`` on POSIX creates the directory with mode 0o700
@@ -316,9 +326,15 @@ class CodeSandbox:
                 )
             except FileNotFoundError as exc:
                 return SandboxResult(
-                    ok=False, exit_code=127, stdout="", stderr=str(exc),
-                    duration_sec=0.0, truncated=False, backend=self.backend,
-                    language=language.value, error="spawn_failed",
+                    ok=False,
+                    exit_code=127,
+                    stdout="",
+                    stderr=str(exc),
+                    duration_sec=0.0,
+                    truncated=False,
+                    backend=self.backend,
+                    language=language.value,
+                    error="spawn_failed",
                 )
 
             stdout_bytes, stderr_bytes, timed_out, truncated = await self._collect_output(proc)
@@ -359,11 +375,16 @@ class CodeSandbox:
             "--die-with-parent",
             "--new-session",
             "--unshare-all",
-            "--proc", "/proc",
-            "--dev", "/dev",
-            "--tmpfs", "/tmp",
-            "--tmpfs", "/run",
-            "--tmpfs", "/var",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/run",
+            "--tmpfs",
+            "/var",
         ]
         for ro in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/alternatives", "/etc/ssl"):
             if Path(ro).exists():
@@ -438,6 +459,7 @@ def _kill_group(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
     import signal
+
     try:
         pgid = os.getpgid(proc.pid)
     except (OSError, AttributeError, ProcessLookupError):
