@@ -19,7 +19,6 @@ from collections.abc import AsyncIterator
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 # ``fresh_db`` is shared across the DB-touching test suite (see
 # tests/conftest.py). Only the HTTP client fixture is local to this file.
