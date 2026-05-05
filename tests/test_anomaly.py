@@ -28,7 +28,6 @@ from autonoma.anomaly import (
 from autonoma.db.engine import init_db
 from autonoma.event_bus import bus
 
-
 # ── repetition ────────────────────────────────────────────────────────
 
 
