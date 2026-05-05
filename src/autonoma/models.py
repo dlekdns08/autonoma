@@ -9,7 +9,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ── Agent Identity ─────────────────────────────────────────────────────────
 
 class AgentPersona(BaseModel):
