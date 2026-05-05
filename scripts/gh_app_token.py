@@ -57,13 +57,11 @@ def _build_jwt(app_id: str, private_key_pem: str) -> str:
     try:
         import jwt  # type: ignore
     except ImportError:
-        sys.exit(
-            "ERROR: PyJWT not installed. Run: pip install 'pyjwt[crypto]'"
-        )
+        sys.exit("ERROR: PyJWT not installed. Run: pip install 'pyjwt[crypto]'")
     now = int(time.time())
     payload = {
-        "iat": now - 30,           # clock-skew tolerance
-        "exp": now + 9 * 60,       # 9 minutes (GitHub max is 10)
+        "iat": now - 30,  # clock-skew tolerance
+        "exp": now + 9 * 60,  # 9 minutes (GitHub max is 10)
         "iss": str(app_id),
     }
     return jwt.encode(payload, private_key_pem, algorithm="RS256")
@@ -88,9 +86,7 @@ def _request_installation_token(app_jwt: str, installation_id: str) -> dict[str,
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")
-        sys.exit(
-            f"ERROR: installation token request failed ({e.code}): {detail}"
-        )
+        sys.exit(f"ERROR: installation token request failed ({e.code}): {detail}")
 
 
 def _write_env_file(path: Path, token: str, expires_at: str) -> None:
@@ -121,7 +117,8 @@ def refresh_once(args: argparse.Namespace) -> str:
         _write_env_file(Path(args.env_file), token, expires_at)
         logger.info(
             "wrote installation token to %s (expires %s)",
-            args.env_file, expires_at,
+            args.env_file,
+            expires_at,
         )
     else:
         print(token)
