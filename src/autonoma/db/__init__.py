@@ -6,23 +6,26 @@ happened. Single SQLite file (WAL mode), mounted to a named Docker volume
 in production.
 """
 
-from autonoma.db.engine import get_engine, init_db, dispose_engine
+from autonoma.db.engine import dispose_engine, get_engine, init_db
+from autonoma.db.harness_policies import harness_policies  # noqa: F401
 from autonoma.db.schema import (
-    characters,
-    projects,
-    project_participants,
     character_stats_history,
-    relationships as relationships_table,
-    graveyard,
-    wills,
+    characters,
     famous_quotes,
+    graveyard,
+    project_participants,
+    projects,
+    wills,
 )
+from autonoma.db.schema import (
+    relationships as relationships_table,
+)
+
 # Importing users / harness_policies registers their tables on the shared
 # ``metadata`` so ``init_db``'s ``create_all`` picks them up on first run.
 # Without these imports the tables would only exist if some other code
 # imports the module before ``init_db`` runs.
 from autonoma.db.users import users  # noqa: F401
-from autonoma.db.harness_policies import harness_policies  # noqa: F401
 
 __all__ = [
     "get_engine",
