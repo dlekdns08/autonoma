@@ -4365,32 +4365,14 @@ app.include_router(_voice_router.router)
 # agent profiles, personas, battle, playback, standup, sign language)
 from autonoma.routers import (  # noqa: E402
     agents as _agents_router,
-)
-from autonoma.routers import (
     bridges as _bridges_router,
-)
-from autonoma.routers import (
     live as _live_router,
-)
-from autonoma.routers import (
     personas as _personas_router,
-)
-from autonoma.routers import (
     playback as _playback_router,
-)
-from autonoma.routers import (
     podcast as _podcast_router,
-)
-from autonoma.routers import (
     sign as _sign_router,
-)
-from autonoma.routers import (
     standup as _standup_router,
-)
-from autonoma.routers import (
     swarm_battle as _battle_router,
-)
-from autonoma.routers import (
     vision as _vision_router,
 )
 
