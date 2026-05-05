@@ -15,7 +15,6 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-
 _TOKEN = "test-mcp-token"
 
 
