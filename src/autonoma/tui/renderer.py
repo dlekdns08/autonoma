@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import random
 from collections import deque
 from datetime import datetime
@@ -11,7 +10,6 @@ from typing import Any
 from rich.align import Align
 from rich.console import Console, Group
 from rich.layout import Layout
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -25,11 +23,8 @@ from autonoma.tui.sprites import (
     KAWAII_STATUS_ICONS,
     MOOD_EMOTES,
     get_sprite,
-    render_nametag,
     render_speech_bubble,
 )
-from autonoma.world import ACHIEVEMENTS, Mood
-
 
 # ── Kawaii decorations ────────────────────────────────────────────────────
 
@@ -239,9 +234,9 @@ class AnimatedRenderer:
                 mood_map = {
                     "happy": "(^w^)", "focused": "(>_<)", "frustrated": "(>.<)",
                     "excited": "(*^*)", "tired": "(-_-)", "proud": "(^_~)",
-                    "worried": "(o_o)", "curious": "(?.?)", "determined": "(!!)",
+                    "worried": "(o_o)", "curious": "(?.?)", "determined": "(!_!)",
                     "relaxed": "(~_~)", "inspired": "(!!)", "mischievous": "(>w<)",
-                    "nostalgic": "(._.)","determined": "(!_!)",
+                    "nostalgic": "(._.)",
                 }
                 mood_str = mood_map.get(agent.mood.value, "")
             tag = f"{species_emoji}~{name[:6]}~{level_str}"
