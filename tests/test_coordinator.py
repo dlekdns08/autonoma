@@ -147,7 +147,10 @@ async def test_submit_scores_resolves_match_and_updates_elo(store):
     assert cached is not None
     assert cached.match_id == match_id
     assert len(seen) == 1
-    assert (inv_a.id, inv_b.id)  # silence unused-var lint while keeping the references for future debugging
+    # The two invites must have produced distinct IDs (also keeps the
+    # references live so the side-effecting ``enqueue_match`` calls
+    # above aren't flagged as unused).
+    assert inv_a.id != inv_b.id
 
 
 async def test_concurrent_score_submissions_resolve_once(store):
