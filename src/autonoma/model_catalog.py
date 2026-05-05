@@ -26,8 +26,8 @@ Provider = Literal["anthropic", "openai", "vllm"]
 
 @dataclass(frozen=True)
 class ModelInfo:
-    value: str        # API model ID
-    label: str        # Human-readable label for the dropdown
+    value: str  # API model ID
+    label: str  # Human-readable label for the dropdown
 
     def as_dict(self) -> dict[str, str]:
         return {"value": self.value, "label": self.label}
@@ -38,15 +38,15 @@ class ModelInfo:
 
 _FALLBACK: dict[Provider, list[ModelInfo]] = {
     "anthropic": [
-        ModelInfo("claude-opus-4-7",            "Claude Opus 4.7"),
-        ModelInfo("claude-sonnet-4-6",          "Claude Sonnet 4.6"),
-        ModelInfo("claude-haiku-4-5-20251001",  "Claude Haiku 4.5"),
+        ModelInfo("claude-opus-4-7", "Claude Opus 4.7"),
+        ModelInfo("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ModelInfo("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
     ],
     "openai": [
-        ModelInfo("gpt-4o",       "GPT-4o"),
-        ModelInfo("gpt-4o-mini",  "GPT-4o mini"),
-        ModelInfo("o1",           "o1"),
-        ModelInfo("o1-mini",      "o1-mini"),
+        ModelInfo("gpt-4o", "GPT-4o"),
+        ModelInfo("gpt-4o-mini", "GPT-4o mini"),
+        ModelInfo("o1", "o1"),
+        ModelInfo("o1-mini", "o1-mini"),
     ],
     "vllm": [],
 }
@@ -94,6 +94,7 @@ def _newest_first(models: list[ModelInfo], *, key_order: list[str]) -> list[Mode
     We bias toward IDs that contain ``opus``/``sonnet``/``haiku`` then by the
     family version number embedded in the string (e.g. ``4-7`` > ``4-6``).
     """
+
     def sort_key(m: ModelInfo) -> tuple[int, int, str]:
         family_rank = next(
             (i for i, k in enumerate(key_order) if k in m.value),
@@ -152,7 +153,9 @@ def _list_openai(api_key: str, base_url: str = "") -> list[ModelInfo]:
 
 def _looks_like_chat_model(model_id: str) -> bool:
     lower = model_id.lower()
-    if any(bad in lower for bad in ("embedding", "whisper", "tts", "dall-e", "moderation", "audio")):
+    if any(
+        bad in lower for bad in ("embedding", "whisper", "tts", "dall-e", "moderation", "audio")
+    ):
         return False
     return any(good in lower for good in ("gpt", "o1", "o3", "chat"))
 
