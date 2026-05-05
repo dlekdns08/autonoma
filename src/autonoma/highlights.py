@@ -315,10 +315,7 @@ class HighlightRecorder:
         if not settings.highlights_enabled or not sid:
             return
         title = str(
-            data.get("title")
-            or data.get("name")
-            or data.get("event_type")
-            or "World event"
+            data.get("title") or data.get("name") or data.get("event_type") or "World event"
         )
         self._record(
             session_id=sid,
