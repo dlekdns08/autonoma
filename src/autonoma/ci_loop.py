@@ -17,7 +17,6 @@ from pathlib import Path
 
 from autonoma.config import settings
 
-
 __all__ = ["CIResult", "run_ci_check", "format_fix_task"]
 
 _STDERR_TRIM = 500
