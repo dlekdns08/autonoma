@@ -4365,14 +4365,32 @@ app.include_router(_voice_router.router)
 # agent profiles, personas, battle, playback, standup, sign language)
 from autonoma.routers import (  # noqa: E402
     agents as _agents_router,
+)
+from autonoma.routers import (
     bridges as _bridges_router,
+)
+from autonoma.routers import (
     live as _live_router,
+)
+from autonoma.routers import (
     personas as _personas_router,
+)
+from autonoma.routers import (
     playback as _playback_router,
+)
+from autonoma.routers import (
     podcast as _podcast_router,
+)
+from autonoma.routers import (
     sign as _sign_router,
+)
+from autonoma.routers import (
     standup as _standup_router,
+)
+from autonoma.routers import (
     swarm_battle as _battle_router,
+)
+from autonoma.routers import (
     vision as _vision_router,
 )
 
@@ -4527,18 +4545,44 @@ app.include_router(_vision_router.router)
 # router is cheap.
 from autonoma.routers import (  # noqa: E402
     ab_compare as _ab_compare_router,
+)
+from autonoma.routers import (
     achievements as _achievements_router,
+)
+from autonoma.routers import (
     anomalies as _anomalies_router,
+)
+from autonoma.routers import (
     coordinator as _coordinator_router,
+)
+from autonoma.routers import (
     fingerspell as _fingerspell_router,
+)
+from autonoma.routers import (
     highlights as _highlights_router,
+)
+from autonoma.routers import (
     inspire as _inspire_router,
+)
+from autonoma.routers import (
     live_share as _live_share_router,
+)
+from autonoma.routers import (
     metrics as _metrics_router,
+)
+from autonoma.routers import (
     mocap_live as _mocap_live_router,
+)
+from autonoma.routers import (
     persona_breed as _persona_breed_router,
+)
+from autonoma.routers import (
     quests as _quests_router,
+)
+from autonoma.routers import (
     viewer_betting as _viewer_betting_router,
+)
+from autonoma.routers import (
     voice_consent as _voice_consent_router,
 )
 
