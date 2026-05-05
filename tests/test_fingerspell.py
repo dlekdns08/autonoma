@@ -20,7 +20,6 @@ from autonoma.voice.fingerspell import (
     text_to_jamo,
 )
 
-
 # ── Jamo table sizes ────────────────────────────────────────────────
 
 
