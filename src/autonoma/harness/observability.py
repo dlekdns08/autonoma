@@ -32,6 +32,7 @@ from autonoma.harness.policy import HarnessPolicyContent
 # Populated by ``record_*`` helpers that the swarm/agent call at event
 # time — no bus coupling needed, all callers are in-process.
 
+
 @dataclass
 class _RunMetrics:
     """Mutable accumulator for a single run's harness signals.
@@ -39,6 +40,7 @@ class _RunMetrics:
     All fields are reset by ``reset()``. Thread-safety is not required
     because the swarm loop is single-threaded asyncio.
     """
+
     preset_id: str | None = None
     parse_attempts: int = 0
     parse_failures: int = 0

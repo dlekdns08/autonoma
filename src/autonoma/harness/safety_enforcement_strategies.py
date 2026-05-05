@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 @register("safety.enforcement_level", "strict")
-def _strict(
-    error_count: int, threshold: int, agent_name: str
-) -> dict[str, Any] | None:
+def _strict(error_count: int, threshold: int, agent_name: str) -> dict[str, Any] | None:
     if error_count >= threshold:
         logger.error(
             f"[{agent_name}] circuit breaker tripped "
@@ -51,9 +49,7 @@ def _strict(
 
 
 @register("safety.enforcement_level", "permissive")
-def _permissive(
-    error_count: int, threshold: int, agent_name: str
-) -> dict[str, Any] | None:
+def _permissive(error_count: int, threshold: int, agent_name: str) -> dict[str, Any] | None:
     if error_count >= threshold:
         logger.warning(
             f"[{agent_name}] (permissive) {error_count} consecutive errors "
@@ -63,7 +59,5 @@ def _permissive(
 
 
 @register("safety.enforcement_level", "off")
-def _off(
-    error_count: int, threshold: int, agent_name: str
-) -> dict[str, Any] | None:
+def _off(error_count: int, threshold: int, agent_name: str) -> dict[str, Any] | None:
     return None

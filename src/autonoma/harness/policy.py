@@ -36,12 +36,10 @@ class LoopPolicy(BaseModel):
     max_rounds: int = Field(default=40, ge=10, le=500)
     agent_timeout_s: float = Field(default=90.0, ge=30.0, le=600.0)
     llm_timeout_s: float = Field(default=60.0, ge=15.0, le=300.0)
-    exit_condition: Literal[
-        "all_tasks_done", "director_decides", "max_rounds_only"
-    ] = "all_tasks_done"
-    stall_policy: Literal[
-        "auto_unblock", "wait", "escalate_to_director"
-    ] = "auto_unblock"
+    exit_condition: Literal["all_tasks_done", "director_decides", "max_rounds_only"] = (
+        "all_tasks_done"
+    )
+    stall_policy: Literal["auto_unblock", "wait", "escalate_to_director"] = "auto_unblock"
 
 
 class ActionPolicy(BaseModel):
@@ -53,12 +51,8 @@ class ActionPolicy(BaseModel):
     inbox_size: int = Field(default=50, ge=10, le=500)
     sandbox_wall_time_s: int = Field(default=8, ge=1, le=60)
     sandbox_memory_mb: int = Field(default=256, ge=64, le=2048)
-    json_extraction: Literal[
-        "direct", "fenced_first", "fallback_chain"
-    ] = "fallback_chain"
-    llm_error_handling: Literal[
-        "backoff", "rate_limit_sleep", "abort"
-    ] = "backoff"
+    json_extraction: Literal["direct", "fenced_first", "fallback_chain"] = "fallback_chain"
+    llm_error_handling: Literal["backoff", "rate_limit_sleep", "abort"] = "backoff"
     harness_enforcement: Literal["strict", "permissive", "off"] = "strict"
 
 
@@ -68,12 +62,8 @@ class DecisionPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_parse_retries: int = Field(default=3, ge=0, le=10)
-    on_parse_failure: Literal[
-        "skip_turn", "force_idle", "abort"
-    ] = "skip_turn"
-    message_priority: Literal[
-        "urgency_ordered", "fifo", "round_robin"
-    ] = "urgency_ordered"
+    on_parse_failure: Literal["skip_turn", "force_idle", "abort"] = "skip_turn"
+    message_priority: Literal["urgency_ordered", "fifo", "round_robin"] = "urgency_ordered"
 
 
 class MemoryPolicy(BaseModel):
@@ -85,9 +75,7 @@ class MemoryPolicy(BaseModel):
     max_hindsight_memories: int = Field(default=15, ge=0, le=100)
     tts_chars_per_round: int = Field(default=800, ge=0, le=4000)
     tts_chars_per_session: int = Field(default=20_000, ge=0, le=200_000)
-    summarization: Literal[
-        "none", "tail_window", "rolling_summary"
-    ] = "none"
+    summarization: Literal["none", "tail_window", "rolling_summary"] = "none"
 
 
 class SpawnPolicy(BaseModel):
@@ -97,9 +85,7 @@ class SpawnPolicy(BaseModel):
 
     max_agents: int = Field(default=8, ge=1, le=32)
     cooldown_rounds: int = Field(default=2, ge=0, le=20)
-    approval_mode: Literal[
-        "director_only", "peer_vote", "automatic"
-    ] = "director_only"
+    approval_mode: Literal["director_only", "peer_vote", "automatic"] = "director_only"
 
 
 class RoutingPolicy(BaseModel):
@@ -107,9 +93,7 @@ class RoutingPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    strategy: Literal[
-        "priority", "round_robin", "broadcast"
-    ] = "priority"
+    strategy: Literal["priority", "round_robin", "broadcast"] = "priority"
 
 
 class SafetyPolicy(BaseModel):
@@ -130,9 +114,7 @@ class MoodPolicy(BaseModel):
     weather_affect_probability: float = Field(default=0.3, ge=0.0, le=1.0)
     sentiment_positive_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     sentiment_negative_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
-    transition_strategy: Literal[
-        "sticky", "reactive", "random_walk"
-    ] = "sticky"
+    transition_strategy: Literal["sticky", "reactive", "random_walk"] = "sticky"
 
     @model_validator(mode="after")
     def _positive_above_negative(self) -> "MoodPolicy":
@@ -212,9 +194,7 @@ class SocialPolicy(BaseModel):
     @model_validator(mode="after")
     def _friend_above_rival(self) -> "SocialPolicy":
         if self.friend_trust_threshold <= self.rival_trust_threshold:
-            raise ValueError(
-                "friend_trust_threshold must exceed rival_trust_threshold"
-            )
+            raise ValueError("friend_trust_threshold must exceed rival_trust_threshold")
         return self
 
 
@@ -287,10 +267,7 @@ class HarnessPolicyContent(BaseModel):
         # candidate being voted on plus a quorum of 2 existing voters.
         # With max_agents<=2 the vote is structurally unreachable and
         # new spawns never get approved.
-        if (
-            self.spawn.approval_mode == "peer_vote"
-            and self.spawn.max_agents < 3
-        ):
+        if self.spawn.approval_mode == "peer_vote" and self.spawn.max_agents < 3:
             errors.append(
                 "spawn.approval_mode=peer_vote requires spawn.max_agents "
                 f">= 3 (got {self.spawn.max_agents}); a 2-agent roster "

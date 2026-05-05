@@ -27,9 +27,7 @@ from autonoma.harness.strategies import register
 from autonoma.models import AgentMessage
 
 
-def _recipients_except_sender(
-    msg: AgentMessage, agent_names: list[str]
-) -> list[str]:
+def _recipients_except_sender(msg: AgentMessage, agent_names: list[str]) -> list[str]:
     return [n for n in agent_names if n != msg.sender]
 
 

@@ -64,9 +64,7 @@ def _direct(text: str) -> dict[str, Any]:
     text = text.strip()
     parsed = _parse_direct(text)
     if parsed is None:
-        raise ValueError(
-            f"Could not extract JSON via direct (first 200 chars): {text[:200]}"
-        )
+        raise ValueError(f"Could not extract JSON via direct (first 200 chars): {text[:200]}")
     return parsed
 
 
@@ -80,9 +78,7 @@ def _fenced_first(text: str) -> dict[str, Any]:
         parsed = parser(text)
         if parsed is not None:
             return parsed
-    raise ValueError(
-        f"Could not extract JSON via fenced_first (first 200 chars): {text[:200]}"
-    )
+    raise ValueError(f"Could not extract JSON via fenced_first (first 200 chars): {text[:200]}")
 
 
 @register("action.json_extraction", "fallback_chain")
@@ -96,6 +92,4 @@ def _fallback_chain(text: str) -> dict[str, Any]:
         parsed = parser(text)
         if parsed is not None:
             return parsed
-    raise ValueError(
-        f"Could not extract JSON via fallback_chain (first 200 chars): {text[:200]}"
-    )
+    raise ValueError(f"Could not extract JSON via fallback_chain (first 200 chars): {text[:200]}")

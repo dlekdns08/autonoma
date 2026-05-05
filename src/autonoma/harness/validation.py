@@ -52,18 +52,12 @@ DANGEROUS_COMBOS: list[tuple[str, DangerousComboPredicate]] = [
     (
         "code_execution=disabled + harness_enforcement=off disables both "
         "layers of the safety net — refusing.",
-        lambda c: (
-            c.safety.code_execution == "disabled"
-            and c.action.harness_enforcement == "off"
-        ),
+        lambda c: c.safety.code_execution == "disabled" and c.action.harness_enforcement == "off",
     ),
     (
         "spawn.approval_mode=automatic + safety.enforcement_level=off "
         "removes every gate on uncontrolled agent growth — refusing.",
-        lambda c: (
-            c.spawn.approval_mode == "automatic"
-            and c.safety.enforcement_level == "off"
-        ),
+        lambda c: c.spawn.approval_mode == "automatic" and c.safety.enforcement_level == "off",
     ),
 ]
 
@@ -105,9 +99,7 @@ ADMIN_ONLY_RULES: list[tuple[str, str, AdminOnlyPredicate]] = [
 ]
 
 
-def check_content(
-    content: HarnessPolicyContent, *, is_admin: bool
-) -> list[ValidationIssue]:
+def check_content(content: HarnessPolicyContent, *, is_admin: bool) -> list[ValidationIssue]:
     """Return the list of issues, or an empty list if the policy is OK.
 
     Dangerous combinations are always surfaced. Admin-only rules are
@@ -121,7 +113,5 @@ def check_content(
     if not is_admin:
         for path, msg, predicate in ADMIN_ONLY_RULES:
             if predicate(content):
-                issues.append(
-                    ValidationIssue(path=path, message=msg, admin_only=True)
-                )
+                issues.append(ValidationIssue(path=path, message=msg, admin_only=True))
     return issues

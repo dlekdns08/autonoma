@@ -32,9 +32,7 @@ from autonoma.world import Mood
 
 
 @register("mood.transition_strategy", "sticky")
-def _sticky(
-    current: Mood, action_result: dict[str, Any], rng: random.Random
-) -> Mood:
+def _sticky(current: Mood, action_result: dict[str, Any], rng: random.Random) -> Mood:
     return current
 
 
@@ -50,9 +48,7 @@ _REACTIVE_MAP: dict[str, Mood] = {
 
 
 @register("mood.transition_strategy", "reactive")
-def _reactive(
-    current: Mood, action_result: dict[str, Any], rng: random.Random
-) -> Mood:
+def _reactive(current: Mood, action_result: dict[str, Any], rng: random.Random) -> Mood:
     if action_result.get("error"):
         return Mood.FRUSTRATED
     action = action_result.get("action", "")
@@ -70,9 +66,7 @@ _ADJACENT: tuple[Mood, ...] = (
 
 
 @register("mood.transition_strategy", "random_walk")
-def _random_walk(
-    current: Mood, action_result: dict[str, Any], rng: random.Random
-) -> Mood:
+def _random_walk(current: Mood, action_result: dict[str, Any], rng: random.Random) -> Mood:
     if rng.random() < 0.1:
         return rng.choice(_ADJACENT)
     return current

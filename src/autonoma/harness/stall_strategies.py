@@ -26,9 +26,7 @@ from autonoma.models import Task, TaskStatus
 StallPlan = dict[str, Any]
 
 
-def _dep_is_stale(
-    dep_id: str, task_status_map: dict[str, TaskStatus] | None
-) -> bool:
+def _dep_is_stale(dep_id: str, task_status_map: dict[str, TaskStatus] | None) -> bool:
     """A dep is 'stale' only when we're sure it's not blocking real work:
     either the upstream is ``DONE`` or the ID is orphaned (task deleted,
     never existed). Any live status (``OPEN``/``ASSIGNED``/
@@ -77,10 +75,7 @@ def _auto_unblock(
                     "task": target,
                     "cleared": [],
                 }
-            stale = [
-                d for d in target.depends_on
-                if _dep_is_stale(d, task_status_map)
-            ]
+            stale = [d for d in target.depends_on if _dep_is_stale(d, task_status_map)]
             if stale:
                 # Clear only the stale subset; any live deps stay in
                 # place so the pipeline ordering is respected.
@@ -102,8 +97,7 @@ def _auto_unblock(
     return {
         "action": "escalate",
         "message": (
-            "stalled but no unblock path: no REVIEW tasks, "
-            "no OPEN tasks, or no available agents"
+            "stalled but no unblock path: no REVIEW tasks, no OPEN tasks, or no available agents"
         ),
     }
 

@@ -147,10 +147,7 @@ def _edges_within_group(group_id: str) -> list[dict[str, str]]:
     """Chain nodes within a group head-to-tail so the UI can render a
     single-line flow per group."""
     group_nodes = [n for n in NODES if n.group == group_id]
-    return [
-        {"from": a.id, "to": b.id}
-        for a, b in zip(group_nodes, group_nodes[1:], strict=False)
-    ]
+    return [{"from": a.id, "to": b.id} for a, b in zip(group_nodes, group_nodes[1:], strict=False)]
 
 
 def pipeline_payload() -> dict[str, Any]:
@@ -164,10 +161,7 @@ def pipeline_payload() -> dict[str, Any]:
     for group in GROUPS:
         edges.extend(_edges_within_group(group.id))
     return {
-        "groups": [
-            {"id": g.id, "label": g.label, "description": g.description}
-            for g in GROUPS
-        ],
+        "groups": [{"id": g.id, "label": g.label, "description": g.description} for g in GROUPS],
         "nodes": [
             {
                 "id": n.id,

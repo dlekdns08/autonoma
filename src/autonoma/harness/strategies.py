@@ -102,8 +102,7 @@ def register(section: str, value: str) -> Callable[[StrategyFn], StrategyFn]:
     def deco(fn: StrategyFn) -> StrategyFn:
         if (section, value) not in _REGISTRY:
             raise KeyError(
-                f"unknown strategy slot: '{section}.{value}' "
-                "(check HarnessPolicyContent for typos)"
+                f"unknown strategy slot: '{section}.{value}' (check HarnessPolicyContent for typos)"
             )
         _REGISTRY[(section, value)] = fn
         return fn

@@ -45,8 +45,7 @@ def _strict(agent_name: str, action_type: str, harness: Any) -> bool:
     if not allowed:
         logger.warning(
             f"[{agent_name}] harness '{harness.name}' blocked action "
-            f"'{action_type}'"
-            + (f": {reason}" if reason else "")
+            f"'{action_type}'" + (f": {reason}" if reason else "")
         )
     return allowed
 
