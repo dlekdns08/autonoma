@@ -11,6 +11,7 @@ from typing import Any, Literal
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -24,6 +25,7 @@ class CutsceneStepKind(str, Enum):
 # Per-kind payload shapes. We keep them as flat dicts (rather than a
 # discriminated union) because the frontend timeline editor edits steps
 # generically — it only cares about ``kind`` + ``at_ms`` + ``payload``.
+
 
 class CutsceneStep(BaseModel):
     """A single timed step in a cutscene."""
