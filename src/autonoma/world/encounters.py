@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 @dataclass
 class GhostAgent:
     """A ghost of a retired/crashed agent that lingers and gives hints."""
+
     name: str
     species: str
     species_emoji: str
@@ -31,7 +32,7 @@ class GhostAgent:
     max_appearances: int = 5
 
     def __str__(self) -> str:
-        return f"👻 {self.species_emoji} {self.name} (ghost) — \"{self.last_words}\""
+        return f'👻 {self.species_emoji} {self.name} (ghost) — "{self.last_words}"'
 
     def appear(self) -> str | None:
         """Ghost appears and shares wisdom. Returns hint or None if max appearances reached."""
@@ -40,7 +41,7 @@ class GhostAgent:
         self.appearances += 1
         if self.memories:
             hint = random.choice(self.memories)
-            return f"👻 The ghost of {self.name} whispers: \"{hint}\""
+            return f'👻 The ghost of {self.name} whispers: "{hint}"'
         return f"👻 The ghost of {self.name} watches silently..."
 
     @property
@@ -102,8 +103,10 @@ class GhostRealm:
         lines = ["~*~ GRAVEYARD ~*~", ""]
         for ghost in self.ghosts:
             status = "👻" if not ghost.is_fading else "💀"
-            lines.append(f"  {status} {ghost.species_emoji} {ghost.name} — {ghost.cause_of_death} (R{ghost.round_died})")
-            lines.append(f"    Last words: \"{ghost.last_words}\"")
+            lines.append(
+                f"  {status} {ghost.species_emoji} {ghost.name} — {ghost.cause_of_death} (R{ghost.round_died})"
+            )
+            lines.append(f'    Last words: "{ghost.last_words}"')
         return "\n".join(lines)
 
 
@@ -115,6 +118,7 @@ class GhostRealm:
 @dataclass
 class MultiverseChoice:
     """A decision point that creates a branching timeline."""
+
     round_number: int
     description: str
     chosen_path: str
@@ -201,7 +205,9 @@ class MultiverseEngine:
             lines.append("")
 
         our_score = len([b for b in self.branches if "succeeded" in b.chosen_outcome])
-        lines.append(f"  ~*~ Our timeline scored {our_score}/{len(self.branches)} optimal decisions! ~*~")
+        lines.append(
+            f"  ~*~ Our timeline scored {our_score}/{len(self.branches)} optimal decisions! ~*~"
+        )
 
         return "\n".join(lines)
 

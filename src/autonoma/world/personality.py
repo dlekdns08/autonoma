@@ -79,6 +79,7 @@ def apply_mood_contagion(
 
 class Trait(str, Enum):
     """Personality traits - Big Five inspired, kawaii flavored."""
+
     DILIGENT = "diligent"
     CREATIVE = "creative"
     FRIENDLY = "friendly"
@@ -89,29 +90,52 @@ class Trait(str, Enum):
 # ── Species & Evolution ───────────────────────────────────────────────────
 
 SPECIES = [
-    "cat", "rabbit", "fox", "owl", "bear",
-    "penguin", "hamster", "dog", "panda", "duck",
+    "cat",
+    "rabbit",
+    "fox",
+    "owl",
+    "bear",
+    "penguin",
+    "hamster",
+    "dog",
+    "panda",
+    "duck",
 ]
 
 EVOLVED_SPECIES: dict[str, dict[int, str]] = {
-    "cat":     {5: "tiger", 10: "lion"},
-    "rabbit":  {5: "hare", 10: "jackalope"},
-    "fox":     {5: "wolf", 10: "kitsune"},
-    "owl":     {5: "eagle", 10: "phoenix"},
-    "bear":    {5: "grizzly", 10: "polar bear"},
+    "cat": {5: "tiger", 10: "lion"},
+    "rabbit": {5: "hare", 10: "jackalope"},
+    "fox": {5: "wolf", 10: "kitsune"},
+    "owl": {5: "eagle", 10: "phoenix"},
+    "bear": {5: "grizzly", 10: "polar bear"},
     "penguin": {5: "emperor", 10: "ice dragon"},
     "hamster": {5: "chinchilla", 10: "capybara"},
-    "dog":     {5: "husky", 10: "dire wolf"},
-    "panda":   {5: "red panda", 10: "spirit bear"},
-    "duck":    {5: "swan", 10: "thunderbird"},
+    "dog": {5: "husky", 10: "dire wolf"},
+    "panda": {5: "red panda", 10: "spirit bear"},
+    "duck": {5: "swan", 10: "thunderbird"},
 }
 
 EVOLVED_EMOJIS: dict[str, str] = {
-    "tiger": "🐯", "lion": "🦁", "hare": "🐇", "jackalope": "🦌",
-    "wolf": "🐺", "kitsune": "🦊", "eagle": "🦅", "phoenix": "🔥",
-    "grizzly": "🐻", "polar bear": "❄", "emperor": "🐧", "ice dragon": "🐉",
-    "chinchilla": "🐭", "capybara": "🦫", "husky": "🐕", "dire wolf": "🐺",
-    "red panda": "🐼", "spirit bear": "✨", "swan": "🦢", "thunderbird": "⚡",
+    "tiger": "🐯",
+    "lion": "🦁",
+    "hare": "🐇",
+    "jackalope": "🦌",
+    "wolf": "🐺",
+    "kitsune": "🦊",
+    "eagle": "🦅",
+    "phoenix": "🔥",
+    "grizzly": "🐻",
+    "polar bear": "❄",
+    "emperor": "🐧",
+    "ice dragon": "🐉",
+    "chinchilla": "🐭",
+    "capybara": "🦫",
+    "husky": "🐕",
+    "dire wolf": "🐺",
+    "red panda": "🐼",
+    "spirit bear": "✨",
+    "swan": "🦢",
+    "thunderbird": "⚡",
 }
 
 CATCHPHRASES = {
@@ -128,8 +152,16 @@ CATCHPHRASES = {
 }
 
 SPECIES_EMOJIS = {
-    "cat": "🐱", "rabbit": "🐰", "fox": "🦊", "owl": "🦉", "bear": "🐻",
-    "penguin": "🐧", "hamster": "🐹", "dog": "🐶", "panda": "🐼", "duck": "🦆",
+    "cat": "🐱",
+    "rabbit": "🐰",
+    "fox": "🦊",
+    "owl": "🦉",
+    "bear": "🐻",
+    "penguin": "🐧",
+    "hamster": "🐹",
+    "dog": "🐶",
+    "panda": "🐼",
+    "duck": "🦆",
 }
 
 
@@ -144,6 +176,7 @@ def _mulberry32(seed: int) -> int:
 @dataclass
 class AgentBones:
     """Deterministic identity computed from role hash - never persisted."""
+
     species: str
     species_emoji: str
     catchphrase: str

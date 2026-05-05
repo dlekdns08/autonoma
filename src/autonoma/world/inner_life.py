@@ -52,15 +52,28 @@ DREAM_TEMPLATES = {
 }
 
 DREAM_ITEMS = [
-    "semicolons", "brackets", "functions", "variables", "commits",
-    "pull requests", "tests", "databases", "APIs", "algorithms",
-    "butterflies", "stars", "rainbows", "crystals", "cookies",
+    "semicolons",
+    "brackets",
+    "functions",
+    "variables",
+    "commits",
+    "pull requests",
+    "tests",
+    "databases",
+    "APIs",
+    "algorithms",
+    "butterflies",
+    "stars",
+    "rainbows",
+    "crystals",
+    "cookies",
 ]
 
 
 @dataclass
 class Dream:
     """A dream that an agent experiences at night."""
+
     dreamer: str
     content: str
     dream_type: str  # "prophetic", "nightmare", "peaceful", "surreal"
@@ -153,9 +166,11 @@ class DreamEngine:
 # Agent Diary
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class DiaryEntry:
     """A personal diary entry written by an agent."""
+
     round_number: int
     mood: Mood
     content: str
@@ -164,10 +179,18 @@ class DiaryEntry:
 
     def __str__(self) -> str:
         mood_faces = {
-            "happy": "(^w^)", "focused": "(>_<)", "frustrated": "(>.<)",
-            "excited": "(*^*)", "tired": "(-_-)", "proud": "(^_~)",
-            "worried": "(o_o)", "curious": "(?.?)", "determined": "(!_!)",
-            "relaxed": "(~_~)", "inspired": "(!!)", "mischievous": "(>w<)",
+            "happy": "(^w^)",
+            "focused": "(>_<)",
+            "frustrated": "(>.<)",
+            "excited": "(*^*)",
+            "tired": "(-_-)",
+            "proud": "(^_~)",
+            "worried": "(o_o)",
+            "curious": "(?.?)",
+            "determined": "(!_!)",
+            "relaxed": "(~_~)",
+            "inspired": "(!!)",
+            "mischievous": "(>w<)",
             "nostalgic": "(._.):",
         }
         face = mood_faces.get(self.mood.value, "(._.)") if isinstance(self.mood, Mood) else "(._. )"
@@ -257,17 +280,19 @@ class AgentDiary:
         )
         self.entries.append(entry)
         if len(self.entries) > self.MAX_ENTRIES:
-            self.entries = self.entries[-self.MAX_ENTRIES:]
+            self.entries = self.entries[-self.MAX_ENTRIES :]
         # Mirror the new entry into the searchable index. Imported lazily
         # to avoid pulling the search module into world bootstrap, and
         # never raises — diary writes must not be blocked by indexing.
         try:
             from autonoma.world.diary_search import diary_index
+
             diary_index.add_diary_entry(self.agent_name, entry)
         except Exception:  # pragma: no cover — best-effort
             logger.debug(
                 "diary_index.add_diary_entry failed for agent=%s (best-effort)",
-                self.agent_name, exc_info=True,
+                self.agent_name,
+                exc_info=True,
             )
         return entry
 

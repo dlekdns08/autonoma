@@ -69,20 +69,33 @@ SEASON_EMOJIS = {
 # Weather probabilities per season
 SEASON_WEATHER: dict[Season, list[tuple[Weather, float]]] = {
     Season.SPRING: [
-        (Weather.SUNNY, 0.3), (Weather.CLOUDY, 0.2), (Weather.RAINY, 0.3),
-        (Weather.WINDY, 0.15), (Weather.FOGGY, 0.05),
+        (Weather.SUNNY, 0.3),
+        (Weather.CLOUDY, 0.2),
+        (Weather.RAINY, 0.3),
+        (Weather.WINDY, 0.15),
+        (Weather.FOGGY, 0.05),
     ],
     Season.SUMMER: [
-        (Weather.SUNNY, 0.5), (Weather.CLOUDY, 0.15), (Weather.STORMY, 0.15),
-        (Weather.WINDY, 0.1), (Weather.RAINY, 0.1),
+        (Weather.SUNNY, 0.5),
+        (Weather.CLOUDY, 0.15),
+        (Weather.STORMY, 0.15),
+        (Weather.WINDY, 0.1),
+        (Weather.RAINY, 0.1),
     ],
     Season.AUTUMN: [
-        (Weather.CLOUDY, 0.3), (Weather.RAINY, 0.25), (Weather.WINDY, 0.2),
-        (Weather.FOGGY, 0.15), (Weather.SUNNY, 0.1),
+        (Weather.CLOUDY, 0.3),
+        (Weather.RAINY, 0.25),
+        (Weather.WINDY, 0.2),
+        (Weather.FOGGY, 0.15),
+        (Weather.SUNNY, 0.1),
     ],
     Season.WINTER: [
-        (Weather.SNOWY, 0.35), (Weather.CLOUDY, 0.2), (Weather.STORMY, 0.15),
-        (Weather.WINDY, 0.15), (Weather.SUNNY, 0.1), (Weather.FOGGY, 0.05),
+        (Weather.SNOWY, 0.35),
+        (Weather.CLOUDY, 0.2),
+        (Weather.STORMY, 0.15),
+        (Weather.WINDY, 0.15),
+        (Weather.SUNNY, 0.1),
+        (Weather.FOGGY, 0.05),
     ],
 }
 
@@ -90,7 +103,13 @@ SEASON_WEATHER: dict[Season, list[tuple[Weather, float]]] = {
 class WorldClock:
     """Tracks the passage of time in the agent world."""
 
-    TIMES = [TimeOfDay.DAWN, TimeOfDay.MORNING, TimeOfDay.AFTERNOON, TimeOfDay.EVENING, TimeOfDay.NIGHT]
+    TIMES = [
+        TimeOfDay.DAWN,
+        TimeOfDay.MORNING,
+        TimeOfDay.AFTERNOON,
+        TimeOfDay.EVENING,
+        TimeOfDay.NIGHT,
+    ]
     SEASONS = [Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER]
 
     def __init__(self, seed: int = 42) -> None:

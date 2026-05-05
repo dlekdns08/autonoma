@@ -169,9 +169,7 @@ async def record_ghost_appearance(
     breaks the per-kind filter on the haunting timeline view.
     """
     if kind not in GHOST_KINDS:
-        raise ValueError(
-            f"ghost appearance kind {kind!r} not in {sorted(GHOST_KINDS)}"
-        )
+        raise ValueError(f"ghost appearance kind {kind!r} not in {sorted(GHOST_KINDS)}")
     await init_db()
     engine = get_engine()
     async with engine.begin() as conn:
@@ -223,21 +221,25 @@ async def list_active_ghosts(
     # 1) Pull retired characters, newest first.
     async with engine.connect() as conn:
         char_rows = (
-            await conn.execute(
-                select(
-                    characters.c.character_uuid,
-                    characters.c.name,
-                    characters.c.role,
-                    characters.c.species_emoji,
-                    characters.c.memoir_text,
-                    characters.c.retired_at,
-                    characters.c.last_seen_at,
+            (
+                await conn.execute(
+                    select(
+                        characters.c.character_uuid,
+                        characters.c.name,
+                        characters.c.role,
+                        characters.c.species_emoji,
+                        characters.c.memoir_text,
+                        characters.c.retired_at,
+                        characters.c.last_seen_at,
+                    )
+                    .where(characters.c.retired_at.is_not(None))
+                    .order_by(desc(characters.c.retired_at))
+                    .limit(max(1, int(limit)))
                 )
-                .where(characters.c.retired_at.is_not(None))
-                .order_by(desc(characters.c.retired_at))
-                .limit(max(1, int(limit)))
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
         if not char_rows:
             return []
@@ -249,21 +251,25 @@ async def list_active_ghosts(
         #    elements which we'll never exceed at limit=20.
         uuids = [r["character_uuid"] for r in char_rows]
         appearance_rows = (
-            await conn.execute(
-                select(
-                    ghost_appearances.c.character_uuid,
-                    ghost_appearances.c.kind,
-                    ghost_appearances.c.created_at,
-                )
-                .where(ghost_appearances.c.character_uuid.in_(uuids))
-                # Tie-break on id so multiple rows inserted within the
-                # same SQLite-second still resolve newest-first.
-                .order_by(
-                    desc(ghost_appearances.c.created_at),
-                    desc(ghost_appearances.c.id),
+            (
+                await conn.execute(
+                    select(
+                        ghost_appearances.c.character_uuid,
+                        ghost_appearances.c.kind,
+                        ghost_appearances.c.created_at,
+                    )
+                    .where(ghost_appearances.c.character_uuid.in_(uuids))
+                    # Tie-break on id so multiple rows inserted within the
+                    # same SQLite-second still resolve newest-first.
+                    .order_by(
+                        desc(ghost_appearances.c.created_at),
+                        desc(ghost_appearances.c.id),
+                    )
                 )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
     # Pick latest kind per character_uuid (rows are already newest-first).
     latest_kind: dict[str, str] = {}
@@ -317,20 +323,23 @@ async def summon_ghost_for_round(
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(
-                    characters.c.character_uuid,
-                    characters.c.name,
-                    characters.c.role,
-                    characters.c.species_emoji,
-                    characters.c.memoir_text,
-                    characters.c.rarity,
-                    characters.c.retired_at,
-                    characters.c.last_seen_at,
+            (
+                await conn.execute(
+                    select(
+                        characters.c.character_uuid,
+                        characters.c.name,
+                        characters.c.role,
+                        characters.c.species_emoji,
+                        characters.c.memoir_text,
+                        characters.c.rarity,
+                        characters.c.retired_at,
+                        characters.c.last_seen_at,
+                    ).where(characters.c.retired_at.is_not(None))
                 )
-                .where(characters.c.retired_at.is_not(None))
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
     # Filter out anyone whose name is currently in play.
     active_names = set(current_agents or [])
@@ -338,9 +347,7 @@ async def summon_ghost_for_round(
     if not candidates:
         return None
 
-    weights = [
-        _RARITY_WEIGHTS.get(str(r["rarity"]).lower(), 1.0) for r in candidates
-    ]
+    weights = [_RARITY_WEIGHTS.get(str(r["rarity"]).lower(), 1.0) for r in candidates]
     # ``random.Random.choices`` is the deterministic-friendly weighted
     # picker (uses ``self.random`` internally).
     chosen = rng.choices(candidates, weights=weights, k=1)[0]
@@ -356,7 +363,10 @@ async def summon_ghost_for_round(
 
     logger.info(
         "Ghost summoned for round %s: %s (%s, kind=%s)",
-        round_number, chosen["name"], chosen["rarity"], kind,
+        round_number,
+        chosen["name"],
+        chosen["rarity"],
+        kind,
     )
 
     return GhostRecord(

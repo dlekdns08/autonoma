@@ -32,19 +32,51 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9À-ɏ가-힣]+")
 # heavy stopword filtering hurts more than it helps. Trim aggressively.
 _STOPWORDS: frozenset[str] = frozenset(
     {
-        "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "is",
-        "was", "were", "be", "with", "for", "it", "its", "this", "that",
-        "i", "we", "you", "they", "my", "our", "your", "their",
-        "은", "는", "이", "가", "을", "를", "에", "도", "와", "과",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "is",
+        "was",
+        "were",
+        "be",
+        "with",
+        "for",
+        "it",
+        "its",
+        "this",
+        "that",
+        "i",
+        "we",
+        "you",
+        "they",
+        "my",
+        "our",
+        "your",
+        "their",
+        "은",
+        "는",
+        "이",
+        "가",
+        "을",
+        "를",
+        "에",
+        "도",
+        "와",
+        "과",
     }
 )
 
 
 def _tokenize(text: str) -> list[str]:
     return [
-        t.lower()
-        for t in _TOKEN_RE.findall(text)
-        if len(t) > 1 and t.lower() not in _STOPWORDS
+        t.lower() for t in _TOKEN_RE.findall(text) if len(t) > 1 and t.lower() not in _STOPWORDS
     ]
 
 

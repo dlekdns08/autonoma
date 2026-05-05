@@ -99,6 +99,7 @@ from autonoma.world.personality import (
 # 2. Relationship & Trust Graph
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Relationship:
     trust: float = 0.5
@@ -155,7 +156,9 @@ class RelationshipGraph:
             self._graph[key] = Relationship()
         return self._graph[key]
 
-    def record(self, from_agent: str, to_agent: str, description: str, positive: bool = True) -> None:
+    def record(
+        self, from_agent: str, to_agent: str, description: str, positive: bool = True
+    ) -> None:
         rel = self.get(from_agent, to_agent)
         rel.record_interaction(description, positive)
         _fire_event(
@@ -185,21 +188,17 @@ class RelationshipGraph:
         These are "squad bonus" pairs — agents that trust each other enough
         to earn collaborative perks.
         """
-        return [
-            (frm, to)
-            for (frm, to), rel in self._graph.items()
-            if rel.trust >= threshold
-        ]
+        return [(frm, to) for (frm, to), rel in self._graph.items() if rel.trust >= threshold]
 
     def get_friends(self, agent: str, threshold: float = 0.7) -> list[str]:
         return [
-            to for (frm, to), rel in self._graph.items()
-            if frm == agent and rel.trust >= threshold
+            to for (frm, to), rel in self._graph.items() if frm == agent and rel.trust >= threshold
         ]
 
     def get_rivals(self, agent: str, threshold: float = 0.3) -> list[str]:
         return [
-            to for (frm, to), rel in self._graph.items()
+            to
+            for (frm, to), rel in self._graph.items()
             if frm == agent and rel.trust < threshold and rel.familiarity > 0
         ]
 
@@ -207,10 +206,15 @@ class RelationshipGraph:
         lines = []
         for (frm, to), rel in self._graph.items():
             if frm == agent and rel.familiarity > 0:
-                emoji = "♥" if rel.sentiment == "positive" else "~" if rel.sentiment == "neutral" else "✖"
+                emoji = (
+                    "♥"
+                    if rel.sentiment == "positive"
+                    else "~"
+                    if rel.sentiment == "neutral"
+                    else "✖"
+                )
                 lines.append(
-                    f"  {emoji} {to}: {rel.bond_level} "
-                    f"(trust={rel.trust:.1f}, x{rel.familiarity})"
+                    f"  {emoji} {to}: {rel.bond_level} (trust={rel.trust:.1f}, x{rel.familiarity})"
                 )
         return "\n".join(lines) if lines else "  No relationships yet"
 
@@ -222,6 +226,7 @@ class RelationshipGraph:
 # 3. Two-Layer Memory (proper structural separation)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class MemoryEntry:
     text: str
@@ -230,7 +235,9 @@ class MemoryEntry:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def __str__(self) -> str:
-        icon = {"lesson": "📝", "success": "★", "failure": "✖", "observation": "👁"}.get(self.memory_type, "•")
+        icon = {"lesson": "📝", "success": "★", "failure": "✖", "observation": "👁"}.get(
+            self.memory_type, "•"
+        )
         return f"{icon} [R{self.round_number}] {self.text}"
 
 
@@ -241,6 +248,7 @@ class HindsightNote:
     Ported from the Confucius Code Agent pattern: keyword-indexed notes that
     future sessions can auto-retrieve. Separate from episodic memories.
     """
+
     title: str
     lesson: str
     keywords: list[str]
@@ -306,7 +314,7 @@ class AgentMemory:
                 self.private.sort(
                     key=lambda e: (e.memory_type in ("lesson", "failure"), e.round_number)
                 )
-                self.private = self.private[-self.MAX_PRIVATE_MEMORIES:]
+                self.private = self.private[-self.MAX_PRIVATE_MEMORIES :]
             self._memory_version += 1
         with self._cache_lock:
             self._summary_cache.clear()
@@ -331,7 +339,7 @@ class AgentMemory:
         if len(self.hindsight) > self.MAX_HINDSIGHT_NOTES:
             # Keep most-upvoted notes
             self.hindsight.sort(key=lambda n: (n.upvotes, n.round_number))
-            self.hindsight = self.hindsight[-self.MAX_HINDSIGHT_NOTES:]
+            self.hindsight = self.hindsight[-self.MAX_HINDSIGHT_NOTES :]
         with self._private_lock:
             self._memory_version += 1
         with self._cache_lock:
@@ -485,6 +493,7 @@ class AgentMemory:
 # 4. XP / Level / Evolution / Achievement System
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class AgentStats:
     xp: int = 0
@@ -541,6 +550,7 @@ class AgentStats:
 
 # ── Achievement System (4 tiers: Bronze ☆, Silver ★, Gold ★★, Diamond ★★★) ──
 
+
 class AchievementTier(str, Enum):
     BRONZE = "bronze"
     SILVER = "silver"
@@ -578,7 +588,6 @@ ACHIEVEMENTS: dict[str, dict[str, Any]] = {
         "xp_reward": 5,
         "check": lambda s: s.errors >= 1,
     },
-
     # Silver Tier ★
     "prolific": {
         "title": "Prolific Writer ★",
@@ -622,7 +631,6 @@ ACHIEVEMENTS: dict[str, dict[str, Any]] = {
         "xp_reward": 30,
         "check": lambda s: s.errors >= 3 and s.tasks_completed >= 1,
     },
-
     # Gold Tier ★★
     "veteran": {
         "title": "Veteran Agent ★★",
@@ -652,7 +660,6 @@ ACHIEVEMENTS: dict[str, dict[str, Any]] = {
         "xp_reward": 40,
         "check": lambda s: s.debates_won >= 3,
     },
-
     # Diamond Tier ★★★
     "legendary": {
         "title": "Legendary ★★★",
@@ -753,6 +760,7 @@ def check_achievements(stats: AgentStats, agent_name: str = "") -> list[str]:
 # 5. Guild / Team Formation System
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class GuildRole(str, Enum):
     LEADER = "leader"
     MEMBER = "member"
@@ -763,6 +771,7 @@ class GuildRole(str, Enum):
 @dataclass
 class Guild:
     """A sub-team formed by agents working closely together."""
+
     name: str
     motto: str
     members: dict[str, GuildRole] = field(default_factory=dict)
@@ -785,7 +794,7 @@ class Guild:
         total_trust = 0.0
         pairs = 0
         for i, a in enumerate(names):
-            for b in names[i + 1:]:
+            for b in names[i + 1 :]:
                 total_trust += relationship_graph.get(a, b).trust
                 total_trust += relationship_graph.get(b, a).trust
                 pairs += 2
@@ -833,13 +842,18 @@ class GuildRegistry:
             if name in assigned or self.get_agent_guild(name):
                 continue
             friends = relationship_graph.get_friends(name, threshold=0.6)
-            available_friends = [f for f in friends if f not in assigned and not self.get_agent_guild(f)]
+            available_friends = [
+                f for f in friends if f not in assigned and not self.get_agent_guild(f)
+            ]
 
             if available_friends:
                 guild_name = f"Team {name[:4]}"
                 motto_options = [
-                    "Together we code!", "Stronger together~", "One for all!",
-                    "Dream team!", "Unstoppable force~",
+                    "Together we code!",
+                    "Stronger together~",
+                    "One for all!",
+                    "Dream team!",
+                    "Unstoppable force~",
                 ]
                 motto = random.choice(motto_options)
                 guild = self.create(guild_name, motto, name, round_number)
@@ -857,19 +871,23 @@ class GuildRegistry:
 # 6. Gossip Network
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class GossipItem:
     """A piece of social intelligence shared between agents."""
-    about: str           # Who the gossip is about
-    content: str         # What was observed
-    spreader: str        # Who shared it
+
+    about: str  # Who the gossip is about
+    content: str  # What was observed
+    spreader: str  # Who shared it
     original_observer: str  # Who first saw it
     round_number: int = 0
     spread_count: int = 1
     sentiment: str = "neutral"  # positive/neutral/negative
 
     def __str__(self) -> str:
-        emoji = "♥" if self.sentiment == "positive" else "✖" if self.sentiment == "negative" else "~"
+        emoji = (
+            "♥" if self.sentiment == "positive" else "✖" if self.sentiment == "negative" else "~"
+        )
         return f"{emoji} About {self.about}: {self.content} (from {self.original_observer})"
 
 
@@ -912,7 +930,9 @@ class GossipNetwork:
         for idx, item in enumerate(self.items):
             if len(shared) >= max_items:
                 break
-            if spreader in self._heard_by.get(idx, set()) and listener not in self._heard_by.get(idx, set()):
+            if spreader in self._heard_by.get(idx, set()) and listener not in self._heard_by.get(
+                idx, set()
+            ):
                 self._heard_by[idx].add(listener)
                 item.spread_count += 1
                 shared.append(item)
@@ -935,9 +955,11 @@ class GossipNetwork:
 # 7. Campfire - End-of-round knowledge sharing ritual
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class CampfireStory:
     """A story shared at the campfire - becomes part of collective memory."""
+
     teller: str
     title: str
     content: str
@@ -947,7 +969,7 @@ class CampfireStory:
     reactions: dict[str, str] = field(default_factory=dict)  # agent -> reaction emoji
 
     def __str__(self) -> str:
-        return f"🔥 {self.teller}: \"{self.title}\" - {self.moral}"
+        return f'🔥 {self.teller}: "{self.title}" - {self.moral}'
 
 
 class Campfire:
@@ -999,6 +1021,7 @@ class Campfire:
 # 8. Conflict Resolution / Debate System
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class DebateOutcome(str, Enum):
     PROPOSER_WINS = "proposer_wins"
     OPPONENT_WINS = "opponent_wins"
@@ -1009,6 +1032,7 @@ class DebateOutcome(str, Enum):
 @dataclass
 class Debate:
     """A structured disagreement between two agents."""
+
     topic: str
     proposer: str
     opponent: str
@@ -1091,9 +1115,11 @@ class DebateArena:
 # 9. Reputation Leaderboard
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ReputationScore:
     """Composite reputation score for the leaderboard."""
+
     agent_name: str
     species: str = ""
     level: int = 1
@@ -1194,6 +1220,7 @@ class Leaderboard:
 # 10. Narrative Engine - story text generation
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class NarrativeEvent(str, Enum):
     SPAWN = "spawn"
     TASK_COMPLETE = "task_complete"
@@ -1211,6 +1238,7 @@ class NarrativeEvent(str, Enum):
 @dataclass
 class NarrativeEntry:
     """A story beat in the project's narrative."""
+
     event: NarrativeEvent
     text: str
     round_number: int
@@ -1227,7 +1255,9 @@ class NarrativeEngine:
     def __init__(self) -> None:
         self.chronicle: list[NarrativeEntry] = []
 
-    def narrate_spawn(self, name: str, species: str, role: str, rarity: str, round_number: int) -> str:
+    def narrate_spawn(
+        self, name: str, species: str, role: str, rarity: str, round_number: int
+    ) -> str:
         rarity_text = {
             "legendary": f"A legendary {species} emerges! The ground trembles...",
             "rare": f"A rare {species} appears from the shadows~",
@@ -1236,10 +1266,18 @@ class NarrativeEngine:
         }
         text = rarity_text.get(rarity, f"A {species} appears!")
         text += f" {name} the {role} has arrived!"
-        self._add(NarrativeEvent.SPAWN, text, round_number, [name], dramatic_weight=2 if rarity in ("rare", "legendary") else 1)
+        self._add(
+            NarrativeEvent.SPAWN,
+            text,
+            round_number,
+            [name],
+            dramatic_weight=2 if rarity in ("rare", "legendary") else 1,
+        )
         return text
 
-    def narrate_task_complete(self, agent: str, task_title: str, species: str, round_number: int) -> str:
+    def narrate_task_complete(
+        self, agent: str, task_title: str, species: str, round_number: int
+    ) -> str:
         templates = [
             f"{agent} the {species} triumphantly finishes '{task_title}'!",
             f"With a flourish, {agent} completes '{task_title}'~",
@@ -1259,7 +1297,9 @@ class NarrativeEngine:
         self._add(NarrativeEvent.LEVEL_UP, text, round_number, [agent], dramatic_weight=2)
         return text
 
-    def narrate_evolution(self, agent: str, old_species: str, new_species: str, round_number: int) -> str:
+    def narrate_evolution(
+        self, agent: str, old_species: str, new_species: str, round_number: int
+    ) -> str:
         text = (
             f"~*~*~ EVOLUTION! ~*~*~ "
             f"{agent} the {old_species} evolves into a {new_species}! "
@@ -1285,7 +1325,13 @@ class NarrativeEngine:
             text = f"{debate.opponent} wins the debate about '{debate.topic}'! A surprising twist!"
         else:
             text = f"The debate about '{debate.topic}' ends in compromise. Both sides learn something new~"
-        self._add(NarrativeEvent.DEBATE, text, round_number, [debate.proposer, debate.opponent], dramatic_weight=2)
+        self._add(
+            NarrativeEvent.DEBATE,
+            text,
+            round_number,
+            [debate.proposer, debate.opponent],
+            dramatic_weight=2,
+        )
         return text
 
     def narrate_campfire(self, stories_told: int, agents: list[str], round_number: int) -> str:
@@ -1293,7 +1339,9 @@ class NarrativeEngine:
         self._add(NarrativeEvent.CAMPFIRE, text, round_number, agents, dramatic_weight=2)
         return text
 
-    def narrate_project_complete(self, project_name: str, agents: list[str], round_number: int) -> str:
+    def narrate_project_complete(
+        self, project_name: str, agents: list[str], round_number: int
+    ) -> str:
         text = (
             f"~*~*~ 프로젝트 완료! ~*~*~ "
             f"'{project_name}' 프로젝트가 마무리되었습니다! "
@@ -1311,16 +1359,22 @@ class NarrativeEngine:
         return text
 
     def _add(
-        self, event: NarrativeEvent, text: str, round_number: int,
-        agents: list[str], dramatic_weight: int = 1,
+        self,
+        event: NarrativeEvent,
+        text: str,
+        round_number: int,
+        agents: list[str],
+        dramatic_weight: int = 1,
     ) -> None:
-        self.chronicle.append(NarrativeEntry(
-            event=event,
-            text=text,
-            round_number=round_number,
-            agents_involved=agents,
-            dramatic_weight=dramatic_weight,
-        ))
+        self.chronicle.append(
+            NarrativeEntry(
+                event=event,
+                text=text,
+                round_number=round_number,
+                agents_involved=agents,
+                dramatic_weight=dramatic_weight,
+            )
+        )
 
     def get_chapter(self, round_number: int) -> list[NarrativeEntry]:
         """Get all narrative entries for a specific round."""
@@ -1362,6 +1416,7 @@ class NarrativeEngine:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 11. World Events (expanded with chain reactions)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class WorldEventType(str, Enum):
     REQUIREMENT_CHANGE = "requirement_change"
@@ -1522,6 +1577,7 @@ class WorldEventQueue:
 @dataclass
 class WorldEventLedgerEntry:
     """Immutable record of a processed world event."""
+
     event_type: str
     title: str
     description: str
@@ -1579,12 +1635,10 @@ class WorldEventLedger(WorldEventQueue):
         return self._ledger[-limit:]
 
 
-
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 15. Random Quests / Side Missions
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class QuestStatus(str, Enum):
     ACTIVE = "active"
@@ -1595,6 +1649,7 @@ class QuestStatus(str, Enum):
 @dataclass
 class Quest:
     """A side mission for an agent to complete."""
+
     quest_id: str
     title: str
     description: str
@@ -1757,7 +1812,11 @@ class QuestBoard:
         expired: list[Quest] = []
         for quests in self.active_quests.values():
             for quest in quests:
-                if quest.status == QuestStatus.ACTIVE and quest.round_deadline > 0 and round_number > quest.round_deadline:
+                if (
+                    quest.status == QuestStatus.ACTIVE
+                    and quest.round_deadline > 0
+                    and round_number > quest.round_deadline
+                ):
                     quest.status = QuestStatus.EXPIRED
                     expired.append(quest)
         return expired
@@ -1783,9 +1842,11 @@ class QuestBoard:
 # 16. Trading Post (Skill Point Exchange)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Trade:
     """A skill point trade between two agents."""
+
     trader: str
     receiver: str
     offered_stat: str
@@ -1893,8 +1954,12 @@ class TradingPost:
             return None
 
         trade = self.propose_trade(
-            agent_a, agent_b,
-            a_best, 1, b_best, 1,
+            agent_a,
+            agent_b,
+            a_best,
+            1,
+            b_best,
+            1,
             round_number,
         )
         self.accept_trade(trade)
@@ -1904,6 +1969,7 @@ class TradingPost:
 # ═══════════════════════════════════════════════════════════════════════════════
 # 17. Rival Boss Fight
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class BossPhase(str, Enum):
     APPEARING = "appearing"
@@ -1915,6 +1981,7 @@ class BossPhase(str, Enum):
 @dataclass
 class BossAgent:
     """A rival boss that appears to challenge the team."""
+
     name: str
     species: str
     level: int
@@ -2020,7 +2087,10 @@ class BossArena:
         team_avg_level: int,
         agent_count: int = 1,
     ) -> BossAgent | None:
-        if self.current_boss and self.current_boss.phase in (BossPhase.APPEARING, BossPhase.FIGHTING):
+        if self.current_boss and self.current_boss.phase in (
+            BossPhase.APPEARING,
+            BossPhase.FIGHTING,
+        ):
             return None
         if round_number < self._min_round:
             return None
@@ -2035,7 +2105,9 @@ class BossArena:
         self.current_boss.phase = BossPhase.FIGHTING
         return self.current_boss
 
-    def agent_attack(self, agent_name: str, agent_stats: dict[str, int], agent_level: int) -> str | None:
+    def agent_attack(
+        self, agent_name: str, agent_stats: dict[str, int], agent_level: int
+    ) -> str | None:
         """Agent contributes damage based on their stats."""
         if not self.current_boss or self.current_boss.phase != BossPhase.FIGHTING:
             return None
@@ -2076,9 +2148,11 @@ class BossArena:
 # 18. Love Letters & Hate Mail
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Letter:
     """A letter sent between agents based on their relationship."""
+
     sender: str
     recipient: str
     letter_type: str  # "love", "rivalry", "thank_you", "challenge"
@@ -2087,7 +2161,9 @@ class Letter:
 
     def __str__(self) -> str:
         icons = {"love": "💌", "rivalry": "⚔", "thank_you": "🎁", "challenge": "🗡"}
-        return f"{icons.get(self.letter_type, '✉')} {self.sender} → {self.recipient}: {self.content}"
+        return (
+            f"{icons.get(self.letter_type, '✉')} {self.sender} → {self.recipient}: {self.content}"
+        )
 
 
 LOVE_TEMPLATES = [
@@ -2133,7 +2209,8 @@ class PostOffice:
         """Auto-generate a letter based on relationship trust level."""
         # Already sent a letter this round?
         recent = [
-            letter for letter in self.all_letters
+            letter
+            for letter in self.all_letters
             if letter.sender == sender
             and letter.recipient == recipient
             and letter.round_number == round_number
@@ -2157,7 +2234,9 @@ class PostOffice:
             return None
 
         content = random.choice(templates).format(
-            sender=sender, recipient=recipient, species=sender_species,
+            sender=sender,
+            recipient=recipient,
+            species=sender_species,
         )
         letter = Letter(
             sender=sender,
@@ -2177,12 +2256,21 @@ class PostOffice:
         )
         return letter
 
-    def send_challenge(self, sender: str, recipient: str, sender_species: str, round_number: int) -> Letter:
+    def send_challenge(
+        self, sender: str, recipient: str, sender_species: str, round_number: int
+    ) -> Letter:
         content = random.choice(CHALLENGE_TEMPLATES).format(
-            sender=sender, recipient=recipient, species=sender_species,
+            sender=sender,
+            recipient=recipient,
+            species=sender_species,
         )
-        letter = Letter(sender=sender, recipient=recipient, letter_type="challenge",
-                        content=content, round_number=round_number)
+        letter = Letter(
+            sender=sender,
+            recipient=recipient,
+            letter_type="challenge",
+            content=content,
+            round_number=round_number,
+        )
         self.mailbox.setdefault(recipient, []).append(letter)
         self.all_letters.append(letter)
         _fire_event(
@@ -2207,9 +2295,11 @@ class PostOffice:
 # 19. Fortune Cookies
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class FortuneCookie:
     """A fortune cookie with a prediction and bonus effect."""
+
     recipient: str
     fortune: str
     condition: str  # What fulfills the fortune
@@ -2224,16 +2314,56 @@ class FortuneCookie:
 
 
 FORTUNE_TEMPLATES = [
-    {"fortune": "Create a file today and good luck will follow~", "condition": "create_file", "xp": 20},
-    {"fortune": "Send a message to a friend for double karma!", "condition": "send_message", "xp": 15},
-    {"fortune": "Complete a task before nightfall for bonus XP!", "condition": "complete_task", "xp": 25},
-    {"fortune": "Help someone today and the universe will reward you~", "condition": "request_help", "xp": 20},
-    {"fortune": "A surprise awaits if you survive the next storm...", "condition": "survive_storm", "xp": 30},
-    {"fortune": "Your lucky number is 7. Do 7 things today!", "condition": "seven_actions", "xp": 35},
-    {"fortune": "Share gossip with someone new for a twist of fate!", "condition": "share_gossip", "xp": 15},
-    {"fortune": "Tell a story at the campfire to unlock your potential~", "condition": "tell_story", "xp": 20},
-    {"fortune": "Your bond with a teammate will grow stronger today!", "condition": "strengthen_bond", "xp": 15},
-    {"fortune": "A dream tonight will reveal hidden truths...", "condition": "have_dream", "xp": 10},
+    {
+        "fortune": "Create a file today and good luck will follow~",
+        "condition": "create_file",
+        "xp": 20,
+    },
+    {
+        "fortune": "Send a message to a friend for double karma!",
+        "condition": "send_message",
+        "xp": 15,
+    },
+    {
+        "fortune": "Complete a task before nightfall for bonus XP!",
+        "condition": "complete_task",
+        "xp": 25,
+    },
+    {
+        "fortune": "Help someone today and the universe will reward you~",
+        "condition": "request_help",
+        "xp": 20,
+    },
+    {
+        "fortune": "A surprise awaits if you survive the next storm...",
+        "condition": "survive_storm",
+        "xp": 30,
+    },
+    {
+        "fortune": "Your lucky number is 7. Do 7 things today!",
+        "condition": "seven_actions",
+        "xp": 35,
+    },
+    {
+        "fortune": "Share gossip with someone new for a twist of fate!",
+        "condition": "share_gossip",
+        "xp": 15,
+    },
+    {
+        "fortune": "Tell a story at the campfire to unlock your potential~",
+        "condition": "tell_story",
+        "xp": 20,
+    },
+    {
+        "fortune": "Your bond with a teammate will grow stronger today!",
+        "condition": "strengthen_bond",
+        "xp": 15,
+    },
+    {
+        "fortune": "A dream tonight will reveal hidden truths...",
+        "condition": "have_dream",
+        "xp": 10,
+    },
 ]
 
 
@@ -2289,5 +2419,3 @@ class FortuneCookieJar:
             return None
         cookie.picked_up = True
         return cookie
-
-

@@ -173,9 +173,7 @@ class RaidArena:
         raid_id: str | None = None,
     ) -> GuildRaid:
         if self._active is not None and self._active.phase == RaidPhase.FIGHTING:
-            raise RuntimeError(
-                f"raid already in progress for guild {self._active.guild_name}"
-            )
+            raise RuntimeError(f"raid already in progress for guild {self._active.guild_name}")
         offset = deadline_offset or self.DEFAULT_DEADLINE_OFFSET
         rid = raid_id or f"raid-{current_round}-{guild_name}"
         raid = GuildRaid(

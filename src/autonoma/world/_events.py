@@ -24,6 +24,7 @@ def _fire_event(event_name: str, **kwargs: Any) -> None:
     """
     try:
         from autonoma.event_bus import bus  # noqa: PLC0415
+
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.create_task(bus.emit(event_name, **kwargs))
