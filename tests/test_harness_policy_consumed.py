@@ -31,10 +31,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal, get_args, get_origin
+from typing import Literal, get_origin
 
 from autonoma.harness.policy import HarnessPolicyContent
-
 
 SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "autonoma"
 
