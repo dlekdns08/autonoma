@@ -87,38 +87,48 @@ async def _last_memoir_row(conn, character_uuid: str) -> dict[str, Any] | None:
     """Return the highest-version memoir row for ``character_uuid`` or
     ``None`` if no memoir exists yet."""
     row = (
-        await conn.execute(
-            select(character_memoirs)
-            .where(character_memoirs.c.character_uuid == character_uuid)
-            .order_by(desc(character_memoirs.c.version))
-            .limit(1)
+        (
+            await conn.execute(
+                select(character_memoirs)
+                .where(character_memoirs.c.character_uuid == character_uuid)
+                .order_by(desc(character_memoirs.c.version))
+                .limit(1)
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     return dict(row) if row else None
 
 
-async def _journal_tail(
-    conn, character_uuid: str, after_id: int
-) -> list[dict[str, Any]]:
+async def _journal_tail(conn, character_uuid: str, after_id: int) -> list[dict[str, Any]]:
     """Fetch every journal row for ``character_uuid`` with ``id > after_id``,
     oldest first. Empty list when there's nothing new."""
     rows = (
-        await conn.execute(
-            select(agent_journal)
-            .where(agent_journal.c.character_uuid == character_uuid)
-            .where(agent_journal.c.id > after_id)
-            .order_by(asc(agent_journal.c.id))
+        (
+            await conn.execute(
+                select(agent_journal)
+                .where(agent_journal.c.character_uuid == character_uuid)
+                .where(agent_journal.c.id > after_id)
+                .order_by(asc(agent_journal.c.id))
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     return [dict(r) for r in rows]
 
 
 async def _character_row(conn, character_uuid: str) -> dict[str, Any] | None:
     row = (
-        await conn.execute(
-            select(characters).where(characters.c.character_uuid == character_uuid)
+        (
+            await conn.execute(
+                select(characters).where(characters.c.character_uuid == character_uuid)
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     return dict(row) if row else None
 
 
@@ -168,12 +178,16 @@ async def list_memoir_versions(character_uuid: str) -> list[MemoirRecord]:
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(character_memoirs)
-                .where(character_memoirs.c.character_uuid == character_uuid)
-                .order_by(asc(character_memoirs.c.version))
+            (
+                await conn.execute(
+                    select(character_memoirs)
+                    .where(character_memoirs.c.character_uuid == character_uuid)
+                    .order_by(asc(character_memoirs.c.version))
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     return [_row_to_record(dict(r)) for r in rows]
 
 
@@ -260,9 +274,7 @@ async def compact_memoir(
     try:
         memoir_text = (await llm_client.complete(prompt)).strip()
     except Exception:
-        logger.exception(
-            "memoir.compact: LLM call failed for %s", character_uuid
-        )
+        logger.exception("memoir.compact: LLM call failed for %s", character_uuid)
         raise
 
     if not memoir_text:
@@ -302,10 +314,14 @@ async def compact_memoir(
         new_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
         if new_id is not None:
             inserted = (
-                await conn.execute(
-                    select(character_memoirs).where(character_memoirs.c.id == new_id)
+                (
+                    await conn.execute(
+                        select(character_memoirs).where(character_memoirs.c.id == new_id)
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         else:
             inserted = None
 
@@ -330,7 +346,10 @@ async def compact_memoir(
     )
     logger.info(
         "memoir.compact: character %s → v%d (%d chars, %d source rows)",
-        character_uuid, new_version, len(memoir_text), len(rows),
+        character_uuid,
+        new_version,
+        len(memoir_text),
+        len(rows),
     )
     return record
 

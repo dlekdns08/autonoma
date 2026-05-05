@@ -84,7 +84,9 @@ def _ensure_model() -> object | None:
             logger.info(f"[memory] loading SentenceTransformer model_id={mid}")
             _model = SentenceTransformer(mid)
             _model_id_used = mid
-            logger.info(f"[memory] SentenceTransformer ready (dim={_model.get_sentence_embedding_dimension()})")
+            logger.info(
+                f"[memory] SentenceTransformer ready (dim={_model.get_sentence_embedding_dimension()})"
+            )
         except Exception as exc:
             logger.warning(f"[memory] SentenceTransformer load failed: {exc}")
             _load_failed = True
