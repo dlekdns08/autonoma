@@ -129,18 +129,18 @@ MOOD_BLENDSHAPE_PRESETS: tuple[str, ...] = (
 # values produced by ``autonoma.agents`` Mood enum (lowercased). Any
 # unknown mood collapses to ``Neutral``.
 _MOOD_MAP: dict[str, dict[str, float]] = {
-    "happy":     {"Joy": 1.0},
-    "joyful":    {"Joy": 1.0},
-    "excited":   {"Joy": 0.7, "Fun": 0.6},
-    "fun":       {"Fun": 1.0},
-    "sad":       {"Sorrow": 1.0},
-    "sorrow":    {"Sorrow": 1.0},
-    "angry":     {"Angry": 1.0},
+    "happy": {"Joy": 1.0},
+    "joyful": {"Joy": 1.0},
+    "excited": {"Joy": 0.7, "Fun": 0.6},
+    "fun": {"Fun": 1.0},
+    "sad": {"Sorrow": 1.0},
+    "sorrow": {"Sorrow": 1.0},
+    "angry": {"Angry": 1.0},
     "frustrated": {"Angry": 0.7},
     "surprised": {"Surprised": 1.0},
-    "shocked":   {"Surprised": 1.0},
-    "neutral":   {"Neutral": 1.0},
-    "calm":      {"Neutral": 1.0},
+    "shocked": {"Surprised": 1.0},
+    "neutral": {"Neutral": 1.0},
+    "calm": {"Neutral": 1.0},
 }
 
 
@@ -236,8 +236,13 @@ class VMCBridge:
         return encode_osc_message(
             addr,
             name,
-            float(px), float(py), float(pz),
-            float(rx), float(ry), float(rz), float(rw),
+            float(px),
+            float(py),
+            float(pz),
+            float(rx),
+            float(ry),
+            float(rz),
+            float(rw),
         )
 
     def send_bone(
@@ -294,9 +299,7 @@ class VMCBridge:
                 msgs.append(self._bone_msg("/VMC/Ext/Bone/Pos", bname, pos, rot))  # type: ignore[arg-type]
         if blendshapes:
             for sname, value in blendshapes.items():
-                msgs.append(
-                    encode_osc_message("/VMC/Ext/Blend/Val", sname, float(value))
-                )
+                msgs.append(encode_osc_message("/VMC/Ext/Blend/Val", sname, float(value)))
             msgs.append(encode_osc_message("/VMC/Ext/Blend/Apply"))
         self.flush_bundle(msgs)
 
