@@ -91,6 +91,12 @@ class DirectorAgent(AutonomousAgent):
     5. Declares the project complete
     """
 
+    # Wired by the swarm at construction time (see ``AgentSwarm`` ctor).
+    # Declared here so type checkers can resolve the attributes that
+    # ``_check_for_conflicts`` reads via ``getattr``.
+    _swarm_debate_arena: Any = None
+    _swarm_relationships: Any = None
+
     def __init__(
         self,
         llm_config: LLMConfig | None = None,
