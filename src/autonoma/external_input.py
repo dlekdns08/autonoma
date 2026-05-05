@@ -64,7 +64,7 @@ class ExternalMessage(BaseModel):
 
 class RouteAction(str, Enum):
     INJECTED = "injected"  # delivered as human feedback to an agent
-    VOTED = "voted"        # counted toward an active poll
+    VOTED = "voted"  # counted toward an active poll
     DROPPED_RATE_LIMIT = "dropped_rate_limit"
     DROPPED_NO_SWARM = "dropped_no_swarm"
     DROPPED_BLOCKED_SOURCE = "dropped_blocked_source"
@@ -148,7 +148,7 @@ class ExternalInputRouter:
     DEFAULT_RATE_PER_MIN: dict[SourceKind, int] = {
         "twitch": 6,
         "youtube": 6,
-        "voice": 12,        # voice command bursts come from the room owner
+        "voice": 12,  # voice command bursts come from the room owner
         "slack": 30,
         "discord": 30,
         "webhook": 60,
