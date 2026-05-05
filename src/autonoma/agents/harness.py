@@ -29,6 +29,7 @@ _ALWAYS_ALLOWED_ACTIONS = {"idle", "celebrate"}
 
 class AgentCapability(str, Enum):
     """Actions an agent can perform. Used for allow/deny lists."""
+
     CREATE_FILE = "create_file"
     SEND_MESSAGE = "send_message"
     SPAWN_AGENT = "spawn_agent"
@@ -55,13 +56,16 @@ class AgentHarness:
     - Critical reminders are injected every turn to prevent role drift
     - Output format defines how results are structured
     """
+
     name: str
     role_description: str
     emoji: str = "🤖"
     color: str = "cyan"
 
     # Tool/capability restrictions (dual enforcement: config + prompt)
-    allowed_capabilities: list[AgentCapability] = field(default_factory=lambda: list(AgentCapability))
+    allowed_capabilities: list[AgentCapability] = field(
+        default_factory=lambda: list(AgentCapability)
+    )
     disallowed_capabilities: list[AgentCapability] = field(default_factory=list)
 
     # Skills this harness type specializes in
@@ -100,10 +104,7 @@ class AgentHarness:
         try:
             cap = AgentCapability(action)
         except ValueError:
-            return False, (
-                "unknown action (not a recognized AgentCapability; "
-                "likely an LLM typo)"
-            )
+            return False, ("unknown action (not a recognized AgentCapability; likely an LLM typo)")
         if cap not in self.get_effective_capabilities():
             return False, (
                 "not in allowed_capabilities for this harness "
@@ -145,12 +146,16 @@ class AgentHarness:
         # Failure mode inoculation (from Claude Code's verification agent pattern)
         if self.failure_modes:
             parts.append("=== RECOGNIZE YOUR OWN FAILURE MODES ===")
-            parts.append("You have documented failure patterns. Recognizing them helps you avoid them:")
+            parts.append(
+                "You have documented failure patterns. Recognizing them helps you avoid them:"
+            )
             parts.append("")
             for i, mode in enumerate(self.failure_modes, 1):
                 parts.append(f"{i}. {mode}")
             parts.append("")
-            parts.append("When you catch yourself exhibiting these patterns, STOP and correct course.")
+            parts.append(
+                "When you catch yourself exhibiting these patterns, STOP and correct course."
+            )
             parts.append("")
 
         # Read-only enforcement (dual redundancy from Claude Code)
@@ -160,7 +165,9 @@ class AgentHarness:
             parts.append("- Create or modify files")
             parts.append("- Complete tasks (only review them)")
             parts.append("- Spawn new agents")
-            parts.append("Attempting these actions will fail. Focus on analysis and communication only.")
+            parts.append(
+                "Attempting these actions will fail. Focus on analysis and communication only."
+            )
             parts.append("")
 
         # Capability constraints in prompt (dual enforcement)
@@ -457,15 +464,71 @@ def get_harness(role_hint: str) -> AgentHarness:
         # Director / orchestration — checked first (most distinct)
         ("director", ["director", "manager", "lead", "orchestrat", "coordinat", "supervisor"]),
         # Tester / verification — before coder so "test engineer" → tester
-        ("tester", ["tester", "testing", "test ", "verif", " qa", "quality assur", "validator", "validation", "adversar"]),
+        (
+            "tester",
+            [
+                "tester",
+                "testing",
+                "test ",
+                "verif",
+                " qa",
+                "quality assur",
+                "validator",
+                "validation",
+                "adversar",
+            ],
+        ),
         # Reviewer / critic — "critic", "review", "audit", "inspect", "evaluat"
-        ("reviewer", ["reviewer", "review", "critic", "audit", "inspect", "evaluat", "assess", "judge"]),
+        (
+            "reviewer",
+            ["reviewer", "review", "critic", "audit", "inspect", "evaluat", "assess", "judge"],
+        ),
         # Writer / documentation
-        ("writer", ["writer", "writing", "document", "docs", "readme", "technical writ", "editorial", "content creat", "narrator", "novel"]),
+        (
+            "writer",
+            [
+                "writer",
+                "writing",
+                "document",
+                "docs",
+                "readme",
+                "technical writ",
+                "editorial",
+                "content creat",
+                "narrator",
+                "novel",
+            ],
+        ),
         # Designer / architect — before coder so "design engineer" → designer
-        ("designer", ["designer", "architect", "design", "blueprint", "planner", "system plan", "story architect", "strategist"]),
+        (
+            "designer",
+            [
+                "designer",
+                "architect",
+                "design",
+                "blueprint",
+                "planner",
+                "system plan",
+                "story architect",
+                "strategist",
+            ],
+        ),
         # Coder — broad catch-all for implementation roles
-        ("coder", ["coder", "engineer", "developer", "programmer", "implement", "coding", "backend", "frontend", "fullstack", "builder"]),
+        (
+            "coder",
+            [
+                "coder",
+                "engineer",
+                "developer",
+                "programmer",
+                "implement",
+                "coding",
+                "backend",
+                "frontend",
+                "fullstack",
+                "builder",
+            ],
+        ),
     ]
 
     for harness_name, keywords in keyword_map:
