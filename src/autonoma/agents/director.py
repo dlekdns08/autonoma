@@ -11,18 +11,17 @@ from typing import Any
 
 from autonoma.agents.base import (
     AutonomousAgent,
-    _atomic_claim_task,
     _extract_json,
     get_tasks_lock,
 )
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
-from autonoma.config import settings
 from autonoma.event_bus import bus
-from autonoma.harness import stall_strategies as _stall_strategies  # noqa: F401 — triggers @register
+from autonoma.harness import (
+    stall_strategies as _stall_strategies,  # noqa: F401 — triggers @register
+)
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
 from autonoma.llm import LLMConfig
-from autonoma.tracing import traced_messages_create
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -35,6 +34,7 @@ from autonoma.models import (
     compute_critical_path,
     overdue_tasks,
 )
+from autonoma.tracing import traced_messages_create
 
 logger = logging.getLogger(__name__)
 
