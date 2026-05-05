@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
 
     # ── vLLM (OpenAI-compatible) ──
-    vllm_base_url: str = ""   # e.g. http://localhost:8080/v1
-    vllm_api_key: str = ""    # optional bearer token
+    vllm_base_url: str = ""  # e.g. http://localhost:8080/v1
+    vllm_api_key: str = ""  # optional bearer token
 
     # ── Default provider/model used when admin authenticates ──
     provider: Literal["anthropic", "openai", "vllm"] = "anthropic"
@@ -210,8 +210,8 @@ class Settings(BaseSettings):
     standup_output_dir: Path = Path("./output/standups")
 
     # ── External bridges (feature #8) ──
-    slack_signing_secret: str = ""     # Slack Events API verification
-    discord_webhook_secret: str = ""   # shared secret for inbound Discord
+    slack_signing_secret: str = ""  # Slack Events API verification
+    discord_webhook_secret: str = ""  # shared secret for inbound Discord
 
     # ── Memory RAG (feature #5) ──
     # When True and ``sentence-transformers`` is installed, AgentMemory
@@ -324,6 +324,7 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: object) -> None:
         """Accept bare ANTHROPIC_API_KEY / OPENAI_API_KEY without the AUTONOMA_ prefix."""
         import os
+
         if not self.anthropic_api_key:
             self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not self.openai_api_key:
