@@ -58,12 +58,8 @@ class CutsceneStore:
         # rewriting them — silently coercing ``../etc/passwd`` to
         # ``etcpasswd`` would be a footgun, since two distinct IDs
         # could collide on the same filename.
-        if not cutscene_id or any(
-            not (c.isalnum() or c in "-_") for c in cutscene_id
-        ):
-            raise ValueError(
-                "cutscene_id must contain only alphanumeric, '-', or '_' characters"
-            )
+        if not cutscene_id or any(not (c.isalnum() or c in "-_") for c in cutscene_id):
+            raise ValueError("cutscene_id must contain only alphanumeric, '-', or '_' characters")
         return self._user_dir(owner) / f"{cutscene_id}.json"
 
     # ── Mutating ops ─────────────────────────────────────────────────
@@ -129,7 +125,8 @@ class CutsceneStore:
                     yield Cutscene.model_validate_json(entry.read_text())
                 except Exception:
                     logger.warning(
-                        "[cutscenes] failed to load %s during iter_all", entry,
+                        "[cutscenes] failed to load %s during iter_all",
+                        entry,
                         exc_info=True,
                     )
                     continue
