@@ -170,8 +170,8 @@ class OmniVoiceMlxClient(BaseTTSClient):
 
     def _load_blocking(self) -> None:
         try:
-            from mlx_audio.tts.utils import load_model  # type: ignore[import-not-found]
             import mlx.core as mx  # type: ignore[import-not-found]
+            from mlx_audio.tts.utils import load_model  # type: ignore[import-not-found]
         except ImportError as exc:
             self._load_error = (
                 "mlx_audio package not installed. Run:\n"
