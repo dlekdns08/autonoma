@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from autonoma.dialogue_style import style_speech, funeral_lines
+from autonoma.dialogue_style import funeral_lines, style_speech
 
 
 @dataclass
