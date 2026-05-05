@@ -1,0 +1,40 @@
+# Pre-commit hooks. Install once with ``pre-commit install`` (lives in
+# the dev dep group). Hooks run on staged files only — full-repo
+# enforcement still happens in CI, this is the fast local feedback
+# loop.
+#
+# To run on every file in the repo (e.g. after adding a new hook):
+#   pre-commit run --all-files
+
+repos:
+  # Ruff: lint + format. Mirrors the CI ``ruff check`` / ``ruff format
+  # --check`` steps so local commits never push a fix that CI has to
+  # fail.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # Stock hygiene checks. Cheap to run, catch the common diff noise
+  # (trailing whitespace, missing newline at EOF, accidentally
+  # committed merge markers).
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: check-toml
+
+  # Secret scanning. ``gitleaks`` runs against the diff being committed
+  # (not the whole repo) so it stays fast. Pairs with GitHub's built-in
+  # push protection if enabled in the repo settings.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks

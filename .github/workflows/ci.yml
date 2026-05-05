@@ -29,8 +29,19 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --dev
 
-      - name: Lint (ruff)
+      - name: Lint (ruff check)
         run: uv run ruff check src tests
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check src tests
+
+      - name: Type check (pyright)
+        # Non-blocking for now: pyright in basic mode still catches
+        # high-signal issues, but the legacy 4000-line modules carry
+        # a backlog. Failing here would block every PR until that
+        # backlog is paid down. Tighten to a hard gate once
+        # ``typeCheckingMode`` graduates to ``standard``.
+        run: uv run pyright || true
 
       - name: README sync check
         run: |
@@ -45,8 +56,25 @@ jobs:
             echo "::warning::README.md and README.ko.md differ by $diff lines — please sync."
           fi
 
-      - name: Run Python tests
-        run: uv run pytest tests/ -v --tb=short
+      - name: Run Python tests with coverage
+        run: |
+          uv run pytest tests/ \
+            --cov=src/autonoma \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml:coverage.xml \
+            -v
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f coverage.xml ]; then
+            # Pull the line-rate attribute out of coverage.xml without
+            # adding another dep (jq/python-xml). Surfaces the headline
+            # number in the GitHub Actions summary.
+            rate=$(grep -oE 'line-rate="[0-9.]+"' coverage.xml | head -1 | grep -oE '[0-9.]+')
+            pct=$(awk "BEGIN { printf \"%.1f\", $rate * 100 }")
+            echo "## Coverage: ${pct}%" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -60,6 +88,10 @@ jobs:
       - name: TypeScript check
         working-directory: web
         run: npx tsc --noEmit
+
+      - name: Frontend tests (Vitest)
+        working-directory: web
+        run: npm test
 
       - name: Build frontend
         working-directory: web
