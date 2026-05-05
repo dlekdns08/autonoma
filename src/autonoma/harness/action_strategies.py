@@ -23,7 +23,6 @@ from typing import Any
 
 from autonoma.harness.strategies import register
 
-
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
 
 
