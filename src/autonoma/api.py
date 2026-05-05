@@ -101,6 +101,7 @@ class SessionState:
     The ``swarm`` / ``project`` / ``task`` attributes are read-through
     properties that proxy to the session's room when one exists.
     """
+
     ws: WebSocket
     session_id: int
     llm_config: LLMConfig | None = None
@@ -132,6 +133,7 @@ class SessionState:
     # single WS. Same per-connection scope as the admin guard above.
     failed_join_attempts: int = 0
     last_failed_join_at: float = 0.0
+
     # ── Compatibility shims (read-through to the room) ──
     @property
     def swarm(self) -> Any:
@@ -179,6 +181,7 @@ class RoomState:
     Reusing the int avoids a parallel id space and means existing
     bus-routing code continues to work unchanged.
     """
+
     room_id: int
     owner_session_id: int
     short_code: str
@@ -252,6 +255,7 @@ def _get_rooms_lock() -> asyncio.Lock:
     if _rooms_lock is None:
         _rooms_lock = asyncio.Lock()
     return _rooms_lock
+
 
 # Monotonic session-id source. ``id(ws)`` was the previous source and
 # could alias across connections once the WebSocket object was GC'd and
@@ -511,11 +515,7 @@ async def _resolve_start_policy(
         preset = await get_policy_by_id(preset_id)
         if preset is None:
             return None, "preset not accessible"
-        if (
-            not preset.is_default
-            and user_id is not None
-            and preset.owner_user_id != user_id
-        ):
+        if not preset.is_default and user_id is not None and preset.owner_user_id != user_id:
             return None, "preset not accessible"
         base = preset.content.model_dump(mode="json")
 
@@ -569,9 +569,7 @@ async def _run_swarm(
 
     session = _sessions.get(session_id)
     if session is None:
-        logger.warning(
-            f"[Swarm] session {session_id} vanished before run could start"
-        )
+        logger.warning(f"[Swarm] session {session_id} vanished before run could start")
         return
 
     name = goal.lower().replace(" ", "-")[:40]
@@ -614,6 +612,7 @@ async def _run_swarm(
         # Only intercept events belonging to this session (bus emits have
         # session id on the ContextVar).
         from autonoma.context import current_session_id as _csi
+
         if _csi.get() != session_id:
             return
         path = kwargs.get("path", "")
@@ -623,9 +622,7 @@ async def _run_swarm(
         sess = _sessions.get(session_id)
         if sess is None or sess.project is None:
             return
-        artifact = next(
-            (f for f in sess.project.files if f.path == path), None
-        )
+        artifact = next((f for f in sess.project.files if f.path == path), None)
         if artifact is not None:
             await _insert_file_history(
                 session_id=session_id,
@@ -653,9 +650,7 @@ async def _run_swarm(
                     try:
                         state_json = sess.project.to_json()
                         await _upsert_checkpoint(session_id, current_round, state_json)
-                        logger.debug(
-                            "[checkpoint:%s] saved at round %s", session_id, current_round
-                        )
+                        logger.debug("[checkpoint:%s] saved at round %s", session_id, current_round)
                     except Exception as cp_exc:
                         logger.warning("[checkpoint:%s] failed: %s", session_id, cp_exc)
         except asyncio.CancelledError:
@@ -716,19 +711,14 @@ async def _run_swarm(
 
         # ── Feature 12: persist run summary ──────────────────────────────
         try:
-            tasks_done = sum(
-                1 for t in project.tasks if t.status.value == "done"
-            )
-            tasks_failed = sum(
-                1 for t in project.tasks if t.status.value == "blocked"
-            )
+            tasks_done = sum(1 for t in project.tasks if t.status.value == "done")
+            tasks_failed = sum(1 for t in project.tasks if t.status.value == "blocked")
             import hashlib as _hl
             import json as _json
+
             policy_hash = (
                 _hl.md5(
-                    _json.dumps(
-                        policy.model_dump(mode="json"), sort_keys=True
-                    ).encode()
+                    _json.dumps(policy.model_dump(mode="json"), sort_keys=True).encode()
                 ).hexdigest()
                 if policy is not None
                 else ""
@@ -767,12 +757,11 @@ async def _run_swarm(
         # Passing session_id explicitly avoids reading a ContextVar that
         # may already be cleared by the time the finally-block runs.
         from autonoma.tts_worker import shutdown_worker
+
         shutdown_worker(session_id)
 
 
-def _apply_policy_side_effects(
-    session_id: int, policy: HarnessPolicyContent | None
-) -> None:
+def _apply_policy_side_effects(session_id: int, policy: HarnessPolicyContent | None) -> None:
     """Log the new Group-C policy choices at run start.
 
     The fields themselves already feed observability counters via
@@ -822,9 +811,7 @@ def _start_checkpoint_task(
                 if sess is None or sess.swarm is None:
                     continue
                 agents = (
-                    [a.name for a in sess.swarm.agents.values()]
-                    if shape_variant == "on"
-                    else []
+                    [a.name for a in sess.swarm.agents.values()] if shape_variant == "on" else []
                 )
                 payload = shape_fn(
                     {
@@ -860,9 +847,7 @@ async def _get_snapshot_coalesced(session_id: int) -> dict[str, Any]:
 
     async def _compute() -> dict[str, Any]:
         try:
-            return await asyncio.get_event_loop().run_in_executor(
-                None, _get_snapshot, session_id
-            )
+            return await asyncio.get_event_loop().run_in_executor(None, _get_snapshot, session_id)
         finally:
             _snapshot_tasks.pop(session_id, None)
 
@@ -923,11 +908,13 @@ def _get_snapshot(session_id: int | None) -> dict[str, Any]:
         if hasattr(swarm, "relationships"):
             for (a, b), rel in swarm.relationships._graph.items():
                 if rel.familiarity > 0:
-                    relationships.append({
-                        "from": a,
-                        "to": b,
-                        "trust": rel.trust,
-                    })
+                    relationships.append(
+                        {
+                            "from": a,
+                            "to": b,
+                            "trust": rel.trust,
+                        }
+                    )
 
         status = "finished" if (not swarm._running and project.final_answer) else "running"
 
@@ -948,11 +935,13 @@ def _get_snapshot(session_id: int | None) -> dict[str, Any]:
         cookies: list[dict[str, Any]] = []
         if hasattr(swarm, "fortune_jar"):
             for name, cookie in swarm.fortune_jar.active_fortunes.items():
-                cookies.append({
-                    "recipient": name,
-                    "fortune": cookie.fortune,
-                    "bonus_xp": cookie.bonus_xp,
-                })
+                cookies.append(
+                    {
+                        "recipient": name,
+                        "fortune": cookie.fortune,
+                        "bonus_xp": cookie.bonus_xp,
+                    }
+                )
 
         return {
             "status": status,
@@ -1124,6 +1113,7 @@ async def lifespan(app: FastAPI):
     _log_startup_summary()
     # Live/broadcast: route milestone events to clip-recorder triggers.
     from autonoma.routers.live import register_autoclip_hooks
+
     register_autoclip_hooks()
     warmup_task: asyncio.Task[None] | None = None
     if settings.tts_provider in ("omnivoice", "omnivoice-mlx", "vibevoice"):
@@ -1137,6 +1127,7 @@ async def lifespan(app: FastAPI):
     # fires here (not at module load) so the bus has its handler list
     # initialised in the same event loop the swarm runs on.
     from autonoma.scheduler import scheduler_runner
+
     scheduler_runner.start()
     bus.on("schedule.fire_requested", _on_schedule_fire_requested)
 
@@ -1146,12 +1137,14 @@ async def lifespan(app: FastAPI):
     # VRChat bridge).
     try:
         from autonoma.observability_otel import setup_otel
+
         setup_otel()
     except Exception:
         logger.exception("[startup] OTel setup failed; continuing without it")
 
     try:
         from autonoma.highlights import get_recorder as _get_highlight_recorder
+
         _highlight_recorder = _get_highlight_recorder()
         _highlight_recorder.start()
     except Exception:
@@ -1162,6 +1155,7 @@ async def lifespan(app: FastAPI):
     if getattr(settings, "vmc_bridge_enabled", False):
         try:
             from autonoma.vmc import start_listening_to_bus as _vmc_start
+
             vmc_task = asyncio.create_task(_vmc_start(), name="vmc-bridge")
         except Exception:
             logger.exception("[startup] VMC bridge boot failed; disabling")
@@ -1430,7 +1424,10 @@ async def auth_guest(
         # for any future programmatic handling.
         logger.info(
             "[guest] credential validation failed (provider=%s, model=%s, key_len=%d): %s",
-            provider, model, len(api_key), err_msg,
+            provider,
+            model,
+            len(api_key),
+            err_msg,
         )
         raise HTTPException(
             status_code=http_status.HTTP_401_UNAUTHORIZED,
@@ -1443,7 +1440,9 @@ async def auth_guest(
     now = datetime.now(UTC).isoformat()
     logger.info(
         "[guest] session issued (user_id=%s, provider=%s, model=%s)",
-        user_id, provider, model,
+        user_id,
+        provider,
+        model,
     )
     return {
         "user": {
@@ -1529,9 +1528,7 @@ async def admin_approve_user(
     user_id: str,
     _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
-    await _transition_user(
-        user_id, required_status={"pending"}, new_status="active"
-    )
+    await _transition_user(user_id, required_status={"pending"}, new_status="active")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -1543,9 +1540,7 @@ async def admin_deny_user(
     user_id: str,
     _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
-    await _transition_user(
-        user_id, required_status={"pending"}, new_status="disabled"
-    )
+    await _transition_user(user_id, required_status={"pending"}, new_status="disabled")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -1557,9 +1552,7 @@ async def admin_disable_user(
     user_id: str,
     _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
-    await _transition_user(
-        user_id, required_status={"active"}, new_status="disabled"
-    )
+    await _transition_user(user_id, required_status={"active"}, new_status="disabled")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -1571,9 +1564,7 @@ async def admin_reactivate_user(
     user_id: str,
     _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
-    await _transition_user(
-        user_id, required_status={"disabled"}, new_status="active"
-    )
+    await _transition_user(user_id, required_status={"disabled"}, new_status="active")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
 
@@ -1603,9 +1594,7 @@ def _pydantic_errors_to_fastapi(exc: Any) -> list[dict[str, Any]]:
     return items
 
 
-def _reject_invalid_harness_content(
-    content: HarnessPolicyContent, *, is_admin: bool
-) -> None:
+def _reject_invalid_harness_content(content: HarnessPolicyContent, *, is_admin: bool) -> None:
     """Raise HTTPException when semantic validation rejects ``content``.
 
     Admin-only violations surface as 403 (the caller lacks the role),
@@ -1777,9 +1766,7 @@ async def create_harness_preset(
             detail=[
                 {
                     "loc": ["body", "name"],
-                    "msg": (
-                        f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"
-                    ),
+                    "msg": (f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"),
                     "type": "value_error",
                 }
             ],
@@ -1853,9 +1840,7 @@ async def update_harness_preset(
                 detail=[
                     {
                         "loc": ["body", "name"],
-                        "msg": (
-                            f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"
-                        ),
+                        "msg": (f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"),
                         "type": "value_error",
                     }
                 ],
@@ -1882,14 +1867,10 @@ async def update_harness_preset(
                 status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=_pydantic_errors_to_fastapi(exc),
             )
-        _reject_invalid_harness_content(
-            new_content, is_admin=(user.role == "admin")
-        )
+        _reject_invalid_harness_content(new_content, is_admin=(user.role == "admin"))
 
     try:
-        updated = await update_policy(
-            preset_id, name=new_name, content=new_content
-        )
+        updated = await update_policy(preset_id, name=new_name, content=new_content)
     except ValueError:
         # Defense in depth: the explicit is_default check above should
         # have caught this, but keep the translation in case the helper
@@ -2019,11 +2000,10 @@ def _cleanup_session(session_id: int) -> None:
     _sessions.pop(session_id, None)
     try:
         from autonoma.tts_worker import shutdown_worker
+
         shutdown_worker(session_id)
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning(
-            f"[_cleanup_session:{session_id}] shutdown_worker failed: {exc!r}"
-        )
+        logger.warning(f"[_cleanup_session:{session_id}] shutdown_worker failed: {exc!r}")
 
 
 async def _cancel_session_task(session: SessionState) -> None:
@@ -2052,6 +2032,7 @@ def _generate_short_code() -> str:
     the codes can't be guessed from a sequence.
     """
     import secrets
+
     alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
     for _ in range(20):
         code = "".join(secrets.choice(alphabet) for _ in range(6))
@@ -2136,18 +2117,22 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     try:
         # ── Announce auth + session id on connect ──
         has_admin = bool(settings.admin_password)
-        await ws.send_text(json.dumps({
-            "event": "auth.status",
-            "data": {
-                "requires_auth": True,
-                "has_admin": has_admin,
-                "server_provider": settings.provider if has_admin else None,
-                "server_model": settings.model if has_admin else None,
-                # Every connection gets its own session id; the client must
-                # use it for downloads so file routes are isolated too.
-                "session_id": session.session_id,
-            },
-        }))
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "auth.status",
+                    "data": {
+                        "requires_auth": True,
+                        "has_admin": has_admin,
+                        "server_provider": settings.provider if has_admin else None,
+                        "server_model": settings.model if has_admin else None,
+                        # Every connection gets its own session id; the client must
+                        # use it for downloads so file routes are isolated too.
+                        "session_id": session.session_id,
+                    },
+                }
+            )
+        )
 
         # ── Cookie-based auto-auth ───────────────────────────────────
         # If the WS handshake carried a valid HTTP session cookie, promote
@@ -2183,11 +2168,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         f"(user={cookie_user.username}, role={cookie_user.role}, "
                         f"provider={llm_cfg.provider})"
                     )
-                    await manager.send_to_ws(ws, "auth.success", {
-                        "is_admin": session.is_admin,
-                        "provider": llm_cfg.provider,
-                        "model": llm_cfg.model,
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "auth.success",
+                        {
+                            "is_admin": session.is_admin,
+                            "provider": llm_cfg.provider,
+                            "model": llm_cfg.model,
+                        },
+                    )
 
         # ── Initial state snapshot (always idle for a fresh connection) ──
         snapshot = await _get_snapshot_coalesced(session.session_id)
@@ -2203,17 +2192,23 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             try:
                 msg = json.loads(data)
             except (json.JSONDecodeError, ValueError) as parse_err:
-                logger.warning(
-                    f"[WS:{session.session_id}] Ignored malformed frame: {parse_err}"
+                logger.warning(f"[WS:{session.session_id}] Ignored malformed frame: {parse_err}")
+                await manager.send_to_ws(
+                    ws,
+                    "error",
+                    {
+                        "message": "Malformed command (invalid JSON).",
+                    },
                 )
-                await manager.send_to_ws(ws, "error", {
-                    "message": "Malformed command (invalid JSON).",
-                })
                 continue
             if not isinstance(msg, dict):
-                await manager.send_to_ws(ws, "error", {
-                    "message": "Malformed command (expected JSON object).",
-                })
+                await manager.send_to_ws(
+                    ws,
+                    "error",
+                    {
+                        "message": "Malformed command (expected JSON object).",
+                    },
+                )
                 continue
             cmd = msg.get("command")
 
@@ -2228,55 +2223,66 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     now = time.monotonic()
                     if (
                         session.failed_auth_attempts >= _ADMIN_AUTH_MAX_ATTEMPTS
-                        and (now - session.last_failed_auth_at)
-                        < _ADMIN_AUTH_WINDOW_SECONDS
+                        and (now - session.last_failed_auth_at) < _ADMIN_AUTH_WINDOW_SECONDS
                     ):
                         retry_in = int(
-                            _ADMIN_AUTH_WINDOW_SECONDS
-                            - (now - session.last_failed_auth_at)
+                            _ADMIN_AUTH_WINDOW_SECONDS - (now - session.last_failed_auth_at)
                         )
                         logger.warning(
                             f"[WS:{session.session_id}] Admin auth rate-limited "
                             f"(attempts={session.failed_auth_attempts})"
                         )
-                        await manager.send_to_ws(ws, "auth.failed", {
-                            "message": (
-                                f"너무 많은 시도가 감지되었습니다. "
-                                f"{retry_in}초 뒤에 다시 시도해주세요."
-                            ),
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "auth.failed",
+                            {
+                                "message": (
+                                    f"너무 많은 시도가 감지되었습니다. "
+                                    f"{retry_in}초 뒤에 다시 시도해주세요."
+                                ),
+                            },
+                        )
                         continue
                     # Drop the failure count if the window already expired.
                     if (
                         session.failed_auth_attempts > 0
-                        and (now - session.last_failed_auth_at)
-                        >= _ADMIN_AUTH_WINDOW_SECONDS
+                        and (now - session.last_failed_auth_at) >= _ADMIN_AUTH_WINDOW_SECONDS
                     ):
                         session.failed_auth_attempts = 0
 
                     if not settings.admin_password:
-                        await manager.send_to_ws(ws, "auth.failed", {
-                            "message": "관리자 계정이 서버에 설정되어 있지 않습니다.",
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "auth.failed",
+                            {
+                                "message": "관리자 계정이 서버에 설정되어 있지 않습니다.",
+                            },
+                        )
                     else:
                         # Constant-time comparison — a plain ``!=`` on
                         # strings leaks the password's length and first
                         # mismatching byte via timing.
                         submitted = msg.get("password") or ""
-                        if not hmac.compare_digest(
-                            str(submitted), settings.admin_password
-                        ):
+                        if not hmac.compare_digest(str(submitted), settings.admin_password):
                             session.failed_auth_attempts += 1
                             session.last_failed_auth_at = now
-                            await manager.send_to_ws(ws, "auth.failed", {
-                                "message": "관리자 비밀번호가 올바르지 않습니다.",
-                            })
+                            await manager.send_to_ws(
+                                ws,
+                                "auth.failed",
+                                {
+                                    "message": "관리자 비밀번호가 올바르지 않습니다.",
+                                },
+                            )
                         else:
                             llm_cfg = _build_admin_llm_config()
                             if llm_cfg is None:
-                                await manager.send_to_ws(ws, "auth.failed", {
-                                    "message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.",
-                                })
+                                await manager.send_to_ws(
+                                    ws,
+                                    "auth.failed",
+                                    {
+                                        "message": "서버에 API 키가 설정되어 있지 않습니다. 관리자에게 문의하세요.",
+                                    },
+                                )
                             else:
                                 session.failed_auth_attempts = 0
                                 session.llm_config = llm_cfg
@@ -2285,11 +2291,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                                     f"[WS:{session.session_id}] Admin authenticated "
                                     f"(provider={llm_cfg.provider})"
                                 )
-                                await manager.send_to_ws(ws, "auth.success", {
-                                    "is_admin": True,
-                                    "provider": llm_cfg.provider,
-                                    "model": llm_cfg.model,
-                                })
+                                await manager.send_to_ws(
+                                    ws,
+                                    "auth.success",
+                                    {
+                                        "is_admin": True,
+                                        "provider": llm_cfg.provider,
+                                        "model": llm_cfg.model,
+                                    },
+                                )
 
                 elif auth_type == "user":
                     provider = msg.get("provider", "anthropic")
@@ -2308,9 +2318,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         error = "vLLM 서버 URL을 입력해주세요."
 
                     if error:
-                        logger.info(
-                            f"[WS:{session.session_id}] User auth rejected: {error}"
-                        )
+                        logger.info(f"[WS:{session.session_id}] User auth rejected: {error}")
                         await manager.send_to_ws(ws, "auth.failed", {"message": error})
                     else:
                         # Only carry base_url when the provider actually uses it.
@@ -2333,15 +2341,23 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             f"key_len={len(api_key)}, base_url="
                             f"{effective_base_url or '(n/a)'})"
                         )
-                        await manager.send_to_ws(ws, "auth.success", {
-                            "is_admin": False,
-                            "provider": provider,
-                            "model": model,
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "auth.success",
+                            {
+                                "is_admin": False,
+                                "provider": provider,
+                                "model": model,
+                            },
+                        )
                 else:
-                    await manager.send_to_ws(ws, "auth.failed", {
-                        "message": "인증 방식이 올바르지 않습니다 (admin 또는 user).",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "auth.failed",
+                        {
+                            "message": "인증 방식이 올바르지 않습니다 (admin 또는 user).",
+                        },
+                    )
 
             # ── get_snapshot ──────────────────────────────────────────
             elif cmd == "get_snapshot":
@@ -2351,20 +2367,32 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             # ── start ─────────────────────────────────────────────────
             elif cmd == "start":
                 if session.llm_config is None:
-                    await manager.send_to_ws(ws, "auth.required", {
-                        "message": "스웜을 시작하려면 먼저 로그인해주세요.",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "auth.required",
+                        {
+                            "message": "스웜을 시작하려면 먼저 로그인해주세요.",
+                        },
+                    )
                     continue
 
                 goal = msg.get("goal", "").strip()
                 if not goal:
-                    await manager.send_to_ws(ws, "error", {
-                        "message": "Goal is required",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "error",
+                        {
+                            "message": "Goal is required",
+                        },
+                    )
                 elif session.task is not None and not session.task.done():
-                    await manager.send_to_ws(ws, "error", {
-                        "message": "Swarm is already running in this session",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "error",
+                        {
+                            "message": "Swarm is already running in this session",
+                        },
+                    )
                 else:
                     max_rounds = msg.get("max_rounds", 30)
 
@@ -2379,9 +2407,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         is_admin=session.is_admin,
                     )
                     if policy_err is not None:
-                        await manager.send_to_ws(ws, "error", {
-                            "message": policy_err,
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "error",
+                            {
+                                "message": policy_err,
+                            },
+                        )
                         continue
 
                     # Materialize a real room so other viewers can join via
@@ -2409,10 +2441,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         ),
                         context=ctx,
                     )
-                    await manager.send_to_ws(ws, "swarm.starting", {
-                        "goal": goal,
-                        "room_code": room.short_code,
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "swarm.starting",
+                        {
+                            "goal": goal,
+                            "room_code": room.short_code,
+                        },
+                    )
 
             # ── join_room ─────────────────────────────────────────────
             # Other viewers attach to an already-running swarm by short
@@ -2430,31 +2466,45 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     session.failed_join_attempts >= _JOIN_ROOM_MAX_ATTEMPTS
                     and (_now - session.last_failed_join_at) < _JOIN_ROOM_WINDOW_SECONDS
                 ):
-                    await manager.send_to_ws(ws, "room.join_failed", {
-                        "message": "Too many join attempts. Wait a moment and try again.",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "room.join_failed",
+                        {
+                            "message": "Too many join attempts. Wait a moment and try again.",
+                        },
+                    )
                 elif not code:
-                    await manager.send_to_ws(ws, "room.join_failed", {
-                        "message": "Room code required.",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "room.join_failed",
+                        {
+                            "message": "Room code required.",
+                        },
+                    )
                 else:
                     target_room_id = _short_codes.get(code)
-                    target_room = (
-                        _rooms.get(target_room_id) if target_room_id else None
-                    )
+                    target_room = _rooms.get(target_room_id) if target_room_id else None
                     if target_room is None:
                         # Bump the failure counter so brute-forcers hit
                         # the throttle quickly. ``last_failed_join_at``
                         # establishes the window's right edge.
                         session.failed_join_attempts += 1
                         session.last_failed_join_at = _now
-                        await manager.send_to_ws(ws, "room.join_failed", {
-                            "message": "Room not found or already ended.",
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "room.join_failed",
+                            {
+                                "message": "Room not found or already ended.",
+                            },
+                        )
                     elif target_room_id == session.session_id:
-                        await manager.send_to_ws(ws, "room.join_failed", {
-                            "message": "You're already the host of this room.",
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "room.join_failed",
+                            {
+                                "message": "You're already the host of this room.",
+                            },
+                        )
                     else:
                         # Successful join — reset the counter so a user
                         # who joins a room legitimately isn't penalised
@@ -2474,10 +2524,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         # has no other viewers so this is a no-op there.
                         prev_room_id = session.room_id
                         session.room_id = target_room_id
-                        await manager.send_to_ws(ws, "room.joined", {
-                            "code": code,
-                            "is_owner": False,
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "room.joined",
+                            {
+                                "code": code,
+                                "is_owner": False,
+                            },
+                        )
                         # Send the pre-fetched snapshot immediately after
                         # join confirmation so the client can render the
                         # current scene before the live event stream starts.
@@ -2526,6 +2580,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if kind not in ("cursor", "sticker"):
                     pass
                 else:
+
                     def _clamp(v: object) -> float:
                         try:
                             f = float(v)  # type: ignore[arg-type]
@@ -2541,10 +2596,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     payload = {
                         "kind": kind,
                         "viewerId": sender_id[:64],
-                        "displayName": (
-                            session.display_name
-                            or str(msg.get("displayName") or "")
-                        )[:32],
+                        "displayName": (session.display_name or str(msg.get("displayName") or ""))[
+                            :32
+                        ],
                         "x": _clamp(msg.get("x")),
                         "y": _clamp(msg.get("y")),
                     }
@@ -2566,9 +2620,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await _cancel_session_task(session)
                 session.swarm = None
                 session.project = None
-                logger.info(
-                    f"[WS:{session.session_id}] Session reset — returning to idle"
-                )
+                logger.info(f"[WS:{session.session_id}] Session reset — returning to idle")
                 await manager.send_to_ws(ws, "swarm.reset", {})
                 await manager.send_to_ws(
                     ws, "snapshot", await _get_snapshot_coalesced(session.session_id)
@@ -2595,10 +2647,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             f"pickup_fortune_cookie race (swarm stale): {e!r}"
                         )
                     except Exception as e:
-                        logger.error(
-                            f"[WS:{session.session_id}] "
-                            f"Failed to pickup cookie: {e!r}"
-                        )
+                        logger.error(f"[WS:{session.session_id}] Failed to pickup cookie: {e!r}")
                     finally:
                         _current_session_id.reset(token)
 
@@ -2616,10 +2665,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         session.ws,
                         "world.event",
                         {
-                            "title": (
-                                "The audience cheers wildly! "
-                                "Agents feel inspired!"
-                            ),
+                            "title": ("The audience cheers wildly! Agents feel inspired!"),
                         },
                     )
                 elif text.startswith("/status") or text.startswith("/snapshot"):
@@ -2637,33 +2683,44 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     parts = text.split(maxsplit=1)
                     target_name = parts[1].strip() if len(parts) > 1 else ""
                     if session.swarm is None or session.task is None or session.task.done():
-                        await manager.send_to_ws(ws, "chat.message", {
-                            "text": "/cookie: swarm not running",
-                            "source": "system", "target": "",
-                        })
+                        await manager.send_to_ws(
+                            ws,
+                            "chat.message",
+                            {
+                                "text": "/cookie: swarm not running",
+                                "source": "system",
+                                "target": "",
+                            },
+                        )
                     else:
                         swarm = session.swarm
                         if not target_name:
-                            candidates = [
-                                n for n in swarm.agents.keys() if n != "Director"
-                            ]
+                            candidates = [n for n in swarm.agents.keys() if n != "Director"]
                             target_name = candidates[0] if candidates else ""
                         if target_name not in swarm.agents:
-                            await manager.send_to_ws(ws, "chat.message", {
-                                "text": f"/cookie: unknown agent '{target_name}'",
-                                "source": "system", "target": "",
-                            })
+                            await manager.send_to_ws(
+                                ws,
+                                "chat.message",
+                                {
+                                    "text": f"/cookie: unknown agent '{target_name}'",
+                                    "source": "system",
+                                    "target": "",
+                                },
+                            )
                         else:
                             token = _current_session_id.set(session.session_id)
                             try:
-                                cookie = swarm.fortune_jar.give_cookie(
-                                    target_name, swarm._round
-                                )
+                                cookie = swarm.fortune_jar.give_cookie(target_name, swarm._round)
                                 if cookie is None:
-                                    await manager.send_to_ws(ws, "chat.message", {
-                                        "text": f"/cookie: {target_name} already has one",
-                                        "source": "system", "target": "",
-                                    })
+                                    await manager.send_to_ws(
+                                        ws,
+                                        "chat.message",
+                                        {
+                                            "text": f"/cookie: {target_name} already has one",
+                                            "source": "system",
+                                            "target": "",
+                                        },
+                                    )
                                 else:
                                     await bus.emit(
                                         "fortune.given",
@@ -2673,9 +2730,15 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             finally:
                                 _current_session_id.reset(token)
                 else:
-                    await manager.send_to_ws(ws, "chat.message", {
-                        "text": text, "source": "user", "target": target or "",
-                    })
+                    await manager.send_to_ws(
+                        ws,
+                        "chat.message",
+                        {
+                            "text": text,
+                            "source": "user",
+                            "target": target or "",
+                        },
+                    )
                     if (
                         text
                         and session.swarm is not None
@@ -2689,9 +2752,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         # a half-cleaned-up swarm so the ws loop keeps
                         # running for this client.
                         try:
-                            await session.swarm.inject_human_message(
-                                text, target=target
-                            )
+                            await session.swarm.inject_human_message(text, target=target)
                         except (AttributeError, RuntimeError) as e:
                             logger.warning(
                                 f"[WS:{session.session_id}] "
@@ -2700,8 +2761,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             )
                         except Exception as e:
                             logger.error(
-                                f"[WS:{session.session_id}] "
-                                f"Failed to inject human message: {e!r}"
+                                f"[WS:{session.session_id}] Failed to inject human message: {e!r}"
                             )
 
     except WebSocketDisconnect:
@@ -2734,18 +2794,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 def _require_session(session_id: int | None) -> SessionState:
     if session_id is None:
-        raise HTTPException(
-            status_code=400, detail="session query parameter is required"
-        )
+        raise HTTPException(status_code=400, detail="session query parameter is required")
     session = _sessions.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     return session
 
 
-async def _require_session_owner(
-    session_id: int | None, request: Request
-) -> SessionState:
+async def _require_session_owner(session_id: int | None, request: Request) -> SessionState:
     """Like ``_require_session`` but rejects cross-user access.
 
     If the session was created by a logged-in user (``owner_user_id`` is
@@ -2848,9 +2904,7 @@ async def download_zip(
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for artifact in project.files:
-            safe_path = "/".join(
-                seg for seg in artifact.path.split("/") if seg and seg != ".."
-            )
+            safe_path = "/".join(seg for seg in artifact.path.split("/") if seg and seg != "..")
             if not safe_path:
                 continue
             zf.writestr(safe_path, artifact.content)
@@ -2961,9 +3015,7 @@ async def apply_template(
 # ── /api/files/history — Feature 9: File Version History ──────────────────
 
 
-async def _insert_file_history(
-    session_id: int, path: str, content: str, created_by: str
-) -> None:
+async def _insert_file_history(session_id: int, path: str, content: str, created_by: str) -> None:
     """Insert a new version row into ``file_history``.
 
     The ``version_number`` is computed as ``max(existing) + 1`` for the
@@ -3080,9 +3132,7 @@ async def get_file_version_content(
 
     engine = get_engine()
     async with engine.connect() as conn:
-        result = await conn.execute(
-            select(fh_table).where(fh_table.c.id == version_id)
-        )
+        result = await conn.execute(select(fh_table).where(fh_table.c.id == version_id))
         row = result.first()
 
     if row is None:
@@ -3145,9 +3195,7 @@ async def get_agent_memory(
     swarm = target_session.swarm
     agent = swarm.agents.get(agent_name)
     if agent is None:
-        raise HTTPException(
-            status_code=404, detail=f"agent_not_found: {agent_name}"
-        )
+        raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_name}")
 
     memory = getattr(agent, "memory", None)
     if memory is None:
@@ -3162,10 +3210,7 @@ async def get_agent_memory(
         }
         for e in mem_dict.get("private", [])
     ]
-    hindsight_notes = [
-        f"{n['title']}: {n['lesson']}"
-        for n in mem_dict.get("hindsight", [])
-    ]
+    hindsight_notes = [f"{n['title']}: {n['lesson']}" for n in mem_dict.get("hindsight", [])]
 
     # Relationship opinions: trust values for each peer this agent has
     # interacted with. Pulled from the swarm's relationship graph.
@@ -3204,9 +3249,7 @@ async def export_workspace(
 
     project = _session_project(session)
     if project is None:
-        raise HTTPException(
-            status_code=404, detail="No active project for session"
-        )
+        raise HTTPException(status_code=404, detail="No active project for session")
 
     sess = _sessions.get(session) if session is not None else None
     swarm = sess.swarm if sess is not None else None
@@ -3215,9 +3258,7 @@ async def export_workspace(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # ── Project files ──
         for artifact in project.files:
-            safe_path = "/".join(
-                seg for seg in artifact.path.split("/") if seg and seg != ".."
-            )
+            safe_path = "/".join(seg for seg in artifact.path.split("/") if seg and seg != "..")
             if not safe_path:
                 continue
             zf.writestr(safe_path, artifact.content)
@@ -3246,6 +3287,7 @@ async def export_workspace(
 
         # ── tasks.json ──
         import json as _json
+
         tasks_data = [
             {
                 "id": t.id,
@@ -3268,9 +3310,7 @@ async def export_workspace(
         chat_lines = []
         for msg in sorted(project.messages, key=lambda m: m.timestamp):
             ts = msg.timestamp.strftime("%H:%M:%S")
-            chat_lines.append(
-                f"[{ts}] {msg.sender} -> {msg.recipient}: {msg.content}"
-            )
+            chat_lines.append(f"[{ts}] {msg.sender} -> {msg.recipient}: {msg.content}")
         zf.writestr("chat_log.txt", "\n".join(chat_lines))
 
     session_tag = str(session)[:8] if session is not None else "unknown"
@@ -3344,16 +3384,11 @@ async def list_runs(
 
     engine = get_engine()
     async with engine.connect() as conn:
-        total_result = await conn.execute(
-            select(func.count()).select_from(run_summary)
-        )
+        total_result = await conn.execute(select(func.count()).select_from(run_summary))
         total = total_result.scalar() or 0
 
         rows_result = await conn.execute(
-            select(run_summary)
-            .order_by(run_summary.c.id.desc())
-            .limit(limit)
-            .offset(offset)
+            select(run_summary).order_by(run_summary.c.id.desc()).limit(limit).offset(offset)
         )
         rows = rows_result.fetchall()
 
@@ -3412,12 +3447,8 @@ async def compare_runs(
 
     engine = get_engine()
     async with engine.connect() as conn:
-        result_a = await conn.execute(
-            select(run_summary).where(run_summary.c.id == run_id)
-        )
-        result_b = await conn.execute(
-            select(run_summary).where(run_summary.c.id == with_)
-        )
+        result_a = await conn.execute(select(run_summary).where(run_summary.c.id == run_id))
+        result_b = await conn.execute(select(run_summary).where(run_summary.c.id == with_))
         row_a = result_a.first()
         row_b = result_b.first()
 
@@ -3430,8 +3461,12 @@ async def compare_runs(
     dict_b = _run_row_to_dict(row_b)
 
     _numeric_keys = (
-        "agent_count", "task_count", "tasks_done", "tasks_failed",
-        "total_rounds", "llm_calls",
+        "agent_count",
+        "task_count",
+        "tasks_done",
+        "tasks_failed",
+        "total_rounds",
+        "llm_calls",
     )
     delta = {
         k: dict_b[k] - dict_a[k]
@@ -3445,9 +3480,7 @@ async def compare_runs(
 # ── /api/session/{id}/checkpoint — Feature 30: Session Resume Foundation ────
 
 
-async def _upsert_checkpoint(
-    session_id: int, round_number: int, state_json: str
-) -> None:
+async def _upsert_checkpoint(session_id: int, round_number: int, state_json: str) -> None:
     """Insert or replace a checkpoint row for (session_id, round_number).
 
     Uses a DELETE + INSERT pattern which is portable across SQLite versions
@@ -3509,9 +3542,7 @@ async def get_session_checkpoint(
         row = result.first()
 
     if row is None:
-        raise HTTPException(
-            status_code=404, detail="no_checkpoint_for_session"
-        )
+        raise HTTPException(status_code=404, detail="no_checkpoint_for_session")
 
     return {
         "checkpoint_id": row.id,
@@ -3551,9 +3582,7 @@ async def resume_session(
         row = result.first()
 
     if row is None:
-        raise HTTPException(
-            status_code=404, detail="no_checkpoint_for_session"
-        )
+        raise HTTPException(status_code=404, detail="no_checkpoint_for_session")
 
     try:
         state = ProjectState.from_json(row.state_json)
@@ -3664,15 +3693,13 @@ async def health(request: Request):
     if user is None or user.status != "active":
         return {"status": "ok"}
 
-    active_swarms = sum(
-        1 for s in _sessions.values()
-        if s.task is not None and not s.task.done()
-    )
+    active_swarms = sum(1 for s in _sessions.values() if s.task is not None and not s.task.done())
     # TTS status so the /voice page can distinguish "model still warming"
     # from "synthesis really failed". Cheap — no model load triggered.
     tts_info: dict[str, object] = {
         "provider": settings.tts_provider,
-        "ready": settings.tts_provider not in (
+        "ready": settings.tts_provider
+        not in (
             "omnivoice",
             "omnivoice-mlx",
             "vibevoice",
@@ -3683,6 +3710,7 @@ async def health(request: Request):
     if settings.tts_provider == "omnivoice":
         try:
             from autonoma.tts_omnivoice import shared_client_status
+
             status_snap = shared_client_status()
             tts_info["ready"] = bool(status_snap["loaded"])
             tts_info["device"] = status_snap["device"]
@@ -3692,6 +3720,7 @@ async def health(request: Request):
     elif settings.tts_provider == "omnivoice-mlx":
         try:
             from autonoma.tts_omnivoice_mlx import shared_client_status as mlx_status
+
             status_snap = mlx_status()
             tts_info["ready"] = bool(status_snap["loaded"])
             tts_info["device"] = status_snap["device"]
@@ -3701,6 +3730,7 @@ async def health(request: Request):
     elif settings.tts_provider == "vibevoice":
         try:
             from autonoma.tts_vibevoice import shared_client_status as vv_status
+
             status_snap = vv_status()
             tts_info["ready"] = bool(status_snap["loaded"])
             tts_info["device"] = status_snap["device"]
@@ -3940,9 +3970,7 @@ async def mocap_create_clip(
             detail=exc.code,
         )
 
-    clip = await mocap_store.create_clip(
-        owner_user_id=user.id, validated=validated
-    )
+    clip = await mocap_store.create_clip(owner_user_id=user.id, validated=validated)
     await bus.emit("mocap.clips.updated", clip_id=clip.id, action="created")
     return {"clip": clip.to_dict()}
 
@@ -3964,9 +3992,7 @@ async def mocap_list_orphans(
         ``{"orphans": [...], "count": N, "total_bytes": M}`` where
         each element is a ``ClipSummary.to_dict()``.
     """
-    clips, total_bytes = await mocap_store.list_orphan_clips(
-        older_than_days=days
-    )
+    clips, total_bytes = await mocap_store.list_orphan_clips(older_than_days=days)
     return {
         "orphans": [c.to_dict() for c in clips],
         "count": len(clips),
@@ -3986,9 +4012,7 @@ async def mocap_get_clip(
     """
     result = await mocap_store.get_clip_payload(clip_id)
     if result is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
     summary, payload_b64 = result
     return {"clip": summary.to_dict(), "payload_gz_b64": payload_b64}
 
@@ -4001,18 +4025,12 @@ async def mocap_rename_clip(
 ) -> dict[str, Any]:
     summary = await mocap_store.get_clip_summary(clip_id)
     if summary is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
     if summary.owner_user_id != user.id and user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
-        )
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner")
     new_name = str(payload.get("name") or "").strip()
     if not (1 <= len(new_name) <= 128):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name"
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name")
     updated = await mocap_store.rename_clip(clip_id, new_name)
     if updated is None:
         # The summary lookup above already proved the clip exists, so a
@@ -4033,30 +4051,20 @@ async def mocap_delete_clip(
 ) -> FastAPIResponse:
     summary = await mocap_store.get_clip_summary(clip_id)
     if summary is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
     if summary.owner_user_id != user.id and user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner"
-        )
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner")
     if await mocap_store.clip_is_bound(clip_id):
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use"
-        )
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use")
     try:
         ok = await mocap_store.delete_clip(clip_id)
     except mocap_store.IntegrityError:
         # Race: a binding was inserted between the ``clip_is_bound`` check
         # above and this delete. FK is ON DELETE RESTRICT so the DB
         # rejects the delete — surface the same 409 the pre-check would.
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use"
-        )
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use")
     if not ok:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
     await bus.emit("mocap.clips.updated", clip_id=clip_id, action="deleted")
     return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
 
@@ -4080,23 +4088,15 @@ async def mocap_upsert_binding(
     clip_id = str(payload.get("clip_id") or "").strip()
 
     if not is_known_vrm(vrm_file):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm")
     if kind not in ALLOWED_TRIGGER_KINDS:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_kind"
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_kind")
     trig_err = validate_trigger(kind, value)
     if trig_err:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err)
     clip = await mocap_store.get_clip_summary(clip_id)
     if clip is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
 
     binding = await mocap_store.upsert_binding(
         vrm_file=vrm_file,
@@ -4117,9 +4117,7 @@ async def mocap_upsert_binding(
     return {"binding": binding.to_dict()}
 
 
-@app.delete(
-    "/api/mocap-bindings", status_code=http_status.HTTP_204_NO_CONTENT
-)
+@app.delete("/api/mocap-bindings", status_code=http_status.HTTP_204_NO_CONTENT)
 async def mocap_delete_binding(
     vrm_file: str = Query(...),
     trigger_kind: str = Query(...),
@@ -4127,23 +4125,17 @@ async def mocap_delete_binding(
     _admin: User = Depends(require_admin),
 ) -> FastAPIResponse:
     if not is_known_vrm(vrm_file):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm"
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm")
     trig_err = validate_trigger(trigger_kind, trigger_value)
     if trig_err:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err
-        )
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err)
     ok = await mocap_store.delete_binding(
         vrm_file=vrm_file,
         trigger_kind=trigger_kind,
         trigger_value=trigger_value,
     )
     if not ok:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found"
-        )
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found")
     await bus.emit(
         "mocap.bindings.updated",
         vrm_file=vrm_file,
@@ -4324,4 +4316,5 @@ app.include_router(_live_share_router.router)
 # (different auth header, JSON-RPC envelope). Off by default.
 if settings.mcp_server_enabled:
     from autonoma.mcp import server as _mcp_server  # noqa: E402
+
     app.include_router(_mcp_server.router)
