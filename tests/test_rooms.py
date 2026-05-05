@@ -11,13 +11,12 @@ from __future__ import annotations
 import pytest
 
 from autonoma.api import (
-    RoomState,
     SessionState,
     _create_room_for,
     _generate_short_code,
     _rooms,
-    _short_codes,
     _sessions,
+    _short_codes,
     _viewers_in_room,
 )
 
