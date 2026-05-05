@@ -1323,6 +1323,7 @@ class TestFortuneCookies:
 
         opened = jar.open_cookie("Alice")
         assert opened is given
+        assert opened is not None
         assert opened.picked_up is True
         # Still active so action-based fulfilment can still fire
         assert jar.get_active_fortune("Alice") is opened
