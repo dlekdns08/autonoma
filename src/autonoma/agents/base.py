@@ -18,18 +18,12 @@ import re
 from datetime import datetime
 from typing import Any
 
-from autonoma.agents.harness import AgentHarness, CODER_HARNESS, get_harness
+from autonoma.agents.harness import AgentHarness, get_harness
 from autonoma.config import settings
+from autonoma.dialogue_style import style_speech
 from autonoma.event_bus import bus
 from autonoma.harness import (  # noqa: F401 — triggers @register
     action_strategies as _action_strategies,
-    enforcement_strategies as _enforcement_strategies,
-    llm_error_strategies as _llm_error_strategies,
-    memory_strategies as _memory_strategies,
-    message_strategies as _message_strategies,
-    mood_strategies as _mood_strategies,
-    safety_enforcement_strategies as _safety_enforcement_strategies,
-    safety_strategies as _safety_strategies,
 )
 from autonoma.harness.policy import HarnessPolicyContent
 from autonoma.harness.strategies import lookup as _strategy_lookup
@@ -41,8 +35,6 @@ from autonoma.llm import (
     create_llm_client,
     llm_config_from_settings,
 )
-from autonoma.sandbox import CodeSandbox, Language, SandboxLimits
-from autonoma.tracing import traced_messages_create
 from autonoma.models import (
     AgentMessage,
     AgentPersona,
@@ -55,7 +47,7 @@ from autonoma.models import (
     Task,
     TaskStatus,
 )
-from autonoma.dialogue_style import style_speech
+from autonoma.sandbox import CodeSandbox, Language, SandboxLimits
 from autonoma.tts_worker import get_default_worker
 from autonoma.world import (
     ACHIEVEMENTS,
@@ -292,7 +284,7 @@ class AutonomousAgent:
         )
         if not enforcer(self.name, action_type, self.harness):
             # Enforcer strategy already logged the reason; don't duplicate.
-            await self._say(f"Can't do that - not my role!", style="italic yellow")
+            await self._say("Can't do that - not my role!", style="italic yellow")
             return {"agent": self.name, "action": "blocked", "blocked_action": action_type}
 
         result: dict[str, Any] = {"agent": self.name, "action": action_type}
@@ -858,7 +850,7 @@ Rules:
         # checker can't poison the action.
         if getattr(settings, "ci_loop_enabled", False):
             try:
-                from autonoma.ci_loop import run_ci_check, format_fix_task
+                from autonoma.ci_loop import format_fix_task, run_ci_check
                 ci = await run_ci_check(path, content)
                 if not ci.ok:
                     fix_msg = AgentMessage(
@@ -1186,8 +1178,9 @@ Rules:
         # Offload blocking subprocess work to a thread — ``gh`` can stall
         # for several seconds on network-heavy repos, so we never want it
         # blocking the main event loop.
-        from autonoma.agents.tools import open_pull_request
         import asyncio as _asyncio
+
+        from autonoma.agents.tools import open_pull_request
 
         result = await _asyncio.to_thread(
             open_pull_request,
@@ -1273,8 +1266,9 @@ Rules:
             await self._say("fetch_url needs a url.", style="italic yellow")
             return {"agent": self.name, "action": "fetch_url", "ok": False, "reason": "missing_url"}
 
-        from autonoma.agents.tools import fetch_url
         import asyncio as _asyncio
+
+        from autonoma.agents.tools import fetch_url
 
         result = await _asyncio.to_thread(fetch_url, url, max_chars=max_chars)
 
