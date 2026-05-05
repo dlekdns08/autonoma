@@ -16,7 +16,6 @@ that's a deliberate choice (the user picked Cohere for a reason).
 
 from __future__ import annotations
 
-import io
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -175,7 +174,6 @@ class CohereAsrProvider(AsrProvider):
         toward that language; without it, accuracy is slightly lower
         on ambiguous utterances but multilingual input works.
         """
-        import os
         import tempfile
         import time
 
