@@ -49,6 +49,7 @@ DIRECTOR_PERSONA = AgentPersona(
 
 # ── Feature 2: Skill-Based Task Matching helpers ───────────────────────────
 
+
 def skill_similarity(task_title: str, task_description: str, agent_skills: list[str]) -> float:
     """Compute a simple skill-match score for a task against an agent's skills.
 
@@ -120,7 +121,8 @@ class DirectorAgent(AutonomousAgent):
                 cp_titles.append(t.title)
         cp_line = (
             f"Critical path tasks (prioritize these): {', '.join(cp_titles)}"
-            if cp_titles else "No dependency chain detected."
+            if cp_titles
+            else "No dependency chain detected."
         )
 
         # ── Feature 2: Available agents with skill match scores ──
@@ -131,8 +133,7 @@ class DirectorAgent(AutonomousAgent):
             # Compute average match across all open tasks
             if open_tasks:
                 avg_score = sum(
-                    skill_similarity(t.title, t.description, agent.skills)
-                    for t in open_tasks
+                    skill_similarity(t.title, t.description, agent.skills) for t in open_tasks
                 ) / len(open_tasks)
             else:
                 avg_score = 0.0
@@ -146,9 +147,7 @@ class DirectorAgent(AutonomousAgent):
         overdue_section = ""
         if current_overdue:
             overdue_titles = ", ".join(t.title for t in current_overdue)
-            overdue_section = (
-                f"\n⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}\n"
-            )
+            overdue_section = f"\n⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}\n"
 
         director_addendum = f"""
 == DIRECTOR INTELLIGENCE ==
@@ -209,8 +208,7 @@ Rules:
         )
 
         logger.info(
-            f"[Director] Decomposing goal: '{project.description[:120]}' "
-            f"(model={self._model})"
+            f"[Director] Decomposing goal: '{project.description[:120]}' (model={self._model})"
         )
         try:
             response = await traced_messages_create(
@@ -319,12 +317,14 @@ Rules:
                 "director.decompose_empty",
                 raw_task_count=len(raw_task_entries),
             )
-            tasks = [Task(
-                title="Implement project",
-                description=project.description,
-                priority=TaskPriority.HIGH,
-                created_by="Director",
-            )]
+            tasks = [
+                Task(
+                    title="Implement project",
+                    description=project.description,
+                    priority=TaskPriority.HIGH,
+                    created_by="Director",
+                )
+            ]
 
         project.tasks = tasks
 
@@ -335,30 +335,32 @@ Rules:
         for agent_data in data.get("agents_needed", []):
             role = agent_data.get("role", "coder")
             harness = get_harness(role)
-            spawn_payloads.append(dict(
-                requester="Director",
-                name=agent_data.get("name", "Worker"),
-                role=role,
-                skills=agent_data.get("skills", harness.default_skills),
-                emoji=agent_data.get("emoji", harness.emoji),
-                color=agent_data.get("color", harness.color),
-            ))
+            spawn_payloads.append(
+                dict(
+                    requester="Director",
+                    name=agent_data.get("name", "Worker"),
+                    role=role,
+                    skills=agent_data.get("skills", harness.default_skills),
+                    emoji=agent_data.get("emoji", harness.emoji),
+                    color=agent_data.get("color", harness.color),
+                )
+            )
 
         # Ensure at least one worker agent exists
         if not spawn_payloads:
-            spawn_payloads.append(dict(
-                requester="Director",
-                name="Builder",
-                role="coder",
-                skills=["coding", "testing", "documentation"],
-                emoji="🔨",
-                color="cyan",
-            ))
+            spawn_payloads.append(
+                dict(
+                    requester="Director",
+                    name="Builder",
+                    role="coder",
+                    skills=["coding", "testing", "documentation"],
+                    emoji="🔨",
+                    color="cyan",
+                )
+            )
 
         agents_spawned = len(spawn_payloads)
-        await asyncio.gather(
-            *(bus.emit("agent.spawn_requested", **p) for p in spawn_payloads)
-        )
+        await asyncio.gather(*(bus.emit("agent.spawn_requested", **p) for p in spawn_payloads))
 
         await self._say(
             f"Plan ready! {len(tasks)} tasks, {agents_spawned} agents",
@@ -385,13 +387,14 @@ Rules:
         tasks_open = [t for t in project.tasks if t.status != TaskStatus.DONE]
         files = project.files
 
-        task_lines = "\n".join(
-            f"- [{t.status.value}] {t.title}" for t in project.tasks
-        ) or "(없음)"
-        file_lines = "\n".join(
-            f"- {f.path} ({len(f.content)} bytes) — {f.description or ''}".rstrip(" —")
-            for f in files[:30]
-        ) or "(없음)"
+        task_lines = "\n".join(f"- [{t.status.value}] {t.title}" for t in project.tasks) or "(없음)"
+        file_lines = (
+            "\n".join(
+                f"- {f.path} ({len(f.content)} bytes) — {f.description or ''}".rstrip(" —")
+                for f in files[:30]
+            )
+            or "(없음)"
+        )
 
         system = (
             "당신은 프로젝트 디렉터입니다. 방금 끝난 에이전트 스웜 프로젝트에 대한 "
@@ -461,6 +464,7 @@ Rules:
 
         # Collect file paths mentioned in the most recent messages.
         import re as _re
+
         path_pattern = _re.compile(r"[\w./\-]+\.[a-zA-Z]{1,6}")
 
         # Scan wider than 30 messages so conflicts separated by a few rounds
@@ -524,18 +528,19 @@ Rules:
                     logger.warning(
                         "[Director] trust-based debate resolution failed; "
                         "falling back to random (proposer=%s opponent=%s)",
-                        proposer, opponent, exc_info=True,
+                        proposer,
+                        opponent,
+                        exc_info=True,
                     )
 
             if winner is None:
                 import random as _random
+
                 winner = _random.choice([proposer, opponent])
                 debate.votes[winner] = "proposer" if winner == proposer else "opponent"
 
             outcome = debate.resolve()
-            logger.info(
-                f"[Director] Debate resolved: winner={winner}, outcome={outcome.value}"
-            )
+            logger.info(f"[Director] Debate resolved: winner={winner}, outcome={outcome.value}")
 
             await bus.emit(
                 "debate.resolved",
@@ -555,8 +560,7 @@ Rules:
                 ):
                     task.assigned_to = winner
                     logger.info(
-                        f"[Director] Disputed task '{task.title}' "
-                        f"reassigned to winner={winner}"
+                        f"[Director] Disputed task '{task.title}' reassigned to winner={winner}"
                     )
 
     async def think_and_act(self, project: ProjectState) -> dict[str, Any]:
@@ -600,7 +604,8 @@ Rules:
         stall_snapshot: dict[str, int] = {}
         async with get_tasks_lock():
             open_tasks = [
-                t for t in project.tasks
+                t
+                for t in project.tasks
                 if t.status == TaskStatus.OPEN
                 and all(
                     any(t2.id == dep and t2.status == TaskStatus.DONE for t2 in project.tasks)
@@ -609,10 +614,12 @@ Rules:
             ]
 
             available_agents = [
-                a.name for a in project.agents
+                a.name
+                for a in project.agents
                 if a.name != "Director"
                 and not any(
-                    t.assigned_to == a.name and t.status in (TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS)
+                    t.assigned_to == a.name
+                    and t.status in (TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS)
                     for t in project.tasks
                 )
             ]
@@ -622,19 +629,19 @@ Rules:
                 # consistent and no other agent can steal this OPEN task.
                 task.assigned_to = agent_name
                 task.status = TaskStatus.ASSIGNED
-                pending_assignments.append({
-                    "task_id": task.id,
-                    "title": task.title,
-                    "description": task.description,
-                    "priority": task.priority.value,
-                    "agent_name": agent_name,
-                })
+                pending_assignments.append(
+                    {
+                        "task_id": task.id,
+                        "title": task.title,
+                        "description": task.description,
+                        "priority": task.priority.value,
+                        "agent_name": agent_name,
+                    }
+                )
 
             # Snapshot the status tallies while still holding the lock so
             # the stall check below operates on a coherent view.
-            stall_snapshot["done"] = sum(
-                1 for t in project.tasks if t.status == TaskStatus.DONE
-            )
+            stall_snapshot["done"] = sum(1 for t in project.tasks if t.status == TaskStatus.DONE)
             stall_snapshot["total"] = len(project.tasks)
             stall_snapshot["in_progress"] = sum(
                 1 for t in project.tasks if t.status == TaskStatus.IN_PROGRESS
@@ -649,16 +656,12 @@ Rules:
         assigned_count = 0
         for snap in pending_assignments:
             agent_name = snap["agent_name"]
-            await self._say(
-                f"{agent_name}, handle '{snap['title']}'!", style="bold"
-            )
+            await self._say(f"{agent_name}, handle '{snap['title']}'!", style="bold")
 
             # Feature 2: compute skill match score for the assignment message
             agent_persona = next((a for a in project.agents if a.name == agent_name), None)
             agent_skills = agent_persona.skills if agent_persona else []
-            match_score = skill_similarity(
-                snap["title"], snap["description"], agent_skills
-            )
+            match_score = skill_similarity(snap["title"], snap["description"], agent_skills)
 
             msg = AgentMessage(
                 sender="Director",
@@ -698,14 +701,12 @@ Rules:
         has_overdue = bool(current_overdue)
 
         if (
-            assigned_count == 0
-            and in_progress == 0
-            and done < total
-        ) or review_stuck or has_overdue:
+            (assigned_count == 0 and in_progress == 0 and done < total)
+            or review_stuck
+            or has_overdue
+        ):
             self._stall_counter += 1
-            overdue_note = (
-                f", overdue={len(current_overdue)}" if current_overdue else ""
-            )
+            overdue_note = f", overdue={len(current_overdue)}" if current_overdue else ""
             logger.warning(
                 f"[Director] Stall detected (counter={self._stall_counter}/3): "
                 f"done={done}/{total}, in_progress=0, assigned_this_round=0, "
@@ -720,9 +721,7 @@ Rules:
                 # the critical path (don't clear deps pointing to live
                 # upstream work).
                 task_status_map = {t.id: t.status for t in project.tasks}
-                plan_fn = _strategy_lookup(
-                    "loop.stall_policy", self.policy.loop.stall_policy
-                )
+                plan_fn = _strategy_lookup("loop.stall_policy", self.policy.loop.stall_policy)
                 plan = plan_fn(
                     review_tasks,
                     open_candidates,
@@ -760,9 +759,7 @@ Rules:
                         # (IN_PROGRESS/ASSIGNED upstream) must stay.
                         if cleared:
                             to_remove = set(cleared)
-                            target.depends_on = [
-                                d for d in target.depends_on if d not in to_remove
-                            ]
+                            target.depends_on = [d for d in target.depends_on if d not in to_remove]
                         did_reset = True
                     logger.warning(
                         f"[Director] Unblocking '{target.title}': "
@@ -774,9 +771,7 @@ Rules:
                         self._stall_counter = 0
 
                 elif action == "escalate":
-                    logger.warning(
-                        f"[Director] stall escalation: {plan.get('message', '')}"
-                    )
+                    logger.warning(f"[Director] stall escalation: {plan.get('message', '')}")
                     await self._say("Stall detected — awaiting intervention.", style="bold red")
                     await bus.emit(
                         "director.stall_escalated",
@@ -820,18 +815,14 @@ Rules:
         # Feature 5: overdue task warning
         if current_overdue:
             overdue_titles = ", ".join(t.title for t in current_overdue)
-            situation_notes.append(
-                f"⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}"
-            )
+            situation_notes.append(f"⚠️ OVERDUE TASKS (escalate immediately): {overdue_titles}")
 
         # Feature 2: best agent hints for open tasks
         worker_personas = [a for a in project.agents if a.name != "Director"]
         for t in open_tasks[:3]:
             best = find_best_agent_for_task(t, worker_personas)
             if best:
-                situation_notes.append(
-                    f"Best agent for '{t.title}': {best} (skill match)"
-                )
+                situation_notes.append(f"Best agent for '{t.title}': {best} (skill match)")
 
         if situation_notes:
             notes_text = "\n".join(f"  {note}" for note in situation_notes)
