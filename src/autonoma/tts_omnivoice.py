@@ -331,7 +331,9 @@ class OmniVoiceTTSClient(BaseTTSClient):
         Imported lazily so the omnivoice package dependency stays
         optional at module import time.
         """
-        from omnivoice.models.omnivoice import OmniVoiceGenerationConfig  # type: ignore[import-not-found]
+        from omnivoice.models.omnivoice import (
+            OmniVoiceGenerationConfig,  # type: ignore[import-not-found]
+        )
 
         return OmniVoiceGenerationConfig(
             num_step=settings.tts_num_step,
