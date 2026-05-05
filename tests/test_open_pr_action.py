@@ -88,12 +88,9 @@ async def test_action_open_pr_missing_args_returns_structured_failure(
     # lightweight stand-in that only needs _set_state + _say + stats +
     # memory. We build a minimal subclass to bypass LLM setup.
     agent = _make_stub_agent()
-    project = ProjectState(
-        project_uuid="test-proj",
-        name="test",
-        description="",
-        goal="",
-    )
+    # ``project_uuid`` / ``goal`` aren't fields on ProjectState (Pydantic
+    # silently dropped them) — pass only the real fields.
+    project = ProjectState(name="test", description="")
 
     result = await agent._action_open_pr(  # type: ignore[attr-defined]
         {"action": "open_pr"},
@@ -143,12 +140,7 @@ async def test_action_open_pr_delegates_with_agent_name(
     monkeypatch.setattr(git_pr_mod, "open_pull_request", _fake_open_pr)
 
     agent = _make_stub_agent(name="Midori")
-    project = ProjectState(
-        project_uuid="test",
-        name="n",
-        description="",
-        goal="",
-    )
+    project = ProjectState(name="n", description="")
 
     result = await agent._action_open_pr(  # type: ignore[attr-defined]
         {
