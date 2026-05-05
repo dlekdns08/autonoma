@@ -58,6 +58,7 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 @pytest.fixture(autouse=True)
 def _reset_inspire_cache() -> None:
     from autonoma.routers import inspire as inspire_mod
+
     inspire_mod._cache.clear()
 
 
@@ -68,6 +69,7 @@ async def test_inspire_503_when_disabled(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "inspire_enabled", False)
 
     r = await client.post(
@@ -125,11 +127,14 @@ async def test_inspire_happy_path_returns_five_suggestions(
 
     # Confirm the parsed efforts match the canned input order.
     assert [r["effort"] for r in sugg] == [
-        "small", "medium", "medium", "large", "small",
+        "small",
+        "medium",
+        "medium",
+        "large",
+        "small",
     ]
     # Spot-check a parsed text.
     assert "structured logging" in sugg[0]["text"].lower()
-
 
 
 async def test_inspire_handles_github_fetch_failure(
@@ -147,6 +152,7 @@ async def test_inspire_handles_github_fetch_failure(
     import httpx as _httpx
 
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "inspire_enabled", True)
 
     async def _boom(self, url, *args, **kwargs):
@@ -164,9 +170,7 @@ async def test_inspire_handles_github_fetch_failure(
     body = r.json()
     code = body["detail"]["code"]
     # Either of these is "documented" per the route's contract.
-    assert code in {"github_fetch_failed", "github_rate_limited"}, (
-        f"unexpected error code {code!r}"
-    )
+    assert code in {"github_fetch_failed", "github_rate_limited"}, f"unexpected error code {code!r}"
 
     # Raw exception text MUST NOT leak. If this fails, the bug is in
     # ``routers/inspire.py::_fetch_github_context`` — it currently
@@ -182,6 +186,7 @@ async def test_inspire_422_without_context(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "inspire_enabled", True)
 
     r = await client.post("/api/inspire", json={})

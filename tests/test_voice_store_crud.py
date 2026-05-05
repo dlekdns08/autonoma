@@ -203,9 +203,7 @@ async def test_delete_profile_removes_db_row_and_disk_file():
 
 async def test_delete_profile_blocked_by_binding():
     summary = await _create_default_profile("bound")
-    await voice_store.upsert_binding(
-        vrm_file="bob.vrm", profile_id=summary.id, updated_by=None
-    )
+    await voice_store.upsert_binding(vrm_file="bob.vrm", profile_id=summary.id, updated_by=None)
     # FK is ON DELETE RESTRICT — engine surfaces this as IntegrityError.
     with pytest.raises(IntegrityError):
         await voice_store.delete_profile(summary.id)
@@ -220,9 +218,7 @@ async def test_upsert_binding_inserts_then_updates():
     a = await _create_default_profile("voiceA")
     b = await _create_default_profile("voiceB")
 
-    first = await voice_store.upsert_binding(
-        vrm_file="alice.vrm", profile_id=a.id, updated_by=None
-    )
+    first = await voice_store.upsert_binding(vrm_file="alice.vrm", profile_id=a.id, updated_by=None)
     assert first.profile_id == a.id
 
     second = await voice_store.upsert_binding(
@@ -243,9 +239,7 @@ async def test_profile_is_bound_reflects_binding_state():
     summary = await _create_default_profile("freed")
     assert await voice_store.profile_is_bound(summary.id) is False
 
-    await voice_store.upsert_binding(
-        vrm_file="charlie.vrm", profile_id=summary.id, updated_by=None
-    )
+    await voice_store.upsert_binding(vrm_file="charlie.vrm", profile_id=summary.id, updated_by=None)
     assert await voice_store.profile_is_bound(summary.id) is True
 
     assert await voice_store.delete_binding("charlie.vrm") is True

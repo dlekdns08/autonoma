@@ -80,9 +80,7 @@ def test_render_without_data_is_empty_string() -> None:
 def test_record_round_observes_duration_and_tokens() -> None:
     from autonoma.observability_otel import prom_registry
 
-    record_round(
-        session_id="sess-A", round_number=3, duration_s=0.42, llm_tokens=120
-    )
+    record_round(session_id="sess-A", round_number=3, duration_s=0.42, llm_tokens=120)
     out = prom_registry.render()
 
     # The shared registry survives between tests, so just assert our

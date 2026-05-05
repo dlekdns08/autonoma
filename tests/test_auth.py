@@ -161,9 +161,7 @@ async def test_approve_flips_pending_to_active_and_allows_login(
     # Admin lists users, finds the pending one.
     listing = await client.get("/api/admin/users")
     assert listing.status_code == 200
-    dave_row = next(
-        u for u in listing.json()["users"] if u["username"] == "dave"
-    )
+    dave_row = next(u for u in listing.json()["users"] if u["username"] == "dave")
     assert dave_row["status"] == "pending"
 
     # Admin approves.

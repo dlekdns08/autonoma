@@ -279,13 +279,12 @@ async def test_compact_skips_when_llm_raises(
 
     # No memoir row was inserted.
     from sqlalchemy import select as _select
+
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
-                _select(character_memoirs).where(
-                    character_memoirs.c.character_uuid == cuuid
-                )
+                _select(character_memoirs).where(character_memoirs.c.character_uuid == cuuid)
             )
         ).all()
     assert rows == [], "no character_memoirs row should be inserted on LLM failure"
@@ -296,9 +295,7 @@ async def test_compact_skips_when_llm_raises(
     assert text == ""
 
     # No bus event was emitted.
-    assert seen == [], (
-        "character.memoir_compacted must NOT fire when the LLM raises"
-    )
+    assert seen == [], "character.memoir_compacted must NOT fire when the LLM raises"
 
 
 async def test_get_latest_memoir_for_unknown_character_returns_zero(

@@ -19,6 +19,7 @@ async def client(
     fresh_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[AsyncClient]:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     from autonoma.api import app
 
@@ -35,6 +36,7 @@ async def _login(client: AsyncClient, username: str = "signrouter") -> None:
     )
     assert r.status_code == 201, r.text
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")
@@ -92,6 +94,7 @@ async def test_play_emits_sign_clip_event(client: AsyncClient) -> None:
     await _upload(client, "hi", ["hi"])
 
     from autonoma.event_bus import bus
+
     received: list[dict] = []
 
     async def _on(**kwargs):

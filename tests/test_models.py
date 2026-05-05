@@ -60,8 +60,6 @@ def test_project_state():
 
 
 def test_agent_message():
-    msg = AgentMessage(
-        sender="A", recipient="B", msg_type=MessageType.CHAT, content="Hey"
-    )
+    msg = AgentMessage(sender="A", recipient="B", msg_type=MessageType.CHAT, content="Hey")
     assert msg.sender == "A"
     assert msg.msg_type == MessageType.CHAT

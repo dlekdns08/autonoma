@@ -35,9 +35,12 @@ async def client(fresh_db) -> AsyncIterator[AsyncClient]:
 
 
 async def _authed(client: AsyncClient, username: str = "vis") -> None:
-    r = await client.post("/api/auth/signup", json={"username": username, "password": "password123"})
+    r = await client.post(
+        "/api/auth/signup", json={"username": username, "password": "password123"}
+    )
     assert r.status_code == 201
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")
@@ -74,11 +77,13 @@ class _SpyClient:
 def _prime_vision(monkeypatch: pytest.MonkeyPatch, spy: _SpyClient) -> None:
     """Enable the feature + swap the LLM client for our spy."""
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "vision_agent_enabled", True)
     monkeypatch.setattr(settings, "vision_agent_cooldown_s", 60)
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")  # pretend key
 
     from autonoma.routers import vision as vision_mod
+
     monkeypatch.setattr(vision_mod, "create_llm_client", lambda cfg: spy)  # type: ignore[arg-type]
 
     # Reset per-user cooldown between tests.
@@ -122,12 +127,11 @@ async def test_vision_happy_path_openai(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await _authed(client)
-    spy = _SpyClient(
-        '{"acted": false, "agent": "", "message": "", "reason": "nothing to say"}'
-    )
+    spy = _SpyClient('{"acted": false, "agent": "", "message": "", "reason": "nothing to say"}')
     _prime_vision(monkeypatch, spy)
 
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "provider", "openai")
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
 
@@ -146,9 +150,7 @@ async def test_vision_happy_path_openai(
     assert content[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
-async def test_vision_cooldown(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_vision_cooldown(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     await _authed(client)
     spy = _SpyClient('{"acted": true, "agent": "A", "message": "hi", "reason": "r"}')
     _prime_vision(monkeypatch, spy)

@@ -91,6 +91,7 @@ async def test_worker_emits_start_and_end_events(monkeypatch: pytest.MonkeyPatch
     async def capture(name: str):
         async def h(**kw):
             events.append((name, kw))
+
         return h
 
     for ev in (
@@ -179,7 +180,7 @@ async def test_worker_drops_over_budget(monkeypatch: pytest.MonkeyPatch) -> None
 
     worker = TTSWorker(client=StubTTSClient())
     worker.enqueue(agent="Zara", text="hello!", voice="")  # 6 chars — fits
-    worker.enqueue(agent="Zara", text="extra", voice="")   # over → dropped
+    worker.enqueue(agent="Zara", text="extra", voice="")  # over → dropped
     await asyncio.sleep(0.4)
     await worker.stop()
 

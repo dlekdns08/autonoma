@@ -1,6 +1,5 @@
 """Tests for the agent harness system."""
 
-
 from autonoma.agents.harness import (
     CODER_HARNESS,
     DIRECTOR_HARNESS,

@@ -89,9 +89,7 @@ async def test_timeout_is_normalized_to_connection_error() -> None:
         return "never"
 
     with pytest.raises(LLMConnectionError) as exc_info:
-        await _call_with_retry(
-            do_call, label="t.timeout", timeout=0.05, max_retries=1
-        )
+        await _call_with_retry(do_call, label="t.timeout", timeout=0.05, max_retries=1)
     assert calls["n"] == 2  # 1 initial + 1 retry
     assert "timed out" in str(exc_info.value).lower()
 

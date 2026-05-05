@@ -33,6 +33,7 @@ async def _login(client: AsyncClient, username: str = "standuprouter") -> None:
     )
     assert r.status_code == 201, r.text
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")

@@ -28,7 +28,9 @@ def test_disabled_predicate_denies() -> None:
 
 
 @pytest.mark.asyncio
-async def test_action_run_code_short_circuits_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_action_run_code_short_circuits_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Integration: with code_execution=disabled the sandbox must not
     be touched. We assert by patching ``CodeSandbox`` to explode if
     anyone constructs it — the strategy gate runs first, so no

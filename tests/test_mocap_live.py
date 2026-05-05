@@ -110,9 +110,7 @@ def test_valid_frame_emits_mocap_frame(
     session_cookie: dict[str, str],
     captured_events: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    with client.websocket_connect(
-        "/api/mocap/live?vrm=alice.vrm", cookies=session_cookie
-    ) as ws:
+    with client.websocket_connect("/api/mocap/live?vrm=alice.vrm", cookies=session_cookie) as ws:
         ws.send_text(json.dumps(_good_frame()))
         # Closing the WS triggers the finally block which emits the
         # session_ended event and unblocks the server task.
@@ -137,9 +135,7 @@ def test_malformed_rot_drops_frame(
     # rot must be length-4; 3 floats triggers the validator.
     bad["bones"]["Hips"]["rot"] = [0.0, 0.0, 0.0]
 
-    with client.websocket_connect(
-        "/api/mocap/live?vrm=bob.vrm", cookies=session_cookie
-    ) as ws:
+    with client.websocket_connect("/api/mocap/live?vrm=bob.vrm", cookies=session_cookie) as ws:
         ws.send_text(json.dumps(bad))
         ws.close()
 
@@ -164,9 +160,7 @@ def test_oversized_frame_dropped(
     serialized = json.dumps(huge)
     assert len(serialized) > 32 * 1024  # sanity: actually oversized
 
-    with client.websocket_connect(
-        "/api/mocap/live?vrm=carol.vrm", cookies=session_cookie
-    ) as ws:
+    with client.websocket_connect("/api/mocap/live?vrm=carol.vrm", cookies=session_cookie) as ws:
         ws.send_text(serialized)
         ws.close()
 
@@ -189,9 +183,7 @@ def test_burst_is_rate_limited(
     """
     payload = json.dumps(_good_frame())
     started = time.monotonic()
-    with client.websocket_connect(
-        "/api/mocap/live?vrm=dan.vrm", cookies=session_cookie
-    ) as ws:
+    with client.websocket_connect("/api/mocap/live?vrm=dan.vrm", cookies=session_cookie) as ws:
         for _ in range(200):
             ws.send_text(payload)
         ws.close()
@@ -202,12 +194,8 @@ def test_burst_is_rate_limited(
     # burst slower than ~1.5 s the bucket would refill enough that the
     # rate-limit assertion no longer means much. In practice this is
     # always sub-second on dev machines and CI.
-    assert elapsed < 1.5, (
-        f"burst took {elapsed:.2f}s — too slow to meaningfully test rate limit"
-    )
-    assert len(frame_events) < 70, (
-        f"expected <70 events under rate limit, got {len(frame_events)}"
-    )
+    assert elapsed < 1.5, f"burst took {elapsed:.2f}s — too slow to meaningfully test rate limit"
+    assert len(frame_events) < 70, f"expected <70 events under rate limit, got {len(frame_events)}"
     # And we should still have *some* events — otherwise the limiter is
     # rejecting everything, which would be a different bug.
     assert len(frame_events) > 0
@@ -221,9 +209,7 @@ def test_session_ended_carries_counts(
     bad = _good_frame()
     bad["bones"]["Hips"]["rot"] = [1.0, 2.0]  # malformed
 
-    with client.websocket_connect(
-        "/api/mocap/live?vrm=eve.vrm", cookies=session_cookie
-    ) as ws:
+    with client.websocket_connect("/api/mocap/live?vrm=eve.vrm", cookies=session_cookie) as ws:
         # 2 valid + 1 invalid → 2 accepted, 1 dropped.
         ws.send_text(json.dumps(_good_frame()))
         ws.send_text(json.dumps(bad))

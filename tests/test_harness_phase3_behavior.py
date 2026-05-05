@@ -45,16 +45,13 @@ def test_prompt_variant_balanced_adds_no_suffix():
 
 def test_prompt_variant_concise_appends_concise_suffix():
     rendered = _build_prompt("concise")
-    assert rendered.endswith(
-        "Respond concisely. Prefer short, direct sentences over elaboration."
-    )
+    assert rendered.endswith("Respond concisely. Prefer short, direct sentences over elaboration.")
 
 
 def test_prompt_variant_elaborate_appends_elaborate_suffix():
     rendered = _build_prompt("elaborate")
     assert rendered.rstrip().endswith(
-        "Explain reasoning step-by-step when it helps collaborators "
-        "understand your choices."
+        "Explain reasoning step-by-step when it helps collaborators understand your choices."
     )
 
 

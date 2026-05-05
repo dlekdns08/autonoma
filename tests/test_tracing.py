@@ -54,22 +54,26 @@ def test_checkpoint_writes_round_file(recorder: RunRecorder) -> None:
 
 
 async def test_log_llm_call_appends_jsonl(recorder: RunRecorder) -> None:
-    await recorder.log_llm_call({
-        "ts": "2026-04-27T12:00:00",
-        "agent": "Director",
-        "phase": "decide",
-        "duration_sec": 0.42,
-        "request": {"model": "x", "messages": []},
-        "response": {"text": "ok", "usage": {"input_tokens": 1, "output_tokens": 2}},
-    })
-    await recorder.log_llm_call({
-        "ts": "2026-04-27T12:00:01",
-        "agent": "Coder",
-        "phase": "code",
-        "duration_sec": 1.5,
-        "request": {"model": "x", "messages": []},
-        "response": {"text": "done", "usage": {"input_tokens": 5, "output_tokens": 10}},
-    })
+    await recorder.log_llm_call(
+        {
+            "ts": "2026-04-27T12:00:00",
+            "agent": "Director",
+            "phase": "decide",
+            "duration_sec": 0.42,
+            "request": {"model": "x", "messages": []},
+            "response": {"text": "ok", "usage": {"input_tokens": 1, "output_tokens": 2}},
+        }
+    )
+    await recorder.log_llm_call(
+        {
+            "ts": "2026-04-27T12:00:01",
+            "agent": "Coder",
+            "phase": "code",
+            "duration_sec": 1.5,
+            "request": {"model": "x", "messages": []},
+            "response": {"text": "done", "usage": {"input_tokens": 5, "output_tokens": 10}},
+        }
+    )
 
     path = recorder.run_dir / "llm-calls.jsonl"
     assert path.exists()
@@ -111,7 +115,9 @@ async def test_traced_messages_create_records_call(
 
     class StubClient:
         async def create(self, **kwargs):
-            return LLMResponse(text="hello", input_tokens=3, output_tokens=4, stop_reason="end_turn")
+            return LLMResponse(
+                text="hello", input_tokens=3, output_tokens=4, stop_reason="end_turn"
+            )
 
     tracing_mod.set_active_recorder(recorder)
     try:

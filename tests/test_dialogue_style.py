@@ -33,10 +33,13 @@ class _FakeBones:
 @dataclass
 class _FakeTrait:
     """Mirrors ``Trait``'s ``.value`` access pattern."""
+
     value: str
 
 
-def _bones(rarity: str = "common", traits: list[str] | None = None, catchphrase: str = "") -> _FakeBones:
+def _bones(
+    rarity: str = "common", traits: list[str] | None = None, catchphrase: str = ""
+) -> _FakeBones:
     return _FakeBones(
         rarity=rarity,
         traits=[_FakeTrait(v) for v in (traits or [])],
@@ -107,10 +110,7 @@ def test_style_speech_applies_mood_overlay_for_some_lines() -> None:
     to show the overlay path is reachable without pinning a specific
     md5 result."""
     b = _bones()
-    yawns = [
-        style_speech(name="N", text=f"line {i}", bones=b, mood="tired")
-        for i in range(30)
-    ]
+    yawns = [style_speech(name="N", text=f"line {i}", bones=b, mood="tired") for i in range(30)]
     assert any("(yawn)" in line for line in yawns)
 
 

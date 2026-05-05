@@ -180,9 +180,7 @@ async def test_router_vote_dedup_rejects_second_vote(fresh_db) -> None:
     user = _fake_user("voter-1")
 
     propose_resp = await quests_router.propose(
-        body=quests_router.ProposeBody(
-            session_id=7007, text="discover the lost recipe"
-        ),
+        body=quests_router.ProposeBody(session_id=7007, text="discover the lost recipe"),
         user=user,
     )
     qid = propose_resp["quest_id"]
@@ -212,9 +210,7 @@ async def test_router_dedup_allows_different_users_to_vote(fresh_db) -> None:
     other = _fake_user("voter-b")
 
     propose_resp = await quests_router.propose(
-        body=quests_router.ProposeBody(
-            session_id=7008, text="gather the herbalist supplies"
-        ),
+        body=quests_router.ProposeBody(session_id=7008, text="gather the herbalist supplies"),
         user=proposer,
     )
     qid = propose_resp["quest_id"]

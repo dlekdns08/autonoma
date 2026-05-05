@@ -34,9 +34,7 @@ async def client(fresh_db) -> AsyncIterator[AsyncClient]:
             yield c
 
 
-async def _register_and_login(
-    c: AsyncClient, username: str, password: str = "secret123"
-) -> None:
+async def _register_and_login(c: AsyncClient, username: str, password: str = "secret123") -> None:
     """Create an already-active user and log them in on ``c``."""
     from autonoma.auth import hash_password
     from autonoma.db.users import create_user
@@ -150,9 +148,7 @@ async def test_user_b_cannot_update_or_delete_user_a_preset(
     client.cookies.clear()
 
     await _register_and_login(client, "bob")
-    up = await client.put(
-        f"/api/harness/presets/{preset_id}", json={"name": "hijack"}
-    )
+    up = await client.put(f"/api/harness/presets/{preset_id}", json={"name": "hijack"})
     assert up.status_code == 403
     rm = await client.delete(f"/api/harness/presets/{preset_id}")
     assert rm.status_code == 403
@@ -250,9 +246,7 @@ async def test_resolve_start_policy_defaults_without_preset(
 ) -> None:
     from autonoma.api import _resolve_start_policy
 
-    content, err = await _resolve_start_policy(
-        user_id=None, preset_id=None, overrides=None
-    )
+    content, err = await _resolve_start_policy(user_id=None, preset_id=None, overrides=None)
     assert err is None
     assert content is not None
     assert content.loop.max_rounds == 40
@@ -327,8 +321,6 @@ async def test_resolve_start_policy_forbids_other_users_preset(
         name="alice-only",
         content=default_policy_content(),
     )
-    content, err = await _resolve_start_policy(
-        user_id=bob.id, preset_id=preset.id, overrides=None
-    )
+    content, err = await _resolve_start_policy(user_id=bob.id, preset_id=preset.id, overrides=None)
     assert content is None
     assert err == "preset not accessible"

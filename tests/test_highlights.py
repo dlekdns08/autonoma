@@ -58,9 +58,7 @@ async def test_snapshot_ranks_by_score(recorder: HighlightRecorder) -> None:
 
 
 @pytest.mark.asyncio
-async def test_max_clips_cap(
-    recorder: HighlightRecorder, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_max_clips_cap(recorder: HighlightRecorder, monkeypatch: pytest.MonkeyPatch) -> None:
     sid = "sess-cap"
     # Force a tight cap so we can verify truncation.
     monkeypatch.setattr(settings, "highlights_max_clips", 2)
@@ -85,9 +83,7 @@ async def test_events_without_session_id_are_ignored(
     # A real session that *does* fire shouldn't see the noise above.
     await bus.emit("boss.defeated", session_id="sess-real", name="Real boss")
 
-    assert recorder.snapshot("sess-real") and len(
-        recorder.snapshot("sess-real")
-    ) == 1
+    assert recorder.snapshot("sess-real") and len(recorder.snapshot("sess-real")) == 1
     # Truly nothing buffered for blank/unset sessions.
     assert recorder.snapshot("") == []
 

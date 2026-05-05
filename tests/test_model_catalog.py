@@ -101,6 +101,7 @@ def test_anthropic_network_failure_falls_back(
         raise RuntimeError("DNS unreachable")
 
     import anthropic as _anthropic_mod
+
     monkeypatch.setattr(_anthropic_mod, "Anthropic", _boom)
 
     items, is_live = model_catalog.list_models("anthropic", api_key="sk-ant-x")
@@ -120,6 +121,7 @@ def test_cache_hit_returns_live_without_calling_sdk(
         return _FakeAnthropicClient(api_key=api_key, page=page)
 
     import anthropic as _anthropic_mod
+
     monkeypatch.setattr(_anthropic_mod, "Anthropic", _factory)
 
     items1, live1 = model_catalog.list_models("anthropic", api_key="k")
@@ -143,8 +145,9 @@ class _FakeOpenAIPage:
 
 
 class _FakeOpenAIClient:
-    def __init__(self, *, api_key: str = "", base_url: str | None = None,
-                 page: _FakeOpenAIPage) -> None:
+    def __init__(
+        self, *, api_key: str = "", base_url: str | None = None, page: _FakeOpenAIPage
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url
 

@@ -121,9 +121,7 @@ async def test_list_clips_for_user_surfaces_bound_clips_owned_by_others(
     alice = await _make_user("alice")
     bob = await _make_user("bob")
 
-    bob_clip = await create_clip(
-        owner_user_id=bob, validated=_make_validated("bob-clip")
-    )
+    bob_clip = await create_clip(owner_user_id=bob, validated=_make_validated("bob-clip"))
     # Alice has no clips of her own yet.
     assert await list_clips_for_user(alice) == []
 
@@ -174,9 +172,7 @@ async def test_rename_clip(fresh_db) -> None:
     from autonoma.mocap.store import create_clip, get_clip_payload, rename_clip
 
     owner = await _make_user()
-    summary = await create_clip(
-        owner_user_id=owner, validated=_make_validated("old-name")
-    )
+    summary = await create_clip(owner_user_id=owner, validated=_make_validated("old-name"))
     renamed = await rename_clip(summary.id, "new-name")
     assert renamed is not None
     assert renamed.name == "new-name"
@@ -192,9 +188,7 @@ async def test_rename_clip(fresh_db) -> None:
     decoded = json.loads(gzip.decompress(base64.b64decode(b64)))
     assert decoded["name"] == "new-name"
     # size_bytes should match the new uncompressed payload size.
-    assert fetched_summary.size_bytes == len(
-        json.dumps(decoded).encode("utf-8")
-    )
+    assert fetched_summary.size_bytes == len(json.dumps(decoded).encode("utf-8"))
 
 
 async def test_rename_clip_missing_returns_none(fresh_db) -> None:
@@ -292,9 +286,7 @@ async def test_upsert_binding_inserts_then_updates_same_key(fresh_db) -> None:
     matching = [
         r
         for r in rows
-        if r.vrm_file == "midori.vrm"
-        and r.trigger_kind == "mood"
-        and r.trigger_value == "happy"
+        if r.vrm_file == "midori.vrm" and r.trigger_kind == "mood" and r.trigger_value == "happy"
     ]
     assert len(matching) == 1
     assert matching[0].clip_id == c2.id
@@ -317,10 +309,7 @@ async def test_delete_binding_returns_true_when_present(fresh_db) -> None:
         updated_by=owner,
     )
     assert (
-        await delete_binding(
-            vrm_file="midori.vrm", trigger_kind="emote", trigger_value="✦"
-        )
-        is True
+        await delete_binding(vrm_file="midori.vrm", trigger_kind="emote", trigger_value="✦") is True
     )
 
 

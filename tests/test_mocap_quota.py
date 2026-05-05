@@ -55,9 +55,7 @@ async def _seed_user(username: str = "alice", role: str = "user") -> str:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.execute(
-                sa_update(users_table)
-                .where(users_table.c.id == user.id)
-                .values(role=role)
+                sa_update(users_table).where(users_table.c.id == user.id).values(role=role)
             )
     return user.id
 
@@ -127,9 +125,7 @@ async def test_rate_limit_hour_blocks_on_twenty_first(
     assert api._check_mocap_upload_rate("u1") == "rate_limited_hour"
 
 
-async def test_rate_limit_is_per_user(
-    fresh_db: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_rate_limit_is_per_user(fresh_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """One user exhausting the bucket must not affect another user."""
     from autonoma import api
 
@@ -381,9 +377,7 @@ async def test_get_clip_payload_touches_last_accessed(
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                select(mocap_clips.c.last_accessed_at).where(
-                    mocap_clips.c.id == clip.id
-                )
+                select(mocap_clips.c.last_accessed_at).where(mocap_clips.c.id == clip.id)
             )
         ).first()
     assert row is not None
@@ -407,9 +401,7 @@ async def test_last_accessed_at_column_exists_on_fresh_db(
     await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
-        rows = (
-            await conn.execute(text("PRAGMA table_info(mocap_clips)"))
-        ).fetchall()
+        rows = (await conn.execute(text("PRAGMA table_info(mocap_clips)"))).fetchall()
     names = {r[1] for r in rows}
     assert "last_accessed_at" in names
 
@@ -459,16 +451,12 @@ async def test_migration_adds_column_to_existing_table(
         # SQLite 3.35+ supports DROP COLUMN — pretend migration 010
         # never ran by removing the new column and rewinding the
         # schema_version counter.
-        await conn.execute(
-            text("ALTER TABLE mocap_clips DROP COLUMN last_accessed_at")
-        )
+        await conn.execute(text("ALTER TABLE mocap_clips DROP COLUMN last_accessed_at"))
         await conn.execute(text("DELETE FROM schema_version WHERE version >= 10"))
 
     # Confirm the simulation landed as expected.
     async with engine.connect() as conn:
-        rows = (
-            await conn.execute(text("PRAGMA table_info(mocap_clips)"))
-        ).fetchall()
+        rows = (await conn.execute(text("PRAGMA table_info(mocap_clips)"))).fetchall()
         names_before = {r[1] for r in rows}
     assert "last_accessed_at" not in names_before
 
@@ -477,16 +465,11 @@ async def test_migration_adds_column_to_existing_table(
     await init_db()
 
     async with get_engine().connect() as conn:
-        rows = (
-            await conn.execute(text("PRAGMA table_info(mocap_clips)"))
-        ).fetchall()
+        rows = (await conn.execute(text("PRAGMA table_info(mocap_clips)"))).fetchall()
         names_after = {r[1] for r in rows}
         legacy = (
             await conn.execute(
-                text(
-                    "SELECT id, size_bytes, last_accessed_at "
-                    "FROM mocap_clips WHERE id='legacy'"
-                )
+                text("SELECT id, size_bytes, last_accessed_at FROM mocap_clips WHERE id='legacy'")
             )
         ).first()
 

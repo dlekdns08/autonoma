@@ -21,9 +21,7 @@ def capture_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def _fake_sleep(duration: float) -> None:
         recorded.append(duration)
 
-    monkeypatch.setattr(
-        "autonoma.harness.llm_error_strategies.asyncio.sleep", _fake_sleep
-    )
+    monkeypatch.setattr("autonoma.harness.llm_error_strategies.asyncio.sleep", _fake_sleep)
     return recorded
 
 

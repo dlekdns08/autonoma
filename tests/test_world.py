@@ -1,6 +1,5 @@
 """Tests for the expanded world system - all 21 subsystems."""
 
-
 from autonoma.world import (
     ACHIEVEMENTS,
     EVOLVED_SPECIES,
@@ -49,6 +48,7 @@ from autonoma.world import (
 
 # ── Agent Personality (Deterministic Bones) ───────────────────────────────
 
+
 class TestAgentBones:
     def test_deterministic(self):
         """Same role+name always produces same bones."""
@@ -67,6 +67,7 @@ class TestAgentBones:
     def test_species_is_valid(self):
         bones = AgentBones.from_role("reviewer", "Bob")
         from autonoma.world import SPECIES
+
         assert bones.species in SPECIES
 
     def test_stats_in_range(self):
@@ -87,10 +88,12 @@ class TestAgentBones:
     def test_species_emoji_matches(self):
         bones = AgentBones.from_role("tester", "Eve")
         from autonoma.world import SPECIES_EMOJIS
+
         assert bones.species_emoji == SPECIES_EMOJIS[bones.species]
 
 
 # ── Relationships ──────────────────────────────────────────────────────────
+
 
 class TestRelationships:
     def test_initial_trust(self):
@@ -145,6 +148,7 @@ class TestRelationships:
 
 # ── Agent Memory ───────────────────────────────────────────────────────────
 
+
 class TestAgentMemory:
     def test_remember_and_recall(self):
         mem = AgentMemory()
@@ -198,6 +202,7 @@ class TestAgentMemory:
 
 # ── XP / Level / Achievements ─────────────────────────────────────────────
 
+
 class TestAgentStats:
     def test_initial_state(self):
         stats = AgentStats()
@@ -245,6 +250,7 @@ class TestAgentStats:
 
 # ── World Events ───────────────────────────────────────────────────────────
 
+
 class TestWorldEvents:
     def test_event_generation(self):
         queue = WorldEventQueue(seed=42)
@@ -266,6 +272,7 @@ class TestWorldEvents:
             if r1 is None:
                 assert r2 is None
             else:
+                assert r2 is not None
                 assert r1.event_type == r2.event_type
 
     def test_resolve(self):
@@ -309,6 +316,7 @@ class TestWorldEvents:
 
 # ── Evolution System ──────────────────────────────────────────────────────
 
+
 class TestEvolution:
     def test_no_evolution_at_low_level(self):
         bones = AgentBones.from_role("coder", "Alice")
@@ -335,6 +343,7 @@ class TestEvolution:
 
     def test_all_species_have_evolutions(self):
         from autonoma.world import SPECIES
+
         for sp in SPECIES:
             assert sp in EVOLVED_SPECIES
             assert 5 in EVOLVED_SPECIES[sp]
@@ -342,6 +351,7 @@ class TestEvolution:
 
 
 # ── Two-Layer Memory (Hindsight Notes) ────────────────────────────────────
+
 
 class TestHindsightNotes:
     def test_add_hindsight(self):
@@ -405,6 +415,7 @@ class TestHindsightNotes:
 
 # ── Extended Relationships ────────────────────────────────────────────────
 
+
 class TestExtendedRelationships:
     def test_bond_level_soulmates(self):
         rel = Relationship(trust=0.95)
@@ -448,6 +459,7 @@ class TestExtendedRelationships:
 
 
 # ── Guild System ──────────────────────────────────────────────────────────
+
 
 class TestGuildSystem:
     def test_create_guild(self):
@@ -521,6 +533,7 @@ class TestGuildSystem:
 
 # ── Gossip Network ────────────────────────────────────────────────────────
 
+
 class TestGossipNetwork:
     def test_observe(self):
         gossip = GossipNetwork()
@@ -575,6 +588,7 @@ class TestGossipNetwork:
 
 # ── Campfire ──────────────────────────────────────────────────────────────
 
+
 class TestCampfire:
     def test_gather_and_dismiss(self):
         fire = Campfire()
@@ -615,6 +629,7 @@ class TestCampfire:
 
 
 # ── Debate System ─────────────────────────────────────────────────────────
+
 
 class TestDebateSystem:
     def test_create_debate(self):
@@ -669,6 +684,7 @@ class TestDebateSystem:
 
 
 # ── Reputation Leaderboard ────────────────────────────────────────────────
+
 
 class TestLeaderboard:
     def test_update_and_rank(self):
@@ -730,6 +746,7 @@ class TestLeaderboard:
 
 
 # ── Narrative Engine ──────────────────────────────────────────────────────
+
 
 class TestNarrativeEngine:
     def test_narrate_spawn(self):
@@ -821,6 +838,7 @@ class TestNarrativeEngine:
 
 # ── Extended Stats ────────────────────────────────────────────────────────
 
+
 class TestExtendedStats:
     def test_title_progression(self):
         stats = AgentStats()
@@ -861,6 +879,7 @@ class TestExtendedStats:
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Day/Night Cycle & Weather
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestWorldClock:
     def test_initial_state(self):
@@ -929,6 +948,7 @@ class TestWorldClock:
 # NEW: Agent Dreams
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestDreamEngine:
     def test_generate_dream(self):
         engine = DreamEngine()
@@ -941,12 +961,22 @@ class TestDreamEngine:
     def test_dream_type_from_mood(self):
         engine = DreamEngine(seed=1)
         frustrated_dream = engine.generate_dream(
-            "Alice", "cat", [], Mood.FRUSTRATED, [], 1,
+            "Alice",
+            "cat",
+            [],
+            Mood.FRUSTRATED,
+            [],
+            1,
         )
         assert frustrated_dream.dream_type == "nightmare"
 
         happy_dream = engine.generate_dream(
-            "Bob", "fox", [], Mood.HAPPY, [], 2,
+            "Bob",
+            "fox",
+            [],
+            Mood.HAPPY,
+            [],
+            2,
         )
         assert happy_dream.dream_type == "peaceful"
 
@@ -975,6 +1005,7 @@ class TestDreamEngine:
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Agent Diary
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestAgentDiary:
     def test_write_entry(self):
@@ -1014,6 +1045,7 @@ class TestAgentDiary:
 # NEW: Quests / Side Missions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestQuestBoard:
     def test_assign_quest(self):
         board = QuestBoard()
@@ -1032,12 +1064,14 @@ class TestQuestBoard:
     def test_quest_completion(self):
         board = QuestBoard(seed=100)
         quest = board.assign_quest("Alice", 1)
+        assert quest is not None
         completed = board.check_completion("Alice", quest.condition, 2)
         assert len(completed) >= 1 or len(completed) == 0  # Depends on condition match
 
     def test_quest_expiry(self):
         board = QuestBoard()
         quest = board.assign_quest("Alice", 1)
+        assert quest is not None
         quest.round_deadline = 5
         expired = board.expire_quests(6)
         assert len(expired) >= 1
@@ -1060,6 +1094,7 @@ class TestQuestBoard:
     def test_no_duplicate_quests(self):
         board = QuestBoard(seed=42)
         q1 = board.assign_quest("Alice", 1)
+        assert q1 is not None
         q1.status = QuestStatus.COMPLETED
         board.completed_quests.append(q1)
         # Second quest should be different (if available)
@@ -1071,6 +1106,7 @@ class TestQuestBoard:
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Trading Post
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestTradingPost:
     def test_propose_trade(self):
@@ -1113,9 +1149,11 @@ class TestTradingPost:
 # NEW: Boss Fight
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBossFight:
     def test_generate_boss(self):
         import random as rng_mod
+
         r = rng_mod.Random(42)
         boss = BossAgent.generate(10, 3, r)
         assert boss.level >= 3
@@ -1124,6 +1162,7 @@ class TestBossFight:
 
     def test_take_damage(self):
         import random as rng_mod
+
         boss = BossAgent.generate(10, 3, rng_mod.Random(42))
         initial_hp = boss.hp
         boss.take_damage("Alice", 20)
@@ -1131,18 +1170,21 @@ class TestBossFight:
 
     def test_boss_defeated(self):
         import random as rng_mod
+
         boss = BossAgent.generate(10, 1, rng_mod.Random(42))
         boss.take_damage("Alice", boss.hp)
         assert boss.phase == BossPhase.DEFEATED
 
     def test_hp_bar(self):
         import random as rng_mod
+
         boss = BossAgent.generate(10, 1, rng_mod.Random(42))
         bar = boss.hp_bar
         assert "█" in bar or "░" in bar
 
     def test_boss_card(self):
         import random as rng_mod
+
         boss = BossAgent.generate(10, 1, rng_mod.Random(42))
         card = boss.get_boss_card()
         assert "BOSS ENCOUNTER" in card
@@ -1182,17 +1224,22 @@ class TestBossFight:
 # NEW: Love Letters & Hate Mail
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestPostOffice:
     def test_send_love_letter(self):
         post = PostOffice()
-        letter = post.check_and_send("Alice", "Bob", trust=0.95, sender_species="cat", round_number=1)
+        letter = post.check_and_send(
+            "Alice", "Bob", trust=0.95, sender_species="cat", round_number=1
+        )
         assert letter is not None
         assert letter.letter_type == "love"
         assert "Alice" in letter.content
 
     def test_send_rivalry(self):
         post = PostOffice()
-        letter = post.check_and_send("Alice", "Bob", trust=0.1, sender_species="fox", round_number=1)
+        letter = post.check_and_send(
+            "Alice", "Bob", trust=0.1, sender_species="fox", round_number=1
+        )
         assert letter is not None
         assert letter.letter_type == "rivalry"
 
@@ -1228,6 +1275,7 @@ class TestPostOffice:
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Fortune Cookies
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestFortuneCookies:
     def test_give_cookie(self):
@@ -1288,6 +1336,7 @@ class TestFortuneCookies:
 # NEW: Agent Ghosts
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestGhostRealm:
     def test_create_ghost(self):
         realm = GhostRealm()
@@ -1338,6 +1387,7 @@ class TestGhostRealm:
 # ═══════════════════════════════════════════════════════════════════════════════
 # NEW: Multiverse Branching
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestMultiverse:
     def test_record_branch(self):

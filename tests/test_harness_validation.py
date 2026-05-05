@@ -43,9 +43,7 @@ def test_automatic_spawn_plus_off_enforcement_rejected() -> None:
     c = default_policy_content().model_copy(deep=True)
     c.spawn.approval_mode = "automatic"
     c.safety.enforcement_level = "off"
-    combo_issues = [
-        i for i in check_content(c, is_admin=True) if i.path == "combo"
-    ]
+    combo_issues = [i for i in check_content(c, is_admin=True) if i.path == "combo"]
     assert len(combo_issues) == 1
 
 

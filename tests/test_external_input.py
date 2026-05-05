@@ -32,9 +32,7 @@ def router():
 
 @pytest.mark.asyncio
 async def test_dropped_when_no_swarm_bound(router):
-    res = await router.submit(
-        ExternalMessage(source="test", user="alice", text="hello")
-    )
+    res = await router.submit(ExternalMessage(source="test", user="alice", text="hello"))
     assert res.action is RouteAction.DROPPED_NO_SWARM
 
 
@@ -42,9 +40,7 @@ async def test_dropped_when_no_swarm_bound(router):
 async def test_injected_when_swarm_bound(router):
     swarm = _FakeSwarm()
     router.bind_swarm(swarm)
-    res = await router.submit(
-        ExternalMessage(source="test", user="alice", text="hello")
-    )
+    res = await router.submit(ExternalMessage(source="test", user="alice", text="hello"))
     assert res.action is RouteAction.INJECTED
     assert len(swarm.calls) == 1
     assert "[test:alice] hello" in swarm.calls[0][0]
@@ -55,9 +51,7 @@ async def test_blocked_source(router):
     swarm = _FakeSwarm()
     router.bind_swarm(swarm)
     router.block("test")
-    res = await router.submit(
-        ExternalMessage(source="test", user="alice", text="hi")
-    )
+    res = await router.submit(ExternalMessage(source="test", user="alice", text="hi"))
     assert res.action is RouteAction.DROPPED_BLOCKED_SOURCE
     assert swarm.calls == []
 
@@ -83,9 +77,7 @@ async def test_active_poll_consumes_message(router):
     swarm = _FakeSwarm()
     router.bind_swarm(swarm)
     router.open_poll("p1", "Color?", ["blue", "red"], duration_sec=5)
-    res = await router.submit(
-        ExternalMessage(source="test", user="alice", text="blue please!")
-    )
+    res = await router.submit(ExternalMessage(source="test", user="alice", text="blue please!"))
     assert res.action is RouteAction.VOTED
     assert res.detail == "blue"
     # Poll consumes the message — swarm shouldn't have seen it.
@@ -116,7 +108,5 @@ async def test_poll_numeric_index(router):
 async def test_swarm_rejects_then_dropped(router):
     swarm = _FakeSwarm(accept=False)
     router.bind_swarm(swarm)
-    res = await router.submit(
-        ExternalMessage(source="test", user="alice", text="hello")
-    )
+    res = await router.submit(ExternalMessage(source="test", user="alice", text="hello"))
     assert res.action is RouteAction.DROPPED_NO_SWARM

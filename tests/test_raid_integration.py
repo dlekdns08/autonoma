@@ -100,6 +100,7 @@ async def test_swarm_emits_raid_victory_when_guild_clears_boss():
             import random as _r
 
             from autonoma.world import BossAgent
+
             swarm.boss_arena.current_boss = BossAgent.generate(10, 5, _r.Random(1))
             swarm.boss_arena.current_boss.hp = 1  # one-tap kill
             swarm.boss_arena.current_boss.max_hp = 1

@@ -86,12 +86,18 @@ async def test_winner_is_a_when_completion_higher(fresh_db) -> None:
     tying on any other axis — completion is the top priority."""
     await init_db()
     await _seed_run(
-        session_id=101, task_count=10, tasks_done=10,
-        total_rounds=8, llm_calls=200,
+        session_id=101,
+        task_count=10,
+        tasks_done=10,
+        total_rounds=8,
+        llm_calls=200,
     )
     await _seed_run(
-        session_id=102, task_count=10, tasks_done=5,
-        total_rounds=8, llm_calls=200,
+        session_id=102,
+        task_count=10,
+        tasks_done=5,
+        total_rounds=8,
+        llm_calls=200,
     )
     # Even an extra crit anomaly on A should not flip the result —
     # crit only matters when tasks_done_pct + rounds tie.
@@ -116,10 +122,8 @@ async def test_winner_is_a_when_completion_higher(fresh_db) -> None:
 async def test_tie_when_metrics_match(fresh_db) -> None:
     """Identical KPIs and zero anomalies on both sides → tie."""
     await init_db()
-    await _seed_run(session_id=201, task_count=8, tasks_done=8,
-                    total_rounds=6, llm_calls=120)
-    await _seed_run(session_id=202, task_count=8, tasks_done=8,
-                    total_rounds=6, llm_calls=120)
+    await _seed_run(session_id=201, task_count=8, tasks_done=8, total_rounds=6, llm_calls=120)
+    await _seed_run(session_id=202, task_count=8, tasks_done=8, total_rounds=6, llm_calls=120)
     report = await compare_sessions(201, 202)
     assert report.winner == "tie"
     assert report.deltas["tasks_done_pct"] == 0.0
@@ -130,10 +134,8 @@ async def test_tie_when_metrics_match(fresh_db) -> None:
 async def test_rounds_break_completion_tie(fresh_db) -> None:
     """Same completion, fewer rounds wins (B in this case)."""
     await init_db()
-    await _seed_run(session_id=301, task_count=10, tasks_done=10,
-                    total_rounds=12, llm_calls=200)
-    await _seed_run(session_id=302, task_count=10, tasks_done=10,
-                    total_rounds=7, llm_calls=200)
+    await _seed_run(session_id=301, task_count=10, tasks_done=10, total_rounds=12, llm_calls=200)
+    await _seed_run(session_id=302, task_count=10, tasks_done=10, total_rounds=7, llm_calls=200)
     report = await compare_sessions(301, 302)
     assert report.winner == "b"
 
@@ -141,10 +143,8 @@ async def test_rounds_break_completion_tie(fresh_db) -> None:
 async def test_crit_anomalies_break_round_tie(fresh_db) -> None:
     """Tied on completion AND rounds; A has a crit anomaly, so B wins."""
     await init_db()
-    await _seed_run(session_id=401, task_count=10, tasks_done=10,
-                    total_rounds=5, llm_calls=150)
-    await _seed_run(session_id=402, task_count=10, tasks_done=10,
-                    total_rounds=5, llm_calls=150)
+    await _seed_run(session_id=401, task_count=10, tasks_done=10, total_rounds=5, llm_calls=150)
+    await _seed_run(session_id=402, task_count=10, tasks_done=10, total_rounds=5, llm_calls=150)
     await _seed_anomaly(session_id=401, kind="repetition", severity="crit")
     await _seed_anomaly(session_id=402, kind="repetition", severity="warn")
     report = await compare_sessions(401, 402)
@@ -157,10 +157,8 @@ async def test_crit_anomalies_break_round_tie(fresh_db) -> None:
 async def test_llm_calls_break_crit_tie(fresh_db) -> None:
     """All higher-priority axes tied; lower llm_calls wins (A)."""
     await init_db()
-    await _seed_run(session_id=501, task_count=10, tasks_done=10,
-                    total_rounds=5, llm_calls=80)
-    await _seed_run(session_id=502, task_count=10, tasks_done=10,
-                    total_rounds=5, llm_calls=160)
+    await _seed_run(session_id=501, task_count=10, tasks_done=10, total_rounds=5, llm_calls=80)
+    await _seed_run(session_id=502, task_count=10, tasks_done=10, total_rounds=5, llm_calls=160)
     report = await compare_sessions(501, 502)
     assert report.winner == "a"
 

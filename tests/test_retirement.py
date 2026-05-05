@@ -147,8 +147,9 @@ async def test_retire_character_updates_row_and_emits(
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                select(characters.c.retired_at, characters.c.is_alive)
-                .where(characters.c.character_uuid == cu)
+                select(characters.c.retired_at, characters.c.is_alive).where(
+                    characters.c.character_uuid == cu
+                )
             )
         ).first()
     assert row is not None
@@ -195,12 +196,14 @@ async def test_record_ghost_appearance_inserts_row(fresh_db: Path) -> None:
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(ghost_appearances).where(
-                    ghost_appearances.c.character_uuid == cu
+            (
+                await conn.execute(
+                    select(ghost_appearances).where(ghost_appearances.c.character_uuid == cu)
                 )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     assert len(rows) == 1
     assert rows[0]["kind"] == "advice"
     assert rows[0]["round_number"] == 7

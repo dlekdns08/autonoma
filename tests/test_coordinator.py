@@ -33,12 +33,8 @@ async def _register_pair(store: CoordinatorStore) -> None:
 
 async def test_pair_two_same_goal_invites(store):
     await _register_pair(store)
-    inv_a = await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="solve fizzbuzz")
-    )
-    inv_b = await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="solve fizzbuzz")
-    )
+    inv_a = await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="solve fizzbuzz"))
+    inv_b = await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="solve fizzbuzz"))
 
     pairs = await store.pair_pending_matches()
     assert len(pairs) == 1
@@ -55,23 +51,15 @@ async def test_pair_two_same_goal_invites(store):
 
 async def test_no_pairing_for_different_goals(store):
     await _register_pair(store)
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="goal-x")
-    )
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="goal-y")
-    )
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="goal-x"))
+    await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="goal-y"))
     assert await store.pair_pending_matches() == []
 
 
 async def test_no_self_pairing(store):
     await store.register_instance("inst-a", "Alpha", "https://a.example")
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="solo")
-    )
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="solo")
-    )
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="solo"))
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="solo"))
     # Same instance can't be both sides of a match.
     assert await store.pair_pending_matches() == []
 
@@ -81,12 +69,8 @@ async def test_no_self_pairing(store):
 
 async def test_submit_scores_resolves_match_and_updates_elo(store):
     await _register_pair(store)
-    inv_a = await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="benchmark")
-    )
-    inv_b = await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="benchmark")
-    )
+    inv_a = await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="benchmark"))
+    inv_b = await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="benchmark"))
     pairs = await store.pair_pending_matches()
     assert len(pairs) == 1
     match_id = pairs[0][0].match_id
@@ -141,9 +125,7 @@ async def test_submit_scores_resolves_match_and_updates_elo(store):
     assert seen[0]["match_id"] == match_id
 
     # Re-submitting after resolution returns the cached result, no extra event.
-    cached = await store.submit_score(
-        match_id, "inst-a", {"task_completed": True}
-    )
+    cached = await store.submit_score(match_id, "inst-a", {"task_completed": True})
     assert cached is not None
     assert cached.match_id == match_id
     assert len(seen) == 1
@@ -158,12 +140,8 @@ async def test_concurrent_score_submissions_resolve_once(store):
     match exactly once (single ``coordinator.match_resolved`` event,
     ELO sum conserved, deterministic A/B ordering)."""
     await _register_pair(store)
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="race")
-    )
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="race")
-    )
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="race"))
+    await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="race"))
     pairs = await store.pair_pending_matches()
     assert len(pairs) == 1
     match_id = pairs[0][0].match_id
@@ -225,12 +203,8 @@ async def test_concurrent_score_submissions_resolve_once(store):
 
 async def test_draw_splits_elo(store):
     await _register_pair(store)
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="tied")
-    )
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="tied")
-    )
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="tied"))
+    await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="tied"))
     pairs = await store.pair_pending_matches()
     match_id = pairs[0][0].match_id
     assert match_id is not None
@@ -256,12 +230,8 @@ async def test_draw_splits_elo(store):
 async def test_leaderboard_sorted_after_match(store):
     await _register_pair(store)
     await store.register_instance("inst-c", "Gamma", "https://c.example")
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-a", goal="rank-test")
-    )
-    await store.enqueue_match(
-        MatchInvite(instance_id="inst-b", goal="rank-test")
-    )
+    await store.enqueue_match(MatchInvite(instance_id="inst-a", goal="rank-test"))
+    await store.enqueue_match(MatchInvite(instance_id="inst-b", goal="rank-test"))
     pairs = await store.pair_pending_matches()
     match_id = pairs[0][0].match_id
     assert match_id is not None
@@ -318,12 +288,8 @@ async def test_state_round_trips_to_disk(tmp_path, monkeypatch):
     pairs = await s1.pair_pending_matches()
     match_id = pairs[0][0].match_id
     assert match_id is not None
-    await s1.submit_score(
-        match_id, "inst-a", {"task_completed": True, "tasks_done": 3}
-    )
-    await s1.submit_score(
-        match_id, "inst-b", {"task_completed": False, "tasks_done": 1}
-    )
+    await s1.submit_score(match_id, "inst-a", {"task_completed": True, "tasks_done": 3})
+    await s1.submit_score(match_id, "inst-b", {"task_completed": False, "tasks_done": 1})
 
     # Fresh instance pointed at the same directory must see the same state.
     s2 = CoordinatorStore(root=root)

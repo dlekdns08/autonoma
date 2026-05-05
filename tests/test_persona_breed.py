@@ -46,9 +46,7 @@ async def _ensure_owner(owner_id: str | None) -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         existing = (
-            await conn.execute(
-                select(users_table.c.id).where(users_table.c.id == owner_id)
-            )
+            await conn.execute(select(users_table.c.id).where(users_table.c.id == owner_id))
         ).first()
         if existing is not None:
             return
@@ -124,9 +122,7 @@ def test_merge_tags_prefers_common_then_unique():
 
 
 def test_merge_tags_caps_length():
-    merged = merge_tags(
-        ["a", "b", "c", "d"], ["e", "f", "g", "h"], max_tags=3
-    )
+    merged = merge_tags(["a", "b", "c", "d"], ["e", "f", "g", "h"], max_tags=3)
     assert len(merged) == 3
 
 
@@ -170,9 +166,7 @@ async def test_breed_creates_child_with_lineage(fresh_db):
     # Confirm the row really hit the DB with parent_persona_ids set.
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(select(personas).where(personas.c.id == child["id"]))
-        ).first()
+        row = (await conn.execute(select(personas).where(personas.c.id == child["id"]))).first()
     assert row is not None
     assert json.loads(row._mapping["parent_persona_ids"]) == [parent_a, parent_b]
 
@@ -199,9 +193,7 @@ async def test_breed_offline_blends_prompt_style(fresh_db):
 
 async def test_breed_same_parent_rejected(fresh_db):
     await init_db()
-    parent = await _insert_persona(
-        name="Solo", seed_string="coder:solo", tags=["alone"]
-    )
+    parent = await _insert_persona(name="Solo", seed_string="coder:solo", tags=["alone"])
     with pytest.raises(ValueError):
         await breed_personas(
             parent_a_id=parent,
@@ -225,9 +217,7 @@ async def test_breed_router_same_id_returns_400(fresh_db):
     # test. ``app.include_router`` is idempotent w.r.t. duplicate
     # routes — FastAPI will pick the first match, which is fine here
     # because no other route owns ``/api/personas/breed``.
-    if not any(
-        getattr(r, "path", None) == "/api/personas/breed" for r in app.routes
-    ):
+    if not any(getattr(r, "path", None) == "/api/personas/breed" for r in app.routes):
         app.include_router(_breed_router.router)
 
     transport = ASGITransport(app=app)
@@ -243,6 +233,7 @@ async def test_breed_router_same_id_returns_400(fresh_db):
                 get_user_by_username,
                 update_user_status,
             )
+
             u = await get_user_by_username("breeder")
             assert u is not None
             await update_user_status(u.id, "active")

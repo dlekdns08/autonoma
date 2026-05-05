@@ -31,9 +31,7 @@ def test_token_file_fallback_for_github_app_sidecar(
     monkeypatch.delenv("AUTONOMA_AGENT_GH_TOKEN_ALICE", raising=False)
     env_file = tmp_path / "gh.env"
     env_file.write_text(
-        "# auto-generated\n"
-        "# expires_at=2026-04-22T10:00:00Z\n"
-        "GH_TOKEN=ghs_installationtoken\n",
+        "# auto-generated\n# expires_at=2026-04-22T10:00:00Z\nGH_TOKEN=ghs_installationtoken\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("GH_TOKEN_FILE", str(env_file))
@@ -85,6 +83,7 @@ def test_no_token_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_workspace_guard_rejects_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "output_dir", tmp_path / "out")
     (tmp_path / "out").mkdir()
     (tmp_path / "outside").mkdir()
@@ -94,6 +93,7 @@ def test_workspace_guard_rejects_escape(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_missing_repo_returns_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "output_dir", tmp_path)
     monkeypatch.setenv("GH_TOKEN", "x")
     res = open_pull_request(
@@ -109,6 +109,7 @@ def test_missing_repo_returns_reason(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 def test_missing_token_returns_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from autonoma.config import settings
+
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.setattr(settings, "output_dir", tmp_path)

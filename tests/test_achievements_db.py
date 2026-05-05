@@ -97,15 +97,11 @@ async def test_batch_record_dedups(fresh_db):
     char_uuid = await _seed_character()
 
     # First call: everything's new.
-    new_round_one = await batch_record(
-        char_uuid, ["first_blood", "hello_world", "chatty"]
-    )
+    new_round_one = await batch_record(char_uuid, ["first_blood", "hello_world", "chatty"])
     assert sorted(new_round_one) == sorted(["first_blood", "hello_world", "chatty"])
 
     # Second call with overlap: only the genuinely-new id comes back.
-    new_round_two = await batch_record(
-        char_uuid, ["first_blood", "hello_world", "oops"]
-    )
+    new_round_two = await batch_record(char_uuid, ["first_blood", "hello_world", "oops"])
     assert new_round_two == ["oops"]
 
     # And no duplicate rows landed in the table.
@@ -113,13 +109,12 @@ async def test_batch_record_dedups(fresh_db):
     async with engine.connect() as conn:
         ids = (
             await conn.execute(
-                select(earned_achievements.c.achievement_id)
-                .where(earned_achievements.c.character_uuid == char_uuid)
+                select(earned_achievements.c.achievement_id).where(
+                    earned_achievements.c.character_uuid == char_uuid
+                )
             )
         ).all()
-    assert sorted(r[0] for r in ids) == sorted(
-        ["first_blood", "hello_world", "chatty", "oops"]
-    )
+    assert sorted(r[0] for r in ids) == sorted(["first_blood", "hello_world", "chatty", "oops"])
 
 
 async def test_list_recent_globally_honours_limit(fresh_db):

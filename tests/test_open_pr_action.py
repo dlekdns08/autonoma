@@ -96,7 +96,8 @@ async def test_action_open_pr_missing_args_returns_structured_failure(
     )
 
     result = await agent._action_open_pr(  # type: ignore[attr-defined]
-        {"action": "open_pr"}, project,
+        {"action": "open_pr"},
+        project,
     )
     assert called["hit"] is False
     assert result["ok"] is False
@@ -137,12 +138,16 @@ async def test_action_open_pr_delegates_with_agent_name(
     # ``from autonoma.agents.tools import open_pull_request`` at call
     # time, so monkeypatching the package surface is enough.
     import autonoma.agents.tools as tools_pkg
+
     monkeypatch.setattr(tools_pkg, "open_pull_request", _fake_open_pr)
     monkeypatch.setattr(git_pr_mod, "open_pull_request", _fake_open_pr)
 
     agent = _make_stub_agent(name="Midori")
     project = ProjectState(
-        project_uuid="test", name="n", description="", goal="",
+        project_uuid="test",
+        name="n",
+        description="",
+        goal="",
     )
 
     result = await agent._action_open_pr(  # type: ignore[attr-defined]
@@ -161,10 +166,7 @@ async def test_action_open_pr_delegates_with_agent_name(
     assert result["url"] == "https://github.com/x/y/pull/42"
     assert result["action"] == "open_pr"
     # Event emitted with the agent name + url.
-    assert any(
-        e.get("agent") == "Midori" and "pull/42" in str(e.get("url", ""))
-        for e in captured
-    )
+    assert any(e.get("agent") == "Midori" and "pull/42" in str(e.get("url", "")) for e in captured)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -189,6 +191,7 @@ def _make_stub_agent(name: str = "Agent"):
             self.stats = AgentStats()
             from autonoma.harness.policy import default_policy_content as _defp
             from autonoma.world import AgentMemory, Mood
+
             self.memory = AgentMemory()
             self.mood = Mood.FOCUSED
             self.policy = _defp()

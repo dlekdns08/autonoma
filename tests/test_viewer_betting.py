@@ -229,6 +229,7 @@ async def test_router_503_when_disabled_post_market(
 ) -> None:
     """``POST /api/betting/markets`` short-circuits to 503 when off."""
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.post(
@@ -248,6 +249,7 @@ async def test_router_503_when_disabled_get_markets(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.get("/api/betting/markets", params={"session_id": 1})
@@ -259,6 +261,7 @@ async def test_router_503_when_disabled_place_bet(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.post(
@@ -274,6 +277,7 @@ async def test_router_503_when_disabled_lock(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.post(
@@ -288,6 +292,7 @@ async def test_router_503_when_disabled_resolve(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.post(
@@ -303,6 +308,7 @@ async def test_router_503_when_disabled_leaderboard(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.get(
@@ -317,6 +323,7 @@ async def test_router_503_when_disabled_balance(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "viewer_betting_enabled", False)
 
     r = await client.get(

@@ -86,12 +86,7 @@ async def test_network_denied_on_seatbelt():
     if backend_info()["backend"] != "seatbelt":
         pytest.skip("network deny test only meaningful on seatbelt backend")
     sandbox = CodeSandbox()
-    code = (
-        "import socket\n"
-        "s = socket.socket()\n"
-        "s.settimeout(1)\n"
-        "s.connect(('1.1.1.1', 80))\n"
-    )
+    code = "import socket\ns = socket.socket()\ns.settimeout(1)\ns.connect(('1.1.1.1', 80))\n"
     result = await sandbox.run(code, Language.PYTHON)
     assert not result.ok
 
@@ -100,10 +95,7 @@ async def test_sensitive_path_denied_on_seatbelt():
     if backend_info()["backend"] != "seatbelt":
         pytest.skip("sensitive path deny test only meaningful on seatbelt backend")
     sandbox = CodeSandbox()
-    code = (
-        "import os\n"
-        'open(os.path.expanduser("~/.ssh/id_rsa")).read()\n'
-    )
+    code = 'import os\nopen(os.path.expanduser("~/.ssh/id_rsa")).read()\n'
     result = await sandbox.run(code, Language.PYTHON)
     assert not result.ok
 
@@ -111,11 +103,7 @@ async def test_sensitive_path_denied_on_seatbelt():
 async def test_workdir_isolation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     sandbox = CodeSandbox()
-    code = (
-        "import os\n"
-        'open("out.txt", "w").write("hi")\n'
-        'print(os.listdir("."))\n'
-    )
+    code = 'import os\nopen("out.txt", "w").write("hi")\nprint(os.listdir("."))\n'
     result = await sandbox.run(code, Language.PYTHON)
     assert result.ok
     assert "out.txt" in result.stdout
@@ -197,9 +185,7 @@ async def test_cpu_time_limit_kills_busy_loop():
     # The process may be reported as timed_out or not depending on which
     # signal lands first; the key invariant is the wall clock didn't
     # have to wait for the 8s cap.
-    assert elapsed < 5.0, (
-        f"CPU-bound code ran {elapsed:.2f}s — RLIMIT_CPU didn't kill it"
-    )
+    assert elapsed < 5.0, f"CPU-bound code ran {elapsed:.2f}s — RLIMIT_CPU didn't kill it"
 
 
 async def test_memory_limit_kills_allocator():
@@ -221,10 +207,7 @@ async def test_memory_limit_kills_allocator():
         )
     limits = SandboxLimits(memory_mb=64, wall_time_sec=6.0, cpu_time_sec=3)
     sandbox = CodeSandbox(limits=limits)
-    code = (
-        "buf = bytearray(2 * 1024 * 1024 * 1024)\n"
-        "print('LEAKED', len(buf))\n"
-    )
+    code = "buf = bytearray(2 * 1024 * 1024 * 1024)\nprint('LEAKED', len(buf))\n"
     result = await sandbox.run(code, Language.PYTHON)
     assert not result.ok, "oversized allocation succeeded — rlimit not enforced"
     assert "LEAKED" not in result.stdout

@@ -123,6 +123,7 @@ def test_register_unknown_slot_raises() -> None:
     from autonoma.harness.strategies import register
 
     with pytest.raises(KeyError):
+
         @register("imaginary.section", "value")
         def _impl() -> None:
             return None
@@ -137,6 +138,7 @@ def test_register_replaces_entry_and_lookup_returns_new_impl() -> None:
     slot = s.all_slots()[0]
     original = s.lookup(*slot)
     try:
+
         @s.register(*slot)
         def _impl(*args, **kwargs) -> str:
             return "swapped"

@@ -16,6 +16,7 @@ from autonoma.tui.sprites import render_speech_bubble
 
 # ── _extract_json ────────────────────────────────────────────────────────────
 
+
 class TestExtractJson:
     def test_plain_json(self):
         assert _extract_json('{"action": "idle"}') == {"action": "idle"}
@@ -44,9 +45,12 @@ class TestExtractJson:
 
 # ── Inbox size limit ─────────────────────────────────────────────────────────
 
+
 class TestInboxLimit:
     def test_inbox_bounded(self):
-        persona = AgentPersona(name="Test", emoji="T", role="tester", skills=["test"], color="white")
+        persona = AgentPersona(
+            name="Test", emoji="T", role="tester", skills=["test"], color="white"
+        )
         agent = AutonomousAgent(persona)
 
         for i in range(MAX_INBOX_SIZE + 20):
@@ -64,6 +68,7 @@ class TestInboxLimit:
 
 
 # ── Message routing deduplication ────────────────────────────────────────────
+
 
 class TestMessageRouting:
     def test_no_duplicate_delivery(self):
@@ -111,6 +116,7 @@ class TestMessageRouting:
 
 # ── Spawn failure ────────────────────────────────────────────────────────────
 
+
 class TestSpawnLimit:
     def test_spawn_returns_none_at_max(self):
         swarm = AgentSwarm()
@@ -126,6 +132,7 @@ class TestSpawnLimit:
 
 
 # ── Renderer detach ──────────────────────────────────────────────────────────
+
 
 class TestRendererDetach:
     def test_detach_unsubscribes(self):
@@ -155,6 +162,7 @@ class TestRendererDetach:
 
 # ── Speech bubble edge cases ─────────────────────────────────────────────────
 
+
 class TestSpeechBubbleEdgeCases:
     def test_whitespace_only(self):
         assert render_speech_bubble("   ") == []
@@ -173,6 +181,7 @@ class TestSpeechBubbleEdgeCases:
 
 
 # ── Stall detection (director) ───────────────────────────────────────────────
+
 
 class TestStallDetection:
     def test_stall_counter_resets_on_progress(self):

@@ -6,12 +6,31 @@ We use a per-test temp dir so each test gets a clean SQLite file.
 from __future__ import annotations
 
 import asyncio
+from typing import TypedDict
 
 import pytest
 
 from autonoma.config import settings
 from autonoma.db import dispose_engine
 from autonoma.db.registry import CharacterRegistry, seed_hash_for
+
+
+class _Bones(TypedDict):
+    """Typed shape for the ``hydrate(**bones)`` kwargs.
+
+    Pyright can't infer per-key types from a plain ``dict[str, Any]``
+    when it's unpacked into a function with strongly-typed parameters,
+    so the test fixture used to produce 49 ``reportArgumentType``
+    diagnostics. Declaring the shape via TypedDict propagates the
+    key→type mapping into every call site.
+    """
+
+    bones_species: str
+    bones_species_emoji: str
+    bones_catchphrase: str
+    bones_rarity: str
+    bones_stats: dict[str, int]
+    bones_traits: list[str]
 
 
 @pytest.fixture(autouse=True)
@@ -31,16 +50,16 @@ def _isolated_db(tmp_path, monkeypatch):
         loop.close()
 
 
-COMMON_BONES = dict(
-    bones_species="fox",
-    bones_species_emoji="🦊",
-    bones_catchphrase="Kon kon~",
-    bones_rarity="common",
-    bones_stats={"debugging": 5, "patience": 7, "chaos": 3, "wisdom": 6, "speed": 4},
-    bones_traits=["diligent", "friendly"],
-)
+COMMON_BONES: _Bones = {
+    "bones_species": "fox",
+    "bones_species_emoji": "🦊",
+    "bones_catchphrase": "Kon kon~",
+    "bones_rarity": "common",
+    "bones_stats": {"debugging": 5, "patience": 7, "chaos": 3, "wisdom": 6, "speed": 4},
+    "bones_traits": ["diligent", "friendly"],
+}
 
-LEGENDARY_BONES = {**COMMON_BONES, "bones_rarity": "legendary"}
+LEGENDARY_BONES: _Bones = {**COMMON_BONES, "bones_rarity": "legendary"}
 
 
 async def test_disabled_registry_is_noop():
@@ -52,8 +71,15 @@ async def test_disabled_registry_is_noop():
     assert live.name == "Zara"
     # finish_project with no project_uuid should no-op cleanly.
     await reg.finish_project(
-        status="completed", exit_reason="ok", rounds_used=0, final_answer="",
-        survivors=[], deaths=[], wills=[], relationships=[], famous=[],
+        status="completed",
+        exit_reason="ok",
+        rounds_used=0,
+        final_answer="",
+        survivors=[],
+        deaths=[],
+        wills=[],
+        relationships=[],
+        famous=[],
     )
 
 
@@ -79,9 +105,15 @@ async def test_lifetime_stats_persist_across_runs():
     live.tasks_completed_lifetime = 7
     live.files_created_lifetime = 3
     await reg1.finish_project(
-        status="completed", exit_reason="ok", rounds_used=12,
-        final_answer="done", survivors=[uuid1],
-        deaths=[], wills=[], relationships=[], famous=[],
+        status="completed",
+        exit_reason="ok",
+        rounds_used=12,
+        final_answer="done",
+        survivors=[uuid1],
+        deaths=[],
+        wills=[],
+        relationships=[],
+        famous=[],
     )
 
     reg2 = CharacterRegistry(enabled=True)
@@ -102,22 +134,31 @@ async def test_dead_common_spawns_fresh_generation():
     live = await reg1.hydrate(role="coder", name="Pico", **COMMON_BONES)
     uuid_dead = live.character_uuid
     await reg1.finish_project(
-        status="incomplete", exit_reason="stopped", rounds_used=5,
-        final_answer="", survivors=[],
-        deaths=[{
-            "character_uuid": uuid_dead, "round": 3, "cause": "errors",
-            "epitaph": "Fell chasing a bug.",
-        }],
+        status="incomplete",
+        exit_reason="stopped",
+        rounds_used=5,
+        final_answer="",
+        survivors=[],
+        deaths=[
+            {
+                "character_uuid": uuid_dead,
+                "round": 3,
+                "cause": "errors",
+                "epitaph": "Fell chasing a bug.",
+            }
+        ],
         wills=[{"character_uuid": uuid_dead, "text": "Tell them I tried."}],
-        relationships=[], famous=[],
+        relationships=[],
+        famous=[],
     )
 
     reg2 = CharacterRegistry(enabled=True)
     await reg2.begin_project("r2", "", "", 10)
     live2 = await reg2.hydrate(role="coder", name="Pico", **COMMON_BONES)
     assert live2.is_new
-    assert live2.character_uuid != uuid_dead, \
+    assert live2.character_uuid != uuid_dead, (
         "dead common should leave the old uuid intact and create a new one"
+    )
     assert live2.level == 1
 
 
@@ -130,14 +171,22 @@ async def test_dead_legendary_is_revived():
     live.level = 8
     live.total_xp_earned = 900
     await reg1.finish_project(
-        status="incomplete", exit_reason="stopped", rounds_used=5,
-        final_answer="", survivors=[],  # Valkyrie died
-        deaths=[{
-            "character_uuid": uuid_legend, "round": 5, "cause": "boss",
-            "epitaph": "Fought the dragon to the last.",
-        }],
+        status="incomplete",
+        exit_reason="stopped",
+        rounds_used=5,
+        final_answer="",
+        survivors=[],  # Valkyrie died
+        deaths=[
+            {
+                "character_uuid": uuid_legend,
+                "round": 5,
+                "cause": "boss",
+                "epitaph": "Fought the dragon to the last.",
+            }
+        ],
         wills=[{"character_uuid": uuid_legend, "text": "I'll be back."}],
-        relationships=[], famous=[],
+        relationships=[],
+        famous=[],
     )
 
     reg2 = CharacterRegistry(enabled=True)
@@ -166,15 +215,25 @@ async def test_relationship_persistence():
     a = await reg1.hydrate(role="coder", name="Ally", **COMMON_BONES)
     b = await reg1.hydrate(role="reviewer", name="Ben", **COMMON_BONES)
     await reg1.finish_project(
-        status="completed", exit_reason="ok", rounds_used=10,
-        final_answer="", survivors=[a.character_uuid, b.character_uuid],
-        deaths=[], wills=[],
-        relationships=[{
-            "from_uuid": a.character_uuid,
-            "to_uuid": b.character_uuid,
-            "trust": 0.85, "familiarity": 12, "shared_tasks": 4, "conflicts": 0,
-            "sentiment": "positive", "last_interaction": "shipped together",
-        }],
+        status="completed",
+        exit_reason="ok",
+        rounds_used=10,
+        final_answer="",
+        survivors=[a.character_uuid, b.character_uuid],
+        deaths=[],
+        wills=[],
+        relationships=[
+            {
+                "from_uuid": a.character_uuid,
+                "to_uuid": b.character_uuid,
+                "trust": 0.85,
+                "familiarity": 12,
+                "shared_tasks": 4,
+                "conflicts": 0,
+                "sentiment": "positive",
+                "last_interaction": "shipped together",
+            }
+        ],
         famous=[],
     )
 

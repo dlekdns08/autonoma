@@ -72,6 +72,7 @@ async def test_only_owners_cutscene_fires(monkeypatch):
         # Yield so the inner asyncio.create_task gets a chance to run
         # the cutscene fan-out.
         import asyncio
+
         await asyncio.sleep(0.05)
     finally:
         bus.off("cutscene.started", capture)
@@ -111,6 +112,7 @@ async def test_no_resolver_means_all_cutscenes_still_fire():
         autonoma_context.set_session_owner_resolver(None)
         await _on_bus_event("project.completed", {})
         import asyncio
+
         await asyncio.sleep(0.05)
     finally:
         bus.off("cutscene.started", capture)

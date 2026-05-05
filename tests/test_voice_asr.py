@@ -23,10 +23,7 @@ def test_noop_provider_is_ready_and_returns_empty():
 def test_cohere_provider_pinned_to_correct_model_id():
     # Guards against accidental rename — the user explicitly chose this
     # model and silently swapping it would be a regression.
-    assert (
-        CohereAsrProvider.MODEL_ID
-        == "CohereLabs/cohere-transcribe-03-2026"
-    )
+    assert CohereAsrProvider.MODEL_ID == "CohereLabs/cohere-transcribe-03-2026"
     p = CohereAsrProvider()
     assert p.model_id == "CohereLabs/cohere-transcribe-03-2026"
     assert not p.is_ready()  # lazy-loaded — not loaded until first call

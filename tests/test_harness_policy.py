@@ -100,9 +100,7 @@ def test_llm_timeout_cannot_exceed_agent_timeout() -> None:
     from autonoma.harness.policy import HarnessPolicyContent, LoopPolicy
 
     with pytest.raises(ValidationError) as exc:
-        HarnessPolicyContent(
-            loop=LoopPolicy(agent_timeout_s=60.0, llm_timeout_s=120.0)
-        )
+        HarnessPolicyContent(loop=LoopPolicy(agent_timeout_s=60.0, llm_timeout_s=120.0))
     assert "llm_timeout_s" in str(exc.value)
 
 
@@ -111,9 +109,7 @@ def test_tts_per_round_cannot_exceed_per_session() -> None:
 
     with pytest.raises(ValidationError) as exc:
         HarnessPolicyContent(
-            memory=MemoryPolicy(
-                tts_chars_per_round=5000, tts_chars_per_session=1000
-            )
+            memory=MemoryPolicy(tts_chars_per_round=5000, tts_chars_per_session=1000)
         )
     assert "tts_chars_per_round" in str(exc.value)
 
@@ -125,29 +121,21 @@ def test_tts_session_zero_disables_the_cross_check() -> None:
     from autonoma.harness.policy import HarnessPolicyContent, MemoryPolicy
 
     # No exception.
-    HarnessPolicyContent(
-        memory=MemoryPolicy(
-            tts_chars_per_round=2000, tts_chars_per_session=0
-        )
-    )
+    HarnessPolicyContent(memory=MemoryPolicy(tts_chars_per_round=2000, tts_chars_per_session=0))
 
 
 def test_peer_vote_requires_at_least_three_agents() -> None:
     from autonoma.harness.policy import HarnessPolicyContent, SpawnPolicy
 
     with pytest.raises(ValidationError) as exc:
-        HarnessPolicyContent(
-            spawn=SpawnPolicy(max_agents=2, approval_mode="peer_vote")
-        )
+        HarnessPolicyContent(spawn=SpawnPolicy(max_agents=2, approval_mode="peer_vote"))
     assert "peer_vote" in str(exc.value)
 
 
 def test_peer_vote_accepts_three_or_more_agents() -> None:
     from autonoma.harness.policy import HarnessPolicyContent, SpawnPolicy
 
-    HarnessPolicyContent(
-        spawn=SpawnPolicy(max_agents=3, approval_mode="peer_vote")
-    )
+    HarnessPolicyContent(spawn=SpawnPolicy(max_agents=3, approval_mode="peer_vote"))
 
 
 # ── DB-layer tests ────────────────────────────────────────────────────

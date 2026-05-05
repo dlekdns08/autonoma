@@ -61,11 +61,7 @@ def test_random_walk_mostly_preserves_with_fixed_seed() -> None:
     distribution: majority of calls return current."""
     fn = lookup("mood.transition_strategy", "random_walk")
     rng = random.Random(0)
-    kept = sum(
-        1
-        for _ in range(200)
-        if fn(Mood.CURIOUS, {"action": "idle"}, rng) is Mood.CURIOUS
-    )
+    kept = sum(1 for _ in range(200) if fn(Mood.CURIOUS, {"action": "idle"}, rng) is Mood.CURIOUS)
     # 10% jump → ~180 kept. Allow wide tolerance.
     assert 150 <= kept <= 200
 
@@ -73,8 +69,6 @@ def test_random_walk_mostly_preserves_with_fixed_seed() -> None:
 def test_random_walk_can_transition_to_a_different_mood() -> None:
     fn = lookup("mood.transition_strategy", "random_walk")
     rng = random.Random(42)
-    results = {
-        fn(Mood.CURIOUS, {"action": "idle"}, rng) for _ in range(500)
-    }
+    results = {fn(Mood.CURIOUS, {"action": "idle"}, rng) for _ in range(500)}
     # At least one shift off CURIOUS over 500 samples.
     assert len(results) >= 2

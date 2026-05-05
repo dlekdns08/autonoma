@@ -44,6 +44,7 @@ async def _signup_and_approve(client: AsyncClient, username: str, password: str)
     r = await client.post("/api/auth/signup", json={"username": username, "password": password})
     assert r.status_code == 201, r.text
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")
@@ -212,9 +213,7 @@ async def test_cannot_delete_profile_while_bound(client: AsyncClient) -> None:
     assert r.json()["detail"]["code"] == "profile_in_use"
 
     # Unbind, then delete succeeds
-    r = await client.request(
-        "DELETE", "/api/voice-bindings", params={"vrm_file": "midori.vrm"}
-    )
+    r = await client.request("DELETE", "/api/voice-bindings", params={"vrm_file": "midori.vrm"})
     assert r.status_code == 204
     r = await client.delete(f"/api/voice-profiles/{pid}")
     assert r.status_code == 204
@@ -250,9 +249,7 @@ async def test_synthesize_uses_structured_error(
     )
     pid = r.json()["profile"]["id"]
 
-    r = await client.post(
-        f"/api/voice-profiles/{pid}/test", json={"text": "hello"}
-    )
+    r = await client.post(f"/api/voice-profiles/{pid}/test", json={"text": "hello"})
     assert r.status_code == 503
     detail = r.json()["detail"]
     assert detail["code"] == "missing_reference"

@@ -29,9 +29,12 @@ async def client(fresh_db) -> AsyncIterator[AsyncClient]:
 
 
 async def _authed(client: AsyncClient, username: str = "pack") -> None:
-    r = await client.post("/api/auth/signup", json={"username": username, "password": "password123"})
+    r = await client.post(
+        "/api/auth/signup", json={"username": username, "password": "password123"}
+    )
     assert r.status_code == 201, r.text
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")
@@ -42,19 +45,17 @@ async def _authed(client: AsyncClient, username: str = "pack") -> None:
 # ── #1/#2 Live ────────────────────────────────────────────────────────
 
 
-async def test_live_requires_secret(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_live_requires_secret(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "live_webhook_secret", "")
     r = await client.post("/api/live/chat", json={"text": "hello"})
     assert r.status_code == 503  # disabled when secret is empty
 
 
-async def test_live_chat_happy_path(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_live_chat_happy_path(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "live_webhook_secret", "topsecret")
     r = await client.post(
         "/api/live/chat",
@@ -68,6 +69,7 @@ async def test_live_donation_bad_secret(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "live_webhook_secret", "s")
     r = await client.post(
         "/api/live/donation",
@@ -110,12 +112,15 @@ async def test_persona_crud_roundtrip(client: AsyncClient) -> None:
     assert r.status_code == 200
     assert r.json()["personas"] == []
 
-    r = await client.post("/api/personas", json={
-        "name": "Midori",
-        "seed_string": "coder:midori:v1",
-        "role": "coder",
-        "tags": ["fox", "calm"],
-    })
+    r = await client.post(
+        "/api/personas",
+        json={
+            "name": "Midori",
+            "seed_string": "coder:midori:v1",
+            "role": "coder",
+            "tags": ["fox", "calm"],
+        },
+    )
     assert r.status_code == 201, r.text
     persona = r.json()["persona"]
     assert persona["name"] == "Midori"
@@ -160,6 +165,7 @@ async def test_slack_bridge_disabled_without_secret(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "slack_signing_secret", "")
     r = await client.post("/api/bridges/slack/events", json={})
     assert r.status_code == 503
@@ -169,6 +175,7 @@ async def test_slack_bridge_verifies_signature(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "slack_signing_secret", "shh")
 
     body = b'{"event":{"type":"app_mention","text":"@alice fix this"},"type":"event_callback"}'
@@ -192,6 +199,7 @@ async def test_discord_bridge_shared_secret(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "discord_webhook_secret", "disc")
     r = await client.post(
         "/api/bridges/discord/webhook",
@@ -214,17 +222,21 @@ async def test_standup_produces_wav(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "standup_enabled", True)
     monkeypatch.setattr(settings, "standup_output_dir", tmp_path / "standups")
     await _authed(client)
 
-    r = await client.post("/api/standup/generate", json={
-        "title": "test-standup",
-        "lines": [
-            {"agent": "Alice", "text": "good morning"},
-            {"agent": "Bear", "text": "ready for standup"},
-        ],
-    })
+    r = await client.post(
+        "/api/standup/generate",
+        json={
+            "title": "test-standup",
+            "lines": [
+                {"agent": "Alice", "text": "good morning"},
+                {"agent": "Bear", "text": "ready for standup"},
+            ],
+        },
+    )
     assert r.status_code == 200, r.text
     info = r.json()
     assert info["lines"] == 2

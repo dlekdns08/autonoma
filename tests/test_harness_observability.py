@@ -149,12 +149,8 @@ def test_re_recording_same_session_replaces_metadata() -> None:
     """Supports the WS ``reset`` → ``start`` loop — a second run on the
     same connection should overwrite the first, not append."""
     content = default_policy_content()
-    record_run_start(
-        session_id=50, preset_id="first", overrides=None, content=content
-    )
-    record_run_start(
-        session_id=50, preset_id="second", overrides=None, content=content
-    )
+    record_run_start(session_id=50, preset_id="first", overrides=None, content=content)
+    record_run_start(session_id=50, preset_id="second", overrides=None, content=content)
     meta = get_session_metadata(50)
     assert meta is not None
     assert meta.preset_id == "second"

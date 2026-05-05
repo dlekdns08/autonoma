@@ -30,6 +30,7 @@ async def _login(client: AsyncClient, username: str = "playbackrouter") -> None:
     )
     assert r.status_code == 201, r.text
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username(username)
     assert user is not None
     await update_user_status(user.id, "active")
@@ -84,8 +85,7 @@ async def test_frames_lists_inserted_checkpoints_newest_first(
     rounds = [f["round"] for f in body["frames"]]
     # Sorted DESC by round_number.
     assert rounds == [3, 2, 1]
-    assert all(isinstance(f["size_bytes"], int) and f["size_bytes"] > 0
-               for f in body["frames"])
+    assert all(isinstance(f["size_bytes"], int) and f["size_bytes"] > 0 for f in body["frames"])
 
 
 async def test_frame_returns_decoded_state(client: AsyncClient) -> None:

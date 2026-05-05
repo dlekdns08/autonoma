@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 @pytest.fixture
 async def client(fresh_db) -> AsyncIterator[AsyncClient]:
     from autonoma.api import app
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         async with app.router.lifespan_context(app):
@@ -222,6 +223,7 @@ async def test_visibility_flip_off_clears_metadata(client: AsyncClient) -> None:
     # The card's ``title`` falls back to "Live swarm" for display, but
     # the underlying RoomState fields should be wiped.
     from autonoma import api as _api
+
     assert _api._rooms[99].public_title == ""
     assert _api._rooms[99].public_description == ""
 
@@ -258,6 +260,7 @@ async def test_concurrent_visibility_flips_safe(
     assert r.json()["session"]["room_code"] == "ALICE"
 
     from autonoma import api as _api
+
     assert _api._rooms[101].is_public is True
     assert _api._rooms[101].public_title == "Alice live"
 
@@ -292,14 +295,10 @@ async def test_concurrent_visibility_flips_safe(
     assert _api._rooms[202].public_title == "Bob live"
 
     # Bob flipping his back to private must not affect Alice's.
-    r = await client.post(
-        "/api/live-share/visibility", json={"public": False}
-    )
+    r = await client.post("/api/live-share/visibility", json={"public": False})
     assert r.status_code == 200
     assert _api._rooms[202].is_public is False
-    assert _api._rooms[101].is_public is True, (
-        "Bob's private flip leaked into Alice's room"
-    )
+    assert _api._rooms[101].is_public is True, "Bob's private flip leaked into Alice's room"
 
 
 async def test_visibility_does_not_touch_other_users_rooms(
@@ -314,12 +313,11 @@ async def test_visibility_does_not_touch_other_users_rooms(
         owner_user_id="bob-other-uid",  # NOT alice
     )
     # Alice has no own room → 404 (we never let her flip Bob's).
-    r = await client.post(
-        "/api/live-share/visibility", json={"public": True}
-    )
+    r = await client.post("/api/live-share/visibility", json={"public": True})
     assert r.status_code == 404
     # Bob's room is still private.
     from autonoma import api as _api
+
     assert _api._rooms[10].is_public is False
     # uid_alice is checked for in tests as "the right user authenticated".
     assert uid_alice  # silence unused-var warning

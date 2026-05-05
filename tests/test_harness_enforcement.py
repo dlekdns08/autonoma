@@ -50,9 +50,7 @@ def test_permissive_always_allows_but_warns_on_miss(
 ) -> None:
     fn = lookup("action.harness_enforcement", "permissive")
     h = _fake_harness(set(), name="reader")
-    with caplog.at_level(
-        logging.WARNING, logger="autonoma.harness.enforcement_strategies"
-    ):
+    with caplog.at_level(logging.WARNING, logger="autonoma.harness.enforcement_strategies"):
         assert fn("A", "run_code", h) is True
     assert any("permissive" in rec.message for rec in caplog.records)
 
@@ -60,9 +58,7 @@ def test_permissive_always_allows_but_warns_on_miss(
 def test_permissive_silent_on_hit(caplog: pytest.LogCaptureFixture) -> None:
     fn = lookup("action.harness_enforcement", "permissive")
     h = _fake_harness({"work_on_task"})
-    with caplog.at_level(
-        logging.WARNING, logger="autonoma.harness.enforcement_strategies"
-    ):
+    with caplog.at_level(logging.WARNING, logger="autonoma.harness.enforcement_strategies"):
         assert fn("A", "work_on_task", h) is True
     assert caplog.records == []
 

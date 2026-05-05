@@ -36,7 +36,9 @@ def test_speech_bubble_empty():
 
 
 def test_speech_bubble_long_text():
-    bubble = render_speech_bubble("This is a much longer text that should wrap across multiple lines in the bubble")
+    bubble = render_speech_bubble(
+        "This is a much longer text that should wrap across multiple lines in the bubble"
+    )
     assert len(bubble) > 4  # Should have multiple content lines
 
 

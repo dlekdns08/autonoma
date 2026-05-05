@@ -1,7 +1,5 @@
 """Tests for the progress tracking system."""
 
-
-
 from autonoma.models import (
     AgentPersona,
     FileArtifact,
@@ -16,11 +14,23 @@ from autonoma.progress import ProgressTracker
 def test_save_and_load(tmp_path):
     project = ProjectState(name="test-project", description="A test")
     project.tasks = [
-        Task(title="Task 1", description="Do thing 1", priority=TaskPriority.HIGH, status=TaskStatus.DONE),
-        Task(title="Task 2", description="Do thing 2", priority=TaskPriority.MEDIUM, status=TaskStatus.IN_PROGRESS),
+        Task(
+            title="Task 1",
+            description="Do thing 1",
+            priority=TaskPriority.HIGH,
+            status=TaskStatus.DONE,
+        ),
+        Task(
+            title="Task 2",
+            description="Do thing 2",
+            priority=TaskPriority.MEDIUM,
+            status=TaskStatus.IN_PROGRESS,
+        ),
     ]
     project.files = [FileArtifact(path="main.py", content="print('hi')", created_by="Coder")]
-    project.agents = [AgentPersona(name="Director", emoji="👑", role="director", skills=["planning"])]
+    project.agents = [
+        AgentPersona(name="Director", emoji="👑", role="director", skills=["planning"])
+    ]
 
     tracker = ProgressTracker(tmp_path)
     tracker.save(project)

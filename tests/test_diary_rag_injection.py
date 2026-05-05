@@ -74,5 +74,7 @@ def test_only_self_diary_is_recalled() -> None:
     )
     situation = agent._build_situation(project)
     # Bob's diary must not leak into Alice's prompt.
-    assert "Bob" not in situation.split("RELEVANT PAST DIARY")[-1] if "RELEVANT" in situation else True
+    assert (
+        "Bob" not in situation.split("RELEVANT PAST DIARY")[-1] if "RELEVANT" in situation else True
+    )
     assert "JWT wizardry" not in situation

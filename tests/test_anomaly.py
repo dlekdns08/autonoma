@@ -172,8 +172,7 @@ def test_cooldown_suppresses_back_to_back_emissions() -> None:
     det.record_speech("alice", text, next_round)
     second = det.tick(round_number=next_round)
     assert all(f.kind != "repetition" for f in second), (
-        "cooldown should suppress same-agent repeat fires for "
-        f"{COOLDOWN_ROUNDS} rounds"
+        f"cooldown should suppress same-agent repeat fires for {COOLDOWN_ROUNDS} rounds"
     )
 
     # After the cooldown expires the rule fires again.
@@ -276,16 +275,17 @@ async def test_two_sessions_isolated_under_concurrent_ticks(fresh_db) -> None:
 
 async def test_list_anomalies_other_session_isolated(fresh_db) -> None:
     await init_db()
+    await record_anomaly(Anomaly(session_id=1, round_number=1, kind="mood_drift", severity="warn"))
     await record_anomaly(
-        Anomaly(session_id=1, round_number=1, kind="mood_drift", severity="warn")
-    )
-    await record_anomaly(
-        Anomaly(session_id=2, round_number=1, kind="file_churn", severity="warn",
-                details={"path": "x.py"})
+        Anomaly(
+            session_id=2,
+            round_number=1,
+            kind="file_churn",
+            severity="warn",
+            details={"path": "x.py"},
+        )
     )
     rows = await list_anomalies(2)
     assert len(rows) == 1
     assert rows[0].kind == "file_churn"
     assert rows[0].details["path"] == "x.py"
-
-

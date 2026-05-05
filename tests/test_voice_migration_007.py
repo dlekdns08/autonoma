@@ -43,6 +43,7 @@ async def test_new_profile_writes_to_disk_and_reads_back(
 
     # Need a user row for the FK.
     from autonoma.db.users import create_user
+
     user = await create_user(username="u", password_hash="h")
 
     payload = await _wav_bytes(512)
@@ -97,6 +98,7 @@ async def test_legacy_blob_row_still_readable(
     monkeypatch.setattr(settings, "data_dir", fresh_db)
     await init_db()
     from autonoma.db.users import create_user
+
     user = await create_user(username="legacy", password_hash="h")
 
     legacy_payload = b"legacy-blob-bytes"
@@ -131,6 +133,7 @@ async def test_delete_profile_removes_disk_file(
     monkeypatch.setattr(settings, "data_dir", fresh_db)
     await init_db()
     from autonoma.db.users import create_user
+
     user = await create_user(username="d", password_hash="h")
 
     summary = await store.create_profile(

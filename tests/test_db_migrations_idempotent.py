@@ -18,9 +18,7 @@ from pathlib import Path
 async def _schema_version(conn) -> int:
     from sqlalchemy import text
 
-    row = (
-        await conn.execute(text("SELECT MAX(version) FROM schema_version"))
-    ).first()
+    row = (await conn.execute(text("SELECT MAX(version) FROM schema_version"))).first()
     return int(row[0]) if row and row[0] is not None else 0
 
 
@@ -68,9 +66,7 @@ async def test_default_harness_preset_not_duplicated(fresh_db: Path) -> None:
     # helper returns defaults too.
     presets = await list_policies_for_user("nobody")
     defaults = [p for p in presets if p.is_default]
-    assert len(defaults) == 1, (
-        f"default preset duplicated: {[p.id for p in defaults]}"
-    )
+    assert len(defaults) == 1, f"default preset duplicated: {[p.id for p in defaults]}"
 
 
 async def test_harness_policies_table_readable_after_migration(

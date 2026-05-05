@@ -55,7 +55,7 @@ def test_encode_osc_bundle_header_and_immediate_timetag() -> None:
     assert bundle[8:16] == struct.pack(">II", 0, 1)  # immediate
     size = struct.unpack(">i", bundle[16:20])[0]
     assert size == len(msg)
-    assert bundle[20:20 + size] == msg
+    assert bundle[20 : 20 + size] == msg
 
 
 def test_encode_osc_bundle_concatenates_multiple_messages() -> None:

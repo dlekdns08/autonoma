@@ -10,9 +10,12 @@ from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
-async def client(fresh_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
+async def client(
+    fresh_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AsyncClient]:
     # Isolate ``data_dir`` so uploaded clips don't pollute the repo.
     from autonoma.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     from autonoma.api import app
 
@@ -23,9 +26,12 @@ async def client(fresh_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> A
 
 
 async def _auth(client: AsyncClient) -> None:
-    r = await client.post("/api/auth/signup", json={"username": "signer", "password": "password123"})
+    r = await client.post(
+        "/api/auth/signup", json={"username": "signer", "password": "password123"}
+    )
     assert r.status_code == 201
     from autonoma.db.users import get_user_by_username, update_user_status
+
     user = await get_user_by_username("signer")
     assert user is not None
     await update_user_status(user.id, "active")
@@ -34,12 +40,15 @@ async def _auth(client: AsyncClient) -> None:
 
 
 async def _upload_clip(client: AsyncClient, name: str, tokens: list[str]) -> None:
-    r = await client.post("/api/sign/clips/upload", json={
-        "name": name,
-        "tokens": tokens,
-        "duration_ms": 800,
-        "frames": [{"t_ms": 0, "bones": []}],
-    })
+    r = await client.post(
+        "/api/sign/clips/upload",
+        json={
+            "name": name,
+            "tokens": tokens,
+            "duration_ms": 800,
+            "frames": [{"t_ms": 0, "bones": []}],
+        },
+    )
     assert r.status_code == 201, r.text
 
 
@@ -95,6 +104,7 @@ async def test_translate_with_emit(client: AsyncClient) -> None:
     await _upload_clip(client, "hi", ["hi"])
 
     from autonoma.event_bus import bus
+
     received: list[dict] = []
 
     async def on_seq(**kwargs):
@@ -102,11 +112,14 @@ async def test_translate_with_emit(client: AsyncClient) -> None:
 
     bus.on("sign.sequence", on_seq)
     try:
-        r = await client.post("/api/sign/translate", json={
-            "text": "hi",
-            "vrm_file": "midori.vrm",
-            "emit": True,
-        })
+        r = await client.post(
+            "/api/sign/translate",
+            json={
+                "text": "hi",
+                "vrm_file": "midori.vrm",
+                "emit": True,
+            },
+        )
     finally:
         bus.off("sign.sequence", on_seq)
     assert r.status_code == 200
@@ -117,19 +130,25 @@ async def test_translate_with_emit(client: AsyncClient) -> None:
 
 async def test_upload_rejects_bad_name(client: AsyncClient) -> None:
     await _auth(client)
-    r = await client.post("/api/sign/clips/upload", json={
-        "name": "../escape",
-        "frames": [{"t_ms": 0}],
-    })
+    r = await client.post(
+        "/api/sign/clips/upload",
+        json={
+            "name": "../escape",
+            "frames": [{"t_ms": 0}],
+        },
+    )
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "invalid_clip_name"
 
 
 async def test_upload_rejects_empty_frames(client: AsyncClient) -> None:
     await _auth(client)
-    r = await client.post("/api/sign/clips/upload", json={
-        "name": "ok_name",
-        "frames": [],
-    })
+    r = await client.post(
+        "/api/sign/clips/upload",
+        json={
+            "name": "ok_name",
+            "frames": [],
+        },
+    )
     assert r.status_code == 400
     assert r.json()["detail"]["code"] == "invalid_frames"
