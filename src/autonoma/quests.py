@@ -133,23 +133,15 @@ def _row_to_record(row: Any) -> QuestRecord:
         votes=int(m["votes"]),
         status=str(m["status"]),
         created_at=m["created_at"],
-        activated_round=(
-            int(m["activated_round"]) if m["activated_round"] is not None else None
-        ),
-        completed_round=(
-            int(m["completed_round"]) if m["completed_round"] is not None else None
-        ),
+        activated_round=(int(m["activated_round"]) if m["activated_round"] is not None else None),
+        completed_round=(int(m["completed_round"]) if m["completed_round"] is not None else None),
     )
 
 
 async def _fetch_one(quest_id: int) -> QuestRecord | None:
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(
-                select(live_quests).where(live_quests.c.id == quest_id)
-            )
-        ).first()
+        row = (await conn.execute(select(live_quests).where(live_quests.c.id == quest_id))).first()
     return _row_to_record(row) if row else None
 
 
@@ -174,9 +166,7 @@ async def propose_quest(session_id: int, text: str) -> int:
     if not cleaned:
         raise QuestTextEmpty("quest text must not be empty")
     if len(cleaned) > MAX_TEXT_LEN:
-        raise QuestTextTooLong(
-            f"quest text exceeds {MAX_TEXT_LEN} characters (got {len(cleaned)})"
-        )
+        raise QuestTextTooLong(f"quest text exceeds {MAX_TEXT_LEN} characters (got {len(cleaned)})")
 
     await init_db()
     engine = get_engine()
@@ -226,18 +216,14 @@ async def vote_quest(quest_id: int) -> int:
         if update_result.rowcount == 0:
             return 0
         row = (
-            await conn.execute(
-                select(live_quests.c.votes).where(live_quests.c.id == int(quest_id))
-            )
+            await conn.execute(select(live_quests.c.votes).where(live_quests.c.id == int(quest_id)))
         ).first()
     if row is None:
         return 0
     return int(row._mapping["votes"])
 
 
-async def list_quests(
-    session_id: int, status: str | None = None
-) -> list[QuestRecord]:
+async def list_quests(session_id: int, status: str | None = None) -> list[QuestRecord]:
     """Return every quest for ``session_id``, newest highest-voted first.
 
     Sort order is ``votes DESC, created_at DESC`` so the design board UI
@@ -260,9 +246,7 @@ async def list_quests(
     return [_row_to_record(r) for r in rows]
 
 
-async def activate_top_quest(
-    session_id: int, round_number: int
-) -> QuestRecord | None:
+async def activate_top_quest(session_id: int, round_number: int) -> QuestRecord | None:
     """Promote the highest-voted ``proposed`` quest in this session.
 
     Returns the activated record, or ``None`` if no proposed quests are
@@ -325,7 +309,10 @@ async def activate_top_quest(
     )
     logger.info(
         "[quests] activated quest_id=%d session_id=%d round=%d (votes=%d)",
-        quest_id, session_id, round_number, record.votes,
+        quest_id,
+        session_id,
+        round_number,
+        record.votes,
     )
     return record
 
@@ -354,8 +341,9 @@ async def complete_quest(quest_id: int, round_number: int) -> bool:
             return False
         row = (
             await conn.execute(
-                select(live_quests.c.session_id, live_quests.c.text)
-                .where(live_quests.c.id == int(quest_id))
+                select(live_quests.c.session_id, live_quests.c.text).where(
+                    live_quests.c.id == int(quest_id)
+                )
             )
         ).first()
     if row is None:
@@ -369,7 +357,9 @@ async def complete_quest(quest_id: int, round_number: int) -> bool:
         round_number=int(round_number),
     )
     logger.info(
-        "[quests] completed quest_id=%d round=%d", quest_id, round_number,
+        "[quests] completed quest_id=%d round=%d",
+        quest_id,
+        round_number,
     )
     return True
 
