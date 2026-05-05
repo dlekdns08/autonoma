@@ -543,8 +543,12 @@ class VibeVoiceClient(BaseTTSClient):
                     k: (v.to(self._model.device) if hasattr(v, "to") else v)
                     for k, v in inputs.items()
                 }
-            except Exception:
-                pass
+            except Exception as exc:
+                # Some processor outputs hold non-tensor metadata that
+                # raises on ``.to(device)``. The original tensors are
+                # already on the right device because ``__call__`` was
+                # invoked with that device, so falling through is safe.
+                logger.debug("[tts] inputs.to(device) skipped: %s", exc)
 
         # Inference entry point. The VibeVoice family doesn't expose
         # the ``transformers.PreTrainedModel.generate`` we'd normally
@@ -620,7 +624,12 @@ class VibeVoiceClient(BaseTTSClient):
             try:
                 decoded = self._processor.batch_decode(outputs)
                 audio_array = decoded[0] if decoded else None
-            except Exception:
+            except Exception as exc:
+                logger.debug(
+                    "[tts] processor.batch_decode failed (%s); "
+                    "falling back to raw outputs",
+                    exc,
+                )
                 audio_array = outputs
         else:
             audio_array = outputs
