@@ -45,16 +45,18 @@ class ProgressTracker:
 
         tasks_data = []
         for task in project.tasks:
-            tasks_data.append({
-                "id": task.id,
-                "title": task.title,
-                "description": task.description[:200],
-                "status": task.status.value,
-                "assigned_to": task.assigned_to,
-                "priority": task.priority.value,
-                "artifacts": task.artifacts,
-                "output": task.output[:200] if task.output else "",
-            })
+            tasks_data.append(
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "description": task.description[:200],
+                    "status": task.status.value,
+                    "assigned_to": task.assigned_to,
+                    "priority": task.priority.value,
+                    "artifacts": task.artifacts,
+                    "output": task.output[:200] if task.output else "",
+                }
+            )
 
         files_data = [
             {"path": f.path, "created_by": f.created_by, "description": f.description}
@@ -81,7 +83,8 @@ class ProgressTracker:
             "tasks": tasks_data,
             "files": files_data,
             "agents": agents_data,
-            "sessions": self._data.get("sessions", []) + [
+            "sessions": self._data.get("sessions", [])
+            + [
                 {
                     "timestamp": datetime.now().isoformat(),
                     "tasks_completed": done,
@@ -146,7 +149,9 @@ class ProgressTracker:
         if pending_tasks:
             lines.append("\nREMAINING:")
             for t in pending_tasks[:10]:
-                lines.append(f"  [{t.get('status', '?').upper()}] {t['title']} (assigned: {t.get('assigned_to', '-')})")
+                lines.append(
+                    f"  [{t.get('status', '?').upper()}] {t['title']} (assigned: {t.get('assigned_to', '-')})"
+                )
 
         # Files created
         files = self._data.get("files", [])
