@@ -90,10 +90,30 @@ packages = ["src/autonoma"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "output", "logs", ".hf-cache", "data"]
+
+[tool.ruff.lint]
+# Conservative starter rule set — pyflakes (F) and pycodestyle errors (E)
+# catch real bugs (unused vars, undefined names, syntax). Bug-bear (B)
+# adds catches for common pitfalls without forcing style rewrites. Add
+# more rule families later once the baseline is clean.
+select = ["E", "F", "B", "I"]
+# E501 (line too long) is informational here; we let the formatter
+# handle line wrapping rather than failing CI on cosmetic length.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests routinely use ``assert`` and rely on fixtures being shadowed.
+"tests/**" = ["B011"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "ruff>=0.8.0",
 ]
 
 # Pin torch / torchaudio to the CPU-only wheels on Linux x86_64 so the
