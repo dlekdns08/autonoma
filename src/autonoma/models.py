@@ -11,8 +11,10 @@ from pydantic import BaseModel, Field
 
 # ── Agent Identity ─────────────────────────────────────────────────────────
 
+
 class AgentPersona(BaseModel):
     """Dynamic persona - agents define their own role."""
+
     name: str
     emoji: str = "🤖"
     role: str = ""  # Self-assigned role description
@@ -32,6 +34,7 @@ class AgentState(str, Enum):
 
 
 # ── Task System ────────────────────────────────────────────────────────────
+
 
 class TaskPriority(str, Enum):
     LOW = "low"
@@ -70,6 +73,7 @@ class Task(BaseModel):
 
 
 # ── Task Graph Helpers (Feature 1) ────────────────────────────────────────
+
 
 def get_dependency_graph(tasks: list[Task]) -> dict[str, list[str]]:
     """Return a reverse-dependency graph: {task_id: [ids of tasks that depend on it]}.
@@ -126,6 +130,7 @@ def compute_critical_path(tasks: list[Task]) -> list[str]:
 
     # Kahn's algorithm for topological sort
     from collections import deque
+
     queue: deque[str] = deque(tid for tid, deg in in_degree.items() if deg == 0)
     topo_order: list[str] = []
     while queue:
@@ -163,16 +168,15 @@ def compute_critical_path(tasks: list[Task]) -> list[str]:
 
 # ── Task Deadline Helpers (Feature 5) ─────────────────────────────────────
 
+
 def overdue_tasks(tasks: list[Task], current_round: int) -> list[Task]:
     """Return IN_PROGRESS or ASSIGNED tasks that are past their deadline."""
     active_statuses = {TaskStatus.IN_PROGRESS, TaskStatus.ASSIGNED}
-    return [
-        t for t in tasks
-        if t.status in active_statuses and t.is_overdue(current_round)
-    ]
+    return [t for t in tasks if t.status in active_statuses and t.is_overdue(current_round)]
 
 
 # ── Communication ──────────────────────────────────────────────────────────
+
 
 class MessageType(str, Enum):
     CHAT = "chat"
@@ -201,6 +205,7 @@ class AgentMessage(BaseModel):
 
 # ── TUI Position ───────────────────────────────────────────────────────────
 
+
 class Position(BaseModel):
     x: int = 0
     y: int = 0
@@ -222,6 +227,7 @@ class SpeechBubble(BaseModel):
 
 # ── Workspace Artifacts ────────────────────────────────────────────────────
 
+
 class FileArtifact(BaseModel):
     path: str
     content: str
@@ -231,6 +237,7 @@ class FileArtifact(BaseModel):
 
 class ProjectState(BaseModel):
     """The evolving state of the project being built."""
+
     name: str = ""
     description: str = ""
     tasks: list[Task] = Field(default_factory=list)
@@ -249,6 +256,7 @@ class ProjectState(BaseModel):
         before the ``json.dumps`` call.
         """
         import json as _json
+
         return _json.dumps(self.model_dump(mode="json"))
 
     @classmethod
@@ -256,6 +264,7 @@ class ProjectState(BaseModel):
         """Deserialize a JSON string produced by ``to_json`` back into a
         ``ProjectState`` instance. Raises ``ValueError`` on parse failure."""
         import json as _json
+
         try:
             data = _json.loads(json_str)
         except _json.JSONDecodeError as exc:
