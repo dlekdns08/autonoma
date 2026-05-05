@@ -8,18 +8,18 @@ used by the VTuber playback path.
 
 from autonoma.mocap.triggers import (
     ALLOWED_TRIGGER_KINDS,
-    MOOD_TRIGGERS,
     EMOTE_TRIGGERS,
-    STATE_TRIGGERS,
     MANUAL_SLUG_RE,
+    MOOD_TRIGGERS,
+    STATE_TRIGGERS,
     is_known_vrm,
     validate_trigger,
 )
 from autonoma.mocap.validator import (
-    MocapValidationError,
-    validate_payload,
     MAX_CLIP_DURATION_S,
     MAX_PAYLOAD_SIZE_BYTES,
+    MocapValidationError,
+    validate_payload,
 )
 
 __all__ = [
