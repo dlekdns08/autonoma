@@ -33,8 +33,8 @@ async def test_action_run_code_short_circuits_when_disabled(monkeypatch: pytest.
     be touched. We assert by patching ``CodeSandbox`` to explode if
     anyone constructs it — the strategy gate runs first, so no
     construction should happen."""
-    from autonoma.agents.base import AutonomousAgent
     from autonoma.agents import base as base_mod
+    from autonoma.agents.base import AutonomousAgent
     from autonoma.models import AgentPersona, ProjectState
 
     def _boom(*a: object, **kw: object) -> object:
@@ -66,8 +66,8 @@ async def test_action_run_code_proceeds_to_sandbox_when_allowed(
     """When the strategy is ``sandbox`` (default), the gate must pass
     through. We stub the sandbox to capture that it was reached without
     actually shelling out."""
-    from autonoma.agents.base import AutonomousAgent
     from autonoma.agents import base as base_mod
+    from autonoma.agents.base import AutonomousAgent
     from autonoma.models import AgentPersona, ProjectState
 
     called: dict[str, bool] = {"ran": False}
