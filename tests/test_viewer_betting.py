@@ -41,7 +41,6 @@ from autonoma.viewer_betting import (
     resolve_market,
 )
 
-
 # ── Test doubles ──────────────────────────────────────────────────────
 
 
