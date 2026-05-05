@@ -27,11 +27,11 @@ from fastapi import HTTPException
 from autonoma.db.users import User
 from autonoma.event_bus import bus
 from autonoma.quests import (
-    QuestTextEmpty,
-    QuestTextTooLong,
     STATUS_ACTIVE,
     STATUS_COMPLETED,
     STATUS_PROPOSED,
+    QuestTextEmpty,
+    QuestTextTooLong,
     activate_top_quest,
     complete_quest,
     list_quests,
