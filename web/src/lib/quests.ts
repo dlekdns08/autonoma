@@ -146,7 +146,16 @@ export async function listQuests(
 ): Promise<Quest[]> {
   const params = new URLSearchParams({ session_id: String(sessionId) });
   if (status) params.set("status", status);
-  return request<Quest[]>(`/api/quests?${params.toString()}`);
+  const body = await request<unknown>(`/api/quests?${params.toString()}`);
+  if (Array.isArray(body)) return body as Quest[];
+  if (
+    body &&
+    typeof body === "object" &&
+    Array.isArray((body as { quests?: unknown }).quests)
+  ) {
+    return (body as { quests: Quest[] }).quests;
+  }
+  return [];
 }
 
 export async function activateQuest(questId: number): Promise<void> {
