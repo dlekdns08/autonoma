@@ -46,7 +46,7 @@ export default function LiveSessionCard({ session }: LiveSessionCardProps) {
     session.goal?.trim() ||
     "Autonoma live show";
   const description = session.description?.trim() || "";
-  const agents = session.agents.slice(0, 6);
+  const agents = (session.agents ?? []).slice(0, 6);
 
   return (
     <Link
