@@ -25,10 +25,10 @@ export default function LivePage() {
   // Sort defensively in case the backend response order changes — most
   // viewers want freshest-first regardless. ``started_at`` is unix
   // seconds so a numeric compare is enough.
-  const ordered = useMemo(
-    () => [...sessions].sort((a, b) => b.started_at - a.started_at),
-    [sessions],
-  );
+  const ordered = useMemo(() => {
+    const list = Array.isArray(sessions) ? sessions : [];
+    return [...list].sort((a, b) => b.started_at - a.started_at);
+  }, [sessions]);
 
   return (
     <div className="min-h-screen bg-[#0a0a12] text-white">
