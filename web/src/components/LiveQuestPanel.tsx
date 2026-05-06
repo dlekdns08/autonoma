@@ -54,7 +54,8 @@ function bucket(quests: Quest[]): RowGroup {
   const proposed: Quest[] = [];
   const active: Quest[] = [];
   const completed: Quest[] = [];
-  for (const q of quests) {
+  const list = Array.isArray(quests) ? quests : [];
+  for (const q of list) {
     if (q.status === "active") active.push(q);
     else if (q.status === "completed") completed.push(q);
     else if (q.status === "proposed") proposed.push(q);
