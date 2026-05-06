@@ -91,10 +91,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /** List every public live session. Sorted/served by the backend; the
  *  client doesn't re-sort. */
 export async function fetchLiveSessions(): Promise<LiveSession[]> {
-  const body = await request<{ count: number; sessions: LiveSession[] }>(
-    `/api/live-share/sessions`,
-  );
-  return body.sessions ?? [];
+  const body = await request<unknown>(`/api/live-share/sessions`);
+  if (Array.isArray(body)) return body as LiveSession[];
+  if (
+    body &&
+    typeof body === "object" &&
+    Array.isArray((body as { sessions?: unknown }).sessions)
+  ) {
+    return (body as { sessions: LiveSession[] }).sessions;
+  }
+  return [];
 }
 
 /** Resolve a single session by its short room code. Returns null on
