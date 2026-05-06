@@ -63,7 +63,7 @@ export function useLiveQuests(
   const refresh = useCallback(async () => {
     try {
       const next = await listQuests(sessionRef.current);
-      setQuests(next);
+      setQuests(Array.isArray(next) ? next : []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
