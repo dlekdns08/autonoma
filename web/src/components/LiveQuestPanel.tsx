@@ -30,6 +30,7 @@ import {
   type QuestStatus,
 } from "@/lib/quests";
 import { useLiveQuests } from "@/hooks/useLiveQuests";
+import { useQuestTemplates } from "@/hooks/useQuestTemplates";
 
 const TEXT_MAX = 256;
 const VOTE_COOLDOWN_MS = 6_000;
