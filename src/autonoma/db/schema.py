@@ -884,3 +884,23 @@ quest_templates = Table(
 )
 
 Index("ix_quest_templates_user", quest_templates.c.user_id)
+
+
+# ── viewer_points ────────────────────────────────────────────────────────
+# Channel-points economy MVP. One row per viewer; the balance is the
+# running total of earned (watch heartbeats, votes) minus spent (world
+# actions like the cookie drop). We deliberately keep this independent
+# of the play-money ``viewer_bets`` ledger — that one is per-session and
+# resets per stream, whereas ``viewer_points`` is global to the viewer.
+viewer_points = Table(
+    "viewer_points",
+    metadata,
+    Column("viewer_id", String(64), primary_key=True),
+    Column("balance", Integer, nullable=False, default=0),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
