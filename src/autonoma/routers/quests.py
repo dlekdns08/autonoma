@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from autonoma._session_owner import assert_session_owner_or_admin
 from autonoma.auth import User, require_active_user, require_admin
 from autonoma.event_bus import bus
+from autonoma.points import VOTE_REWARD, credit as _credit_points
 from autonoma.quests import (
     QuestTextEmpty,
     QuestTextTooLong,
@@ -199,12 +200,26 @@ async def vote(
         raise _err(404, "quest_not_found", "no quest with that id.")
 
     _voted_pairs.add(key)
-    return {
+
+    # Channel-points reward: +2 pts for casting a successful vote.
+    # Failures (already voted, no quest, etc.) intentionally don't
+    # credit — we only pay for state-mutating votes. We swallow any
+    # crediting error so a misbehaving points wallet can't break voting.
+    points_balance: int | None = None
+    try:
+        points_balance = await _credit_points(user.id, VOTE_REWARD)
+    except Exception as exc:  # noqa: BLE001 — never break vote on points
+        logger.warning("vote points credit failed for %s: %r", user.id, exc)
+
+    response: dict[str, Any] = {
         "status": "ok",
         "quest_id": int(quest_id),
         "votes": new_total,
         "voter": user.id,
     }
+    if points_balance is not None:
+        response["points_balance"] = points_balance
+    return response
 
 
 @router.get("/api/quests")
