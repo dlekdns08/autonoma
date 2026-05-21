@@ -276,14 +276,84 @@ export default function LiveQuestPanel({
           >
             {charCount}/{TEXT_MAX}
           </span>
-          <button
-            type="button"
-            onClick={handlePropose}
-            disabled={submitting || !draft.trim() || charOverLimit}
-            className="rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/15 px-3 py-1 font-mono text-xs text-fuchsia-100 hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? "제출 중…" : "+ 제안"}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Templates dropdown — anchored to its toggle so absolute */}
+            {/* positioning resolves against this wrapper, not the panel. */}
+            <div className="relative" ref={templatesRef}>
+              <button
+                type="button"
+                onClick={() => setTemplatesOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={templatesOpen}
+                className="rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 font-mono text-xs text-white/80 hover:bg-slate-800/80"
+              >
+                📋 템플릿
+              </button>
+              {templatesOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-10 mt-1 w-72 rounded-lg border border-white/10 bg-slate-950/95 p-2 font-mono text-xs text-white shadow-lg shadow-black/40"
+                >
+                  <button
+                    type="button"
+                    disabled={!draft.trim() || charOverLimit}
+                    onClick={async () => {
+                      const text = draft.trim().slice(0, TEXT_MAX);
+                      if (!text) return;
+                      await saveTemplate(text);
+                    }}
+                    className="w-full rounded border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-left text-emerald-100 hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    + 현재 입력을 템플릿으로 저장
+                  </button>
+                  <div className="mt-2 flex flex-col gap-1">
+                    {templates.length === 0 ? (
+                      <p className="rounded border border-dashed border-white/10 px-2 py-2 text-center text-[10px] text-white/40">
+                        저장된 템플릿이 없습니다.
+                      </p>
+                    ) : (
+                      templates.map((tpl) => (
+                        <div
+                          key={tpl.id}
+                          className="flex items-center gap-1 rounded border border-white/10 bg-slate-900/60 px-1 py-1"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDraft(tpl.text.slice(0, TEXT_MAX));
+                              setTemplatesOpen(false);
+                            }}
+                            title={tpl.text}
+                            className="flex-1 truncate px-1 text-left text-[11px] text-white/85 hover:text-white"
+                          >
+                            {tpl.text}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void removeTemplate(tpl.id);
+                            }}
+                            aria-label={`delete template ${tpl.id}`}
+                            className="rounded border border-rose-300/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/30"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={handlePropose}
+              disabled={submitting || !draft.trim() || charOverLimit}
+              className="rounded-lg border border-fuchsia-400/40 bg-fuchsia-500/15 px-3 py-1 font-mono text-xs text-fuchsia-100 hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "제출 중…" : "+ 제안"}
+            </button>
+          </div>
         </div>
       </div>
 
