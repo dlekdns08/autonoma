@@ -196,49 +196,246 @@ def list_session_agents(session_id: int) -> list[dict[str, str]]:
     return rows
 
 
-def _score_picks(session_id: int, picks: list[str]) -> int:
-    """Compute the live score for a roster.
+def _live_swarm_for(session_id: int) -> Any | None:
+    """Resolve the live swarm for ``session_id`` (or ``None`` if not loaded).
 
-    Score is ``sum(stats.total_xp_earned) + ACHIEVEMENT_WEIGHT * sum(len(stats.achievements))``
-    across the three agents. Unknown agents (renamed/respawned) score
-    zero rather than raising — a fantasy roster shouldn't auto-bust
-    because of a midstream cast change.
+    Tolerant of the api module being absent (CI / unit tests that
+    exercise ``draft.py`` directly without the FastAPI app lifecycle).
     """
     try:
         from autonoma import api as _api
     except ImportError:
-        return 0
+        return None
     sess = _api._sessions.get(int(session_id)) if hasattr(_api, "_sessions") else None
     if sess is None:
-        return 0
-    swarm = getattr(sess, "swarm", None)
+        return None
+    return getattr(sess, "swarm", None)
+
+
+def _live_project_uuid(swarm: Any) -> str | None:
+    """Pull the in-memory swarm's current ``project_uuid``, if any."""
+    if swarm is None:
+        return None
+    registry = getattr(swarm, "registry", None)
+    if registry is None:
+        return None
+    return getattr(registry, "project_uuid", None)
+
+
+def _live_stats_score(swarm: Any, name: str) -> int:
+    """In-memory fallback score for a single pick.
+
+    Mirrors the old all-live computation: ``total_xp_earned + 10 * len(achievements)``.
+    Returns ``0`` when the agent isn't present or has no stats.
+    """
     if swarm is None:
         return 0
-    score = 0
     try:
         agent_map = swarm.agents
     except Exception:
         return 0
+    agent = agent_map.get(name) if hasattr(agent_map, "get") else None
+    if agent is None:
+        return 0
+    stats = getattr(agent, "stats", None)
+    if stats is None:
+        return 0
+    try:
+        xp = int(getattr(stats, "total_xp_earned", 0) or 0)
+    except (TypeError, ValueError):
+        xp = 0
+    achievements = getattr(stats, "achievements", []) or []
+    try:
+        ach_count = len(achievements)
+    except TypeError:
+        ach_count = 0
+    return xp + ACHIEVEMENT_WEIGHT * ach_count
+
+
+async def _resolve_character_uuids(
+    session_id: int,
+    names: list[str],
+    swarm: Any,
+    project_uuid: str | None,
+) -> dict[str, str]:
+    """Resolve pick *names* → ``character_uuid`` for ``session_id``.
+
+    Strategy (first hit wins):
+
+    1. Live swarm: ``swarm.agents[name].character_uuid`` (cheap, exact).
+    2. ``project_participants`` joined to ``characters.name`` for the
+       active project — handles the post-restart case where the swarm
+       is gone but the persisted run still exists.
+
+    Names we can't resolve are simply omitted; the caller treats a
+    missing uuid as ``score=0`` (matches the pre-existing
+    "unknown agent" semantics).
+    """
+    resolved: dict[str, str] = {}
+    # Live swarm path
+    if swarm is not None:
+        try:
+            agent_map = swarm.agents
+        except Exception:
+            agent_map = None
+        if agent_map is not None:
+            for n in names:
+                agent = agent_map.get(n) if hasattr(agent_map, "get") else None
+                uid = getattr(agent, "character_uuid", "") if agent is not None else ""
+                if uid:
+                    resolved[n] = str(uid)
+
+    missing = [n for n in names if n not in resolved]
+    if not missing or not project_uuid:
+        return resolved
+
+    # DB path — characters who participated in this project but whose
+    # live agent has gone (swarm crash, mid-run restart, etc.).
+    await init_db()
+    engine = get_engine()
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                select(characters.c.character_uuid, characters.c.name)
+                .select_from(
+                    project_participants.join(
+                        characters,
+                        project_participants.c.character_uuid == characters.c.character_uuid,
+                    )
+                )
+                .where(project_participants.c.project_uuid == str(project_uuid))
+                .where(characters.c.name.in_(missing))
+            )
+        ).all()
+    for row in rows:
+        m = row._mapping if hasattr(row, "_mapping") else row
+        name = str(m["name"])
+        if name not in resolved:
+            resolved[name] = str(m["character_uuid"])
+    return resolved
+
+
+async def upsert_character_run_xp(
+    session_id: int, character_uuid: str, xp: int
+) -> None:
+    """Mirror ``stats.total_xp_earned`` into ``character_run_xp``.
+
+    Idempotent — same (session_id, character_uuid) pair gets updated in
+    place. Called from the swarm's per-round world-stats tick, where it
+    must never raise: a transient DB error there mustn't take down the
+    swarm loop, so callers should wrap this in a try/except.
+    """
+    if not character_uuid:
+        return
+    await init_db()
+    engine = get_engine()
+    now = datetime.now(UTC)
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(
+                insert(character_run_xp).values(
+                    session_id=int(session_id),
+                    character_uuid=str(character_uuid),
+                    xp=int(xp or 0),
+                    updated_at=now,
+                )
+            )
+        except IntegrityError:
+            await conn.execute(
+                update(character_run_xp)
+                .where(character_run_xp.c.session_id == int(session_id))
+                .where(character_run_xp.c.character_uuid == str(character_uuid))
+                .values(xp=int(xp or 0), updated_at=now)
+            )
+
+
+async def _score_picks(session_id: int, picks: list[str]) -> int:
+    """Compute the durable score for a roster.
+
+    Score is ``xp + ACHIEVEMENT_WEIGHT * achievement_count`` summed
+    across the three picks. Both terms come from durable storage:
+    ``character_run_xp`` for XP, ``earned_achievements`` for badges.
+
+    Unknown agents (renamed/respawned, no character_uuid yet) score
+    zero rather than raising — a fantasy roster shouldn't auto-bust
+    because of a midstream cast change.
+
+    Fallback: if BOTH durable counts are 0 for a pick *and* the swarm
+    is still live with non-zero in-memory stats, use the live number
+    instead. That covers the early-run window before the first
+    persistence tick has landed; after the first tick, durable storage
+    is the source of truth.
+    """
+    swarm = _live_swarm_for(session_id)
+    project_uuid = _live_project_uuid(swarm)
+
+    name_to_uuid = await _resolve_character_uuids(
+        session_id=session_id,
+        names=list(picks),
+        swarm=swarm,
+        project_uuid=project_uuid,
+    )
+    if not name_to_uuid:
+        # No durable handle on any pick. Fall back fully to live stats
+        # — this is the very-start-of-run path where the registry has
+        # not yet hydrated character_uuids onto the agents.
+        return sum(_live_stats_score(swarm, n) for n in picks)
+
+    uuids = list({uid for uid in name_to_uuid.values() if uid})
+    await init_db()
+    engine = get_engine()
+    xp_by_uuid: dict[str, int] = {}
+    ach_by_uuid: dict[str, int] = {}
+    async with engine.connect() as conn:
+        if uuids:
+            xp_rows = (
+                await conn.execute(
+                    select(character_run_xp.c.character_uuid, character_run_xp.c.xp)
+                    .where(character_run_xp.c.session_id == int(session_id))
+                    .where(character_run_xp.c.character_uuid.in_(uuids))
+                )
+            ).all()
+            for row in xp_rows:
+                m = row._mapping if hasattr(row, "_mapping") else row
+                xp_by_uuid[str(m["character_uuid"])] = int(m["xp"] or 0)
+
+            ach_q = (
+                select(
+                    earned_achievements.c.character_uuid,
+                    sa_func.count(earned_achievements.c.id).label("n"),
+                )
+                .where(earned_achievements.c.character_uuid.in_(uuids))
+                .group_by(earned_achievements.c.character_uuid)
+            )
+            # Scope achievements to this run when we know its project_uuid;
+            # otherwise (post-restart with no live swarm) we'd over-count
+            # by including badges from earlier projects. The fallback is
+            # acceptable because viewer_drafts are session-scoped — the
+            # post-restart scoreboard recreates a new session anyway.
+            if project_uuid:
+                ach_q = ach_q.where(earned_achievements.c.project_uuid == str(project_uuid))
+            ach_rows = (await conn.execute(ach_q)).all()
+            for row in ach_rows:
+                m = row._mapping if hasattr(row, "_mapping") else row
+                ach_by_uuid[str(m["character_uuid"])] = int(m["n"] or 0)
+
+    score = 0
     for name in picks:
-        agent = agent_map.get(name) if hasattr(agent_map, "get") else None
-        if agent is None:
+        uid = name_to_uuid.get(name)
+        if not uid:
+            # Pick still maps to an unknown character — score 0, but
+            # let the live fallback below upgrade it if we have stats.
+            live = _live_stats_score(swarm, name)
+            score += live
             continue
-        stats = getattr(agent, "stats", None)
-        if stats is None:
-            continue
-        # total_xp_earned is a property that sums every level threshold
-        # plus the current XP — i.e. cumulative XP for the run. That's
-        # what "XP gained this session" means in MVP terms.
-        try:
-            xp = int(getattr(stats, "total_xp_earned", 0) or 0)
-        except (TypeError, ValueError):
-            xp = 0
-        achievements = getattr(stats, "achievements", []) or []
-        try:
-            ach_count = len(achievements)
-        except TypeError:
-            ach_count = 0
-        score += xp + ACHIEVEMENT_WEIGHT * ach_count
+        xp = xp_by_uuid.get(uid, 0)
+        ach = ach_by_uuid.get(uid, 0)
+        per_pick = xp + ACHIEVEMENT_WEIGHT * ach
+        if per_pick == 0:
+            # Early-run fallback: durable mirror hasn't ticked yet but
+            # the in-memory swarm already has counters worth showing.
+            per_pick = _live_stats_score(swarm, name)
+        score += per_pick
     return score
 
 
