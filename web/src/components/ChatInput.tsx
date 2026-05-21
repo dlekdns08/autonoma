@@ -114,6 +114,14 @@ export default function ChatInput({ onSend, connected }: Props) {
           Send
         </button>
       </div>
+
+      {/* Viewer chat-command bridge hint. Lives here so spectators see
+          which !-commands the swarm will react to without having to
+          discover them by typing. Kept on one line + dim so it doesn't
+          compete with the autocomplete dropdown above. */}
+      <div className="px-4 pb-1 text-[10px] font-mono text-white/30">
+        !cheer &lt;agent&gt; · !cookie &lt;agent&gt; · !boo &lt;agent&gt;
+      </div>
     </div>
   );
 }
