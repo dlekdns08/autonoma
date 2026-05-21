@@ -334,6 +334,16 @@ async def _migration_012_feature_pack_2026_05(conn) -> None:
         )
 
 
+async def _migration_013_quest_templates(conn) -> None:
+    """Create the ``quest_templates`` table (quest templates MVP).
+
+    Per-user reusable quest text bank — see ``db.schema.quest_templates``.
+    Standard ``create_all(checkfirst=True)`` pattern; the table is new so
+    no ALTERs needed.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -347,6 +357,7 @@ MIGRATIONS: list[Migration] = [
     (10, _migration_010_mocap_last_accessed),
     (11, _migration_011_voice_transcripts),
     (12, _migration_012_feature_pack_2026_05),
+    (13, _migration_013_quest_templates),
 ]
 
 
