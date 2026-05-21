@@ -299,6 +299,71 @@ _VIEWER_COMMAND_ICONS: dict[str, str] = {
 }
 
 
+async def _handle_viewer_command(
+    text: str,
+    *,
+    session_id: int,
+    room_id: int,
+    last_command_at: float,
+    now: float | None = None,
+) -> tuple[bool, float]:
+    """Parse and dispatch a ``!verb target`` chat-command bridge line.
+
+    Pure-ish helper extracted from the WS chat handler so the parser /
+    throttle / emit fan-out can be unit-tested without driving a full
+    WebSocket lifecycle. Returns ``(emitted, new_last_command_at)``:
+
+    * ``emitted`` is True only when an ``agent.emote`` actually fired
+      (known verb, known agent in the room's live swarm, and the
+      throttle window has elapsed since the previous successful
+      command).
+    * ``new_last_command_at`` is the timestamp the caller should write
+      back to ``session.last_viewer_command_at``; unchanged when nothing
+      emitted, set to ``now`` when an emit went through.
+
+    Unknown verbs / missing target / no live swarm / unknown agent
+    name are all silently no-ops (the chat fan-out already broadcast
+    the raw text as ``viewer.chat`` upstream).
+    """
+    if not text or not text.startswith("!"):
+        return False, last_command_at
+    body = text[1:].strip()
+    parts = body.split(maxsplit=1)
+    verb = parts[0].lower() if parts else ""
+    target_name = parts[1].strip() if len(parts) > 1 else ""
+    icon = _VIEWER_COMMAND_ICONS.get(verb)
+    if icon is None or not target_name:
+        return False, last_command_at
+
+    room = _rooms.get(room_id)
+    swarm = room.swarm if room is not None else None
+    if swarm is None:
+        return False, last_command_at
+    try:
+        agents_map = swarm.agents
+    except Exception:
+        return False, last_command_at
+    if target_name not in agents_map:
+        return False, last_command_at
+
+    fire_at = time.time() if now is None else now
+    if (fire_at - last_command_at) < _VIEWER_COMMAND_THROTTLE_SECONDS:
+        # Throttled — chat line still surfaced upstream, but no emote.
+        return False, last_command_at
+
+    token = _current_session_id.set(session_id)
+    try:
+        await bus.emit(
+            "agent.emote",
+            agent=target_name,
+            icon=icon,
+            ttl_ms=2500,
+        )
+    finally:
+        _current_session_id.reset(token)
+    return True, fire_at
+
+
 def _build_admin_llm_config() -> LLMConfig | None:
     """Construct the server-side LLMConfig from settings (admin use only)."""
     provider = settings.provider
@@ -2595,50 +2660,18 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         await manager.send_to_ws(v.ws, "viewer.chat", payload)
 
                     # Viewer command bridge — parse + dispatch as emote.
+                    # Logic factored into ``_handle_viewer_command`` so the
+                    # parser/throttle path can be unit-tested without
+                    # standing up a full WS lifecycle.
                     if is_command:
-                        body = text[1:].strip()
-                        parts = body.split(maxsplit=1)
-                        verb = parts[0].lower() if parts else ""
-                        target_name = parts[1].strip() if len(parts) > 1 else ""
-                        icon = _VIEWER_COMMAND_ICONS.get(verb)
-                        room = _rooms.get(session.room_id)
-                        swarm = room.swarm if room is not None else None
-                        # Silently ignore: unknown verb, missing target,
-                        # no swarm running, or unknown agent name. The
-                        # MVP spec calls for no error feedback — a
-                        # viewer who fat-fingered a name just sees their
-                        # text in chat without a reaction.
-                        if (
-                            icon is not None
-                            and target_name
-                            and swarm is not None
-                            and target_name in swarm.agents
-                        ):
-                            now = time.time()
-                            # Per-viewer throttle. Back-to-back commands
-                            # within the window drop the second one
-                            # silently — the chat line still appears so
-                            # the typing feels like it went through.
-                            if (
-                                now - session.last_viewer_command_at
-                                >= _VIEWER_COMMAND_THROTTLE_SECONDS
-                            ):
-                                session.last_viewer_command_at = now
-                                # Route through the bus so the existing
-                                # per-room fan-out kicks in. The ws
-                                # command loop runs outside the swarm
-                                # task's ContextVar context, so set the
-                                # session token explicitly here.
-                                token = _current_session_id.set(session.session_id)
-                                try:
-                                    await bus.emit(
-                                        "agent.emote",
-                                        agent=target_name,
-                                        icon=icon,
-                                        ttl_ms=2500,
-                                    )
-                                finally:
-                                    _current_session_id.reset(token)
+                        _emitted, session.last_viewer_command_at = (
+                            await _handle_viewer_command(
+                                text,
+                                session_id=session.session_id,
+                                room_id=session.room_id,
+                                last_command_at=session.last_viewer_command_at,
+                            )
+                        )
 
             # ── viewer_overlay (cursors + stickers, feature #6) ──
             # Multi-viewer overlay broadcast: spectators publish their
