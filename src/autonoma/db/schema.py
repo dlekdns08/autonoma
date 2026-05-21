@@ -970,3 +970,67 @@ viewer_points = Table(
         server_default=func.current_timestamp(),
     ),
 )
+
+
+# ── clips ────────────────────────────────────────────────────────────────
+# Highlight Clip Generator MVP. One row per uploaded clip blob. The actual
+# bytes live on disk at ``{data_dir}/clips/{id}.{ext}`` (the column stores
+# the absolute path captured at write time); the row is just metadata +
+# pointer. ``mime`` is whatever the browser's MediaRecorder declared
+# (webm/mp4 variants). ``duration_ms`` is what the recorder reported —
+# server-side trust only, the upload path doesn't re-probe the file.
+clips = Table(
+    "clips",
+    metadata,
+    Column("id", String(36), primary_key=True),  # uuid4
+    Column("session_id", Integer, nullable=False, index=True),
+    Column(
+        "owner_id",
+        String(36),
+        nullable=False,
+        index=True,
+    ),
+    Column("title", String(128), nullable=False, default=""),
+    Column("duration_ms", Integer, nullable=False, default=0),
+    Column("mime", String(64), nullable=False, default="video/webm"),
+    Column("file_path", String(512), nullable=False),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+
+# ── viewer_drafts ─────────────────────────────────────────────────────────
+# Viewer Fantasy Draft MVP — viewers on ``/watch/<code>`` pick a 3-agent
+# roster pre/during a run. Score = sum of agents' XP-gained +
+# achievements * 10 in the current session, computed live from the
+# swarm's in-memory stats (see :mod:`autonoma.draft`). One row per
+# (viewer_id, session_id); resubmitting overwrites ``picks_json``.
+viewer_drafts = Table(
+    "viewer_drafts",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("viewer_id", String(64), nullable=False, index=True),
+    Column("session_id", Integer, nullable=False, index=True),
+    # JSON array of exactly three agent names. Stored as TEXT for SQLite
+    # portability — the API layer validates the shape (3 distinct
+    # strings) so we never have to decode untrusted JSON downstream.
+    Column("picks_json", Text, nullable=False, default="[]"),
+    # Display label cached so the scoreboard doesn't have to join back
+    # to ``users`` for every render. Falls back to a viewer_id-prefix
+    # when the caller is a guest with no friendly name.
+    Column("viewer_name", String(64), nullable=False, default=""),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    UniqueConstraint("viewer_id", "session_id", name="uq_viewer_draft_session"),
+)
+
+Index("ix_viewer_drafts_session", viewer_drafts.c.session_id)
