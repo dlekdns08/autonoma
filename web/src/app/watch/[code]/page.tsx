@@ -436,6 +436,17 @@ export default function WatchPage() {
           <ClipButton sessionId={sessionId} title={code} />
         </div>
       </main>
+
+      {/* Fantasy Draft modal — mounted at the page root so its fixed
+          overlay covers the kiosk uniformly. The modal owns its own
+          ``useFantasyDraft`` instance for picker state; the page-level
+          hook above only feeds the rank chip. */}
+      {draftOpen && sessionId !== null && sessionId > 0 ? (
+        <FantasyDraftModal
+          sessionId={sessionId}
+          onClose={() => setDraftOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
