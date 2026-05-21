@@ -4385,6 +4385,9 @@ from autonoma.routers import (
 from autonoma.routers import (
     voice_consent as _voice_consent_router,
 )
+from autonoma.routers import (
+    draft as _draft_router,
+)
 
 app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
@@ -4405,6 +4408,9 @@ app.include_router(_mocap_live_router.router)
 app.include_router(_live_share_router.router)
 app.include_router(_leaderboard_router.router)
 app.include_router(_clips_router.router)
+# Viewer Fantasy Draft MVP — per-session 3-agent roster picks +
+# live scoreboard for spectators on /watch/<code>.
+app.include_router(_draft_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
