@@ -44,11 +44,20 @@ Evaluation
 ──────────
 :func:`install` subscribes to the three supported events on the shared
 event bus once at module import time. Each event handler resolves the
-character_uuid(s) involved (sandbox events carry an agent name; boss /
-quest events fan out across alive characters), bumps each matching
-definition's counter, and awards via the existing
-:func:`autonoma.achievements_db.record_achievement` path when the
-threshold is crossed.
+character_uuid(s) involved via this priority order:
+
+  1. ``data["character_uuids"]`` — explicit list of participants when
+     the emit site knows who took part (e.g. the agents who dealt
+     damage on a ``boss.defeated``).
+  2. ``data["agent"]`` — single agent name, resolved against the
+     ``characters`` table for the most-recent alive row with that
+     name (``sandbox.run_finished``, legacy ``quest.completed``).
+  3. Collective fan-out across every alive character — backwards-
+     compat fallback for callers that haven't been migrated.
+
+It then bumps each matching definition's counter, and awards via the
+existing :func:`autonoma.achievements_db.record_achievement` path when
+the threshold is crossed.
 
 Catalog integration
 ───────────────────
