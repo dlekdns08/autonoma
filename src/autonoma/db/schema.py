@@ -1034,3 +1034,28 @@ viewer_drafts = Table(
 )
 
 Index("ix_viewer_drafts_session", viewer_drafts.c.session_id)
+
+
+# ── character_run_xp ──────────────────────────────────────────────────────
+# Migration 018 — Viewer Fantasy Draft durable scoreboard. Mirrors the
+# swarm's in-memory ``AgentStats.total_xp_earned`` for the *current* run
+# so the draft scoreboard survives swarm crashes/restarts. One row per
+# (session_id, character_uuid); upserted from the per-round world-stats
+# tick. Unlike ``characters.total_xp_earned`` (which is the cross-run
+# lifetime aggregate flushed once at run-end), this table is the
+# *per-session* slice that the draft uses as a durable mirror.
+character_run_xp = Table(
+    "character_run_xp",
+    metadata,
+    Column("session_id", Integer, primary_key=True),
+    Column("character_uuid", String(36), primary_key=True, index=True),
+    Column("xp", Integer, nullable=False, default=0),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+Index("ix_character_run_xp_session", character_run_xp.c.session_id)
