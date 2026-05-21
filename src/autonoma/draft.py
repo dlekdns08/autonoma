@@ -544,7 +544,7 @@ async def scoreboard(session_id: int, my_viewer_id: str | None = None) -> dict[s
     rows: list[dict[str, Any]] = []
     my_rank: int | None = None
     for d in drafts:
-        score = _score_picks(session_id, d.picks)
+        score = await _score_picks(session_id, d.picks)
         rows.append(
             {
                 "viewer_id": d.viewer_id,
