@@ -51,6 +51,24 @@ def _reinstall_bus_handlers() -> None:
     ca_mod.install()
 
 
+@pytest.fixture(autouse=True)
+def _restore_achievements_catalog() -> None:
+    """``refresh_cache`` mutates the global ``world.ACHIEVEMENTS`` dict
+    in-place to register custom-DSL entries. Those entries lack the
+    ``check`` callable that the built-in catalog uses, which makes
+    ``world.check_achievements`` raise KeyError downstream in unrelated
+    tests. Snapshot + restore so cross-file pollution is impossible."""
+    from autonoma.world import ACHIEVEMENTS
+
+    snapshot = {k: v for k, v in ACHIEVEMENTS.items()}
+    yield
+    ACHIEVEMENTS.clear()
+    ACHIEVEMENTS.update(snapshot)
+    # Also drop the per-event def cache so the next test's
+    # refresh_cache doesn't try to bump rows from a defunct DB.
+    ca_mod._active_by_event.clear()
+
+
 # ── helpers ───────────────────────────────────────────────────────────
 
 
