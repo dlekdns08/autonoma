@@ -133,6 +133,12 @@ class SessionState:
     # single WS. Same per-connection scope as the admin guard above.
     failed_join_attempts: int = 0
     last_failed_join_at: float = 0.0
+    # Last-fired-at timestamp for the viewer chat-command bridge
+    # (``!cheer`` / ``!cookie`` / ``!boo``). Tracked here so the throttle
+    # is per-WS — viewers can't dodge it by reconnecting unless they
+    # actually drop their socket, which is the right trade-off for an
+    # in-memory MVP guard. Reset to 0.0 implicitly on connect.
+    last_viewer_command_at: float = 0.0
 
     # ── Compatibility shims (read-through to the room) ──
     @property
@@ -278,6 +284,19 @@ _ADMIN_AUTH_WINDOW_SECONDS = 60.0
 # area uniform.
 _JOIN_ROOM_MAX_ATTEMPTS = 5
 _JOIN_ROOM_WINDOW_SECONDS = 60.0
+
+# Chat-command bridge (``!cheer`` / ``!cookie`` / ``!boo``) — per-viewer
+# throttle so a single spectator can't spam reactions and drown out the
+# swarm. 4 seconds is short enough to feel responsive (one command per
+# typing cadence) and long enough that an inadvertent double-send drops
+# the second copy. Keyed on session id, which is stable for the lifetime
+# of a WS connection.
+_VIEWER_COMMAND_THROTTLE_SECONDS = 4.0
+_VIEWER_COMMAND_ICONS: dict[str, str] = {
+    "cheer": "✨",
+    "cookie": "🍪",
+    "boo": "👎",
+}
 
 
 def _build_admin_llm_config() -> LLMConfig | None:
@@ -4285,10 +4304,16 @@ from autonoma.routers import (
     mocap_live as _mocap_live_router,
 )
 from autonoma.routers import (
+    leaderboard as _leaderboard_router,
+)
+from autonoma.routers import (
     persona_breed as _persona_breed_router,
 )
 from autonoma.routers import (
     quests as _quests_router,
+)
+from autonoma.routers import (
+    quest_templates as _quest_templates_router,
 )
 from autonoma.routers import (
     viewer_betting as _viewer_betting_router,
@@ -4303,6 +4328,7 @@ app.include_router(_inspire_router.router)
 app.include_router(_achievements_router.router)
 app.include_router(_persona_breed_router.router)
 app.include_router(_quests_router.router)
+app.include_router(_quest_templates_router.router)
 app.include_router(_voice_consent_router.router)
 app.include_router(_fingerspell_router.router)
 app.include_router(_anomalies_router.router)
@@ -4311,6 +4337,7 @@ app.include_router(_metrics_router.router)
 app.include_router(_viewer_betting_router.router)
 app.include_router(_mocap_live_router.router)
 app.include_router(_live_share_router.router)
+app.include_router(_leaderboard_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
