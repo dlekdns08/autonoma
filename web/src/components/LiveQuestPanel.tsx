@@ -87,10 +87,33 @@ export default function LiveQuestPanel({
   liveQuestEvent,
 }: LiveQuestPanelProps) {
   const { quests, propose, vote, refresh, error } = useLiveQuests(sessionId);
+  const {
+    templates,
+    save: saveTemplate,
+    remove: removeTemplate,
+  } = useQuestTemplates();
 
   // ----- Composer state ----------------------------------------------------
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // ----- Templates dropdown state ----------------------------------------
+  // ``templatesOpen`` toggles the menu; click-outside closes it via a
+  // ``mousedown`` listener bound to the document while open. We use a ref
+  // on the wrapper so the listener can ignore taps that landed inside.
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const templatesRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!templatesOpen) return;
+    const onDocDown = (ev: MouseEvent) => {
+      const node = templatesRef.current;
+      if (!node) return;
+      if (ev.target instanceof Node && node.contains(ev.target)) return;
+      setTemplatesOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [templatesOpen]);
 
   // ----- Vote-cooldown bookkeeping ----------------------------------------
   // Per-quest unix-ms when the vote button becomes interactive again.
