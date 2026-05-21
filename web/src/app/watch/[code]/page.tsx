@@ -31,6 +31,22 @@ import Stage from "@/components/Stage";
 import ViewerOverlay from "@/components/ViewerOverlay";
 import ViewerBettingLiveWidget from "@/components/ViewerBettingLiveWidget";
 import { useViewerOverlay } from "@/hooks/useViewerOverlay";
+import { useTranslate } from "@/hooks/useTranslate";
+
+// MVP language picker for live subtitles. KO is the source (= original,
+// no translation). Switching to any other code lazily translates each
+// new speech line via /api/translate and overlays it under the bubble.
+type SubtitleLang = "ko" | "en" | "ja" | "zh" | "es";
+const LANG_OPTIONS: { code: SubtitleLang; label: string }[] = [
+  { code: "ko", label: "KO" },
+  { code: "en", label: "EN" },
+  { code: "ja", label: "JA" },
+  { code: "zh", label: "ZH" },
+  { code: "es", label: "ES" },
+];
+// Debounce window — partial streaming tokens land fast; wait for the
+// line to settle before kicking a translation request.
+const TRANSLATE_DEBOUNCE_MS = 800;
 
 export default function WatchPage() {
   const params = useParams<{ code: string }>();
@@ -149,6 +165,80 @@ export default function WatchPage() {
 
   const idle = state.agents.length === 0;
 
+  // ── Live subtitles ────────────────────────────────────────────────
+  // Mirror VTuberStage's spotlight selection so the translation we
+  // overlay always corresponds to the bubble the viewer can see.
+  // We don't have access to the stage's internal `pinned` state, but
+  // the watch kiosk never lets viewers pin manually — so
+  // `firstSpeaker ?? agents[0]` matches the stage's resolution.
+  const [targetLang, setTargetLang] = useState<SubtitleLang>("ko");
+  const { translate } = useTranslate();
+  const firstSpeaker = useMemo(() => {
+    for (const name of speakingAgents) return name;
+    return null;
+  }, [speakingAgents]);
+  const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
+  useEffect(() => {
+    if (firstSpeaker && firstSpeaker !== lastSpeaker) {
+      setLastSpeaker(firstSpeaker);
+    }
+  }, [firstSpeaker, lastSpeaker]);
+  const spotlightName = lastSpeaker ?? state.agents[0]?.name ?? null;
+  const spotlightAgent = useMemo(
+    () => state.agents.find((a) => a.name === spotlightName) ?? null,
+    [state.agents, spotlightName],
+  );
+  // Strip the trailing ellipsis VTuberStage uses to mark "still streaming"
+  // so the cache key matches the finalized line.
+  const rawSpeech = spotlightAgent?.speech ?? "";
+  const originalSpeech = rawSpeech.endsWith("…") ? rawSpeech.slice(0, -1) : rawSpeech;
+
+  // Per-(speaker + original text) cache lives in component state so
+  // language toggles instantly resurface already-translated lines and
+  // partial streams don't trigger N requests.
+  const [translations, setTranslations] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const translationKey =
+    spotlightAgent && originalSpeech.trim() && targetLang !== "ko"
+      ? `${targetLang}|${spotlightAgent.name}|${originalSpeech}`
+      : null;
+
+  // Debounce per-line: only translate once the speech text stops changing
+  // for TRANSLATE_DEBOUNCE_MS. Streaming tokens reset the timer because
+  // ``translationKey`` (and therefore the effect's deps) changes on
+  // every partial.
+  useEffect(() => {
+    if (!translationKey) return;
+    if (translations.has(translationKey)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void translate(originalSpeech, "ko", targetLang).then((tr) => {
+        if (cancelled) return;
+        setTranslations((prev) => {
+          if (prev.has(translationKey)) return prev;
+          const next = new Map(prev);
+          next.set(translationKey, tr);
+          return next;
+        });
+      });
+    }, TRANSLATE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [translationKey, originalSpeech, targetLang, translate, translations]);
+
+  const translatedLine = translationKey
+    ? translations.get(translationKey) ?? null
+    : null;
+  const showTranslation =
+    targetLang !== "ko" &&
+    !!spotlightAgent &&
+    !!originalSpeech.trim() &&
+    !!translatedLine &&
+    translatedLine !== originalSpeech;
+
   return (
     <div className="flex h-[100dvh] w-screen flex-col bg-[#0a0a12] text-white">
       {/* ── Top bar — minimal, just the room code and a back link ── */}
@@ -168,7 +258,34 @@ export default function WatchPage() {
           <span>watching</span>
           <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/85">{code}</span>
         </div>
-        <div className="w-[64px]" /> {/* spacer to balance the back link */}
+        {/* Language picker chip — KO is the original (no translation),
+            anything else fetches translations lazily and overlays them
+            under each agent speech bubble. */}
+        <div
+          role="radiogroup"
+          aria-label="Subtitle language"
+          className="flex items-center gap-0.5 rounded-md border border-white/10 bg-white/5 p-0.5 font-mono text-[10px]"
+        >
+          {LANG_OPTIONS.map((opt) => {
+            const active = targetLang === opt.code;
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setTargetLang(opt.code)}
+                className={`rounded px-1.5 py-0.5 transition-colors ${
+                  active
+                    ? "bg-white/15 text-white"
+                    : "text-white/55 hover:text-white"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
       {/* ── Main column ──────────────────────────────────────────── */}
@@ -193,6 +310,27 @@ export default function WatchPage() {
                 obsMode
                 backdrop="studio"
               />
+              {/* Translation overlay — sits just below the VTuberStage
+                  subtitle bar (which lives at bottom-0 in obsMode). On
+                  network errors useTranslate resolves to the original
+                  text, so showTranslation goes false and nothing
+                  renders — the original bubble stays untouched. */}
+              {showTranslation && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 bottom-1 z-50 flex justify-center px-6"
+                  aria-live="polite"
+                >
+                  <div
+                    className="max-w-[min(720px,92%)] rounded-md bg-black/55 px-4 py-1 text-center font-mono text-[12px] leading-snug text-white/65 backdrop-blur-sm"
+                    style={{
+                      textShadow:
+                        "0 1px 2px rgba(0,0,0,0.85), 0 0 3px rgba(0,0,0,0.85)",
+                    }}
+                  >
+                    {translatedLine}
+                  </div>
+                </div>
+              )}
             </div>
             {/* Pixel map — collapses on very small viewports because
                 Stage assumes pointer interaction. We render a tiny
