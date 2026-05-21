@@ -1828,11 +1828,32 @@ class AgentSwarm:
                     if agent:
                         agent.stats.add_xp(xp_reward + bonus_xp)
                         await agent._set_mood(Mood.EXCITED)
+                # Resolve every agent who actually dealt damage to this
+                # boss into their persistent character_uuid so the custom
+                # achievement evaluator can scope counters precisely
+                # instead of fanning out across every alive character.
+                # Falls back to the final-attacker if attackers tracking
+                # is empty (e.g. boss died from a non-attack code path).
+                attacker_names = list(boss.attackers.keys())
+                if not attacker_names:
+                    # Last-resort: if we somehow defeated a boss without
+                    # any tracked attackers, treat the agents in this
+                    # round as the participants — better than nothing.
+                    attacker_names = list(agent_names)
+                attacker_uuids: list[str] = []
+                seen: set[str] = set()
+                for n in attacker_names:
+                    a = self.agents.get(n)
+                    uid = getattr(a, "character_uuid", None) if a else None
+                    if uid and uid not in seen:
+                        seen.add(uid)
+                        attacker_uuids.append(uid)
                 await bus.emit(
                     "boss.defeated",
                     name=boss.name,
                     xp_reward=xp_reward + bonus_xp,
                     rarity_boost=scaled_rewards.get("rarity_boost", 0.0),
+                    character_uuids=attacker_uuids,
                 )
                 # Phase 4-C: settle the raid and award guild bonus XP.
                 await self._finalize_raid(
