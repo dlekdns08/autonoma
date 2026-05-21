@@ -2571,19 +2571,74 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             # Spectator chat. Any viewer can send; the message fans out
             # to every viewer in the room (and is also surfaced to the
             # swarm as a `viewer.chat` event so agents can react to it).
+            #
+            # Chat-command bridge: lines beginning with ``!`` are
+            # interpreted as viewer reactions (`!cheer Alex`, `!cookie
+            # Alex`, `!boo Alex`) and trigger an ``agent.emote`` so the
+            # swarm reacts visibly. The message still fans out as chat
+            # so other viewers see what was typed; an unknown command
+            # or unknown agent is silently ignored (no error reply).
             elif cmd == "chat":
                 text = (msg.get("text") or "").strip()[:280]
                 if not text:
                     pass
                 else:
                     name = session.display_name or f"anon-{session.session_id % 1000}"
+                    is_command = text.startswith("!")
                     payload = {
                         "from": name,
                         "text": text,
                         "is_owner": session.session_id == session.room_id,
+                        "is_command": is_command,
                     }
                     for v in _viewers_in_room(session.room_id):
                         await manager.send_to_ws(v.ws, "viewer.chat", payload)
+
+                    # Viewer command bridge — parse + dispatch as emote.
+                    if is_command:
+                        body = text[1:].strip()
+                        parts = body.split(maxsplit=1)
+                        verb = parts[0].lower() if parts else ""
+                        target_name = parts[1].strip() if len(parts) > 1 else ""
+                        icon = _VIEWER_COMMAND_ICONS.get(verb)
+                        room = _rooms.get(session.room_id)
+                        swarm = room.swarm if room is not None else None
+                        # Silently ignore: unknown verb, missing target,
+                        # no swarm running, or unknown agent name. The
+                        # MVP spec calls for no error feedback — a
+                        # viewer who fat-fingered a name just sees their
+                        # text in chat without a reaction.
+                        if (
+                            icon is not None
+                            and target_name
+                            and swarm is not None
+                            and target_name in swarm.agents
+                        ):
+                            now = time.time()
+                            # Per-viewer throttle. Back-to-back commands
+                            # within the window drop the second one
+                            # silently — the chat line still appears so
+                            # the typing feels like it went through.
+                            if (
+                                now - session.last_viewer_command_at
+                                >= _VIEWER_COMMAND_THROTTLE_SECONDS
+                            ):
+                                session.last_viewer_command_at = now
+                                # Route through the bus so the existing
+                                # per-room fan-out kicks in. The ws
+                                # command loop runs outside the swarm
+                                # task's ContextVar context, so set the
+                                # session token explicitly here.
+                                token = _current_session_id.set(session.session_id)
+                                try:
+                                    await bus.emit(
+                                        "agent.emote",
+                                        agent=target_name,
+                                        icon=icon,
+                                        ttl_ms=2500,
+                                    )
+                                finally:
+                                    _current_session_id.reset(token)
 
             # ── viewer_overlay (cursors + stickers, feature #6) ──
             # Multi-viewer overlay broadcast: spectators publish their
