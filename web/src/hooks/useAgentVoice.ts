@@ -69,6 +69,59 @@ function decodeBase64(b64: string): Uint8Array {
   return out;
 }
 
+/**
+ * Module-level singletons that expose the shared MediaStream carrying
+ * every agent's synthesized TTS audio. Lives outside the hook so
+ * unrelated trees (e.g. the highlight-clip recorder in <ClipButton/>)
+ * can grab the same stream the WS-driven voice hook is writing into
+ * without prop-drilling or React context plumbing.
+ *
+ * TTS only; no mic. Wiring into per-agent analysers is added inside
+ * ``connectAnalyser`` below.
+ */
+let sharedAudioCtx: AudioContext | null = null;
+let sharedRecordingDest: MediaStreamAudioDestinationNode | null = null;
+
+function ensureSharedAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (sharedAudioCtx) return sharedAudioCtx;
+  type WindowWithWebkit = Window & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+  const w = window as WindowWithWebkit;
+  const Ctor = window.AudioContext ?? w.webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    sharedAudioCtx = new Ctor();
+  } catch {
+    sharedAudioCtx = null;
+  }
+  return sharedAudioCtx;
+}
+
+function ensureSharedRecordingDest(): MediaStreamAudioDestinationNode | null {
+  if (sharedRecordingDest) return sharedRecordingDest;
+  const ctx = ensureSharedAudioContext();
+  if (!ctx) return null;
+  try {
+    sharedRecordingDest = ctx.createMediaStreamDestination();
+  } catch {
+    sharedRecordingDest = null;
+  }
+  return sharedRecordingDest;
+}
+
+/**
+ * Read the shared TTS MediaStream. The first call eagerly creates the
+ * AudioContext + MediaStreamAudioDestinationNode so the highlight clip
+ * recorder can be wired with audio tracks even before any TTS event
+ * has arrived. Subsequent calls return the same stream. TTS only.
+ */
+export function getAgentVoiceRecordingStream(): MediaStream | null {
+  const dest = ensureSharedRecordingDest();
+  return dest ? dest.stream : null;
+}
+
 export interface UseAgentVoiceResult {
   pushAudioEvent: (event: AudioEventName | string, data: AudioEventData) => void;
   getMouthAmplitude: (agent: string) => number;
@@ -76,6 +129,14 @@ export interface UseAgentVoiceResult {
   speakingAgents: Set<string>;
   /** Tear down everything (call on unmount or hard reset). */
   reset: () => void;
+  /**
+   * Return the shared MediaStream carrying every agent's TTS output.
+   * Used by the highlight-clip recorder to mux audio into the captured
+   * canvas video. Idempotent — the same stream is returned across
+   * calls. May return null if no AudioContext has been instantiated
+   * yet (no TTS has played). TTS only; no mic capture.
+   */
+  getRecordingStream: () => MediaStream | null;
   /**
    * Barge-in (feature #2). Immediately silences every speaking agent
    * — pauses its <audio>, drops accumulated chunks, clears the
@@ -119,16 +180,16 @@ export function useAgentVoice(): UseAgentVoiceResult {
   const [speakingAgents, setSpeakingAgents] = useState<Set<string>>(() => new Set());
 
   const ensureContext = useCallback((): AudioContext | null => {
-    if (typeof window === "undefined") return null;
     if (ctxRef.current) return ctxRef.current;
-    type WindowWithWebkit = Window & {
-      webkitAudioContext?: typeof AudioContext;
-    };
-    const w = window as WindowWithWebkit;
-    const Ctor = window.AudioContext ?? w.webkitAudioContext;
-    if (!Ctor) return null;
-    ctxRef.current = new Ctor();
-    return ctxRef.current;
+    // Reuse the shared singleton AudioContext so the
+    // MediaStreamAudioDestinationNode used by the highlight clip
+    // recorder belongs to the same graph as the analyser/source nodes
+    // we wire up here. createMediaStreamDestination on a different
+    // context than the source would silently produce no audio.
+    const ctx = ensureSharedAudioContext();
+    if (!ctx) return null;
+    ctxRef.current = ctx;
+    return ctx;
   }, []);
 
   const ensureSlot = useCallback((agent: string): AgentSlot => {
@@ -171,6 +232,20 @@ export function useAgentVoice(): UseAgentVoiceResult {
         an.smoothingTimeConstant = 0.6;
         src.connect(an);
         an.connect(ctx.destination);
+        // TTS only; no mic. Tee the analyser into a shared
+        // MediaStreamAudioDestinationNode so the highlight-clip
+        // recorder can mux the synthesised voices into the canvas
+        // capture without affecting normal playback through the
+        // speakers (the speaker route via ctx.destination above is
+        // independent of this tap).
+        const dest = ensureSharedRecordingDest();
+        if (dest) {
+          try {
+            an.connect(dest);
+          } catch {
+            /* node graph already torn down — ignore */
+          }
+        }
         slot.source = src;
         slot.analyser = an;
         slot.buf = new Uint8Array(an.fftSize);
@@ -494,14 +569,27 @@ export function useAgentVoice(): UseAgentVoiceResult {
     setSpeakingAgents(new Set());
   }, []);
 
+  const getRecordingStream = useCallback((): MediaStream | null => {
+    return getAgentVoiceRecordingStream();
+  }, []);
+
   useEffect(() => {
     return () => {
       reset();
       const ctx = ctxRef.current;
       if (ctx) {
+        // ctxRef and sharedAudioCtx point at the same instance now —
+        // close once and clear both singletons so a subsequent mount
+        // rebuilds the audio graph against a fresh AudioContext.
         void ctx.close().catch(() => {});
         ctxRef.current = null;
+        if (sharedAudioCtx === ctx) {
+          sharedAudioCtx = null;
+        }
       }
+      // The shared destination node is tied to the closed context;
+      // drop the singleton so the next mount creates a fresh one.
+      sharedRecordingDest = null;
     };
   }, [reset]);
 
@@ -519,6 +607,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
+      getRecordingStream,
     }),
     [
       pushAudioEvent,
@@ -529,6 +618,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
       markSpeakingFromText,
       requestSpeak,
       cleanupAgent,
+      getRecordingStream,
     ],
   );
 }
