@@ -160,6 +160,10 @@ export interface ChatMessage {
   text: string;
   isOwner: boolean;
   timestamp: number;
+  /** True when the line starts with ``!`` (a viewer chat-bridge command
+   *  like ``!cheer Alex``). Surfaced as a small inline pill in ChatPanel
+   *  so other viewers can tell at a glance that a reaction was fired. */
+  isCommand?: boolean;
 }
 
 export interface RelationshipData {
