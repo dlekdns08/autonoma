@@ -85,19 +85,21 @@ async def test_cheer_emits_sparkle_emote(
 async def test_cookie_and_boo_emit_correct_icons(
     emote_sink: list[dict[str, Any]],
 ) -> None:
+    # Each command uses a ``last_command_at`` far enough in the past
+    # that the per-viewer 4s throttle never applies.
     await _handle_viewer_command(
         "!cookie Alex",
         session_id=100,
         room_id=100,
         last_command_at=0.0,
-        now=1.0,
+        now=100.0,
     )
     await _handle_viewer_command(
         "!boo Alex",
         session_id=100,
         room_id=100,
         last_command_at=0.0,
-        now=2.0,
+        now=200.0,
     )
     icons = [p["icon"] for p in emote_sink]
     assert "🍪" in icons
