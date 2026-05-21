@@ -14,6 +14,15 @@ In-memory LRU keeps response time tight when subtitles flash repeats.
 The LLM call is server-side so we don't have to ship a translation
 model to the browser, and we route through the existing provider so
 operators don't need a separate API key.
+
+Public access
+─────────────
+This endpoint is intentionally **anonymous** — viewers landing on
+``/watch/[code]`` never authenticate, so requiring a session cookie
+would 401 every captioning request. To keep abuse bounded we run a
+per-IP sliding-window rate limit (30 req / 60s). Cache hits bypass
+the limiter so a chatty stream of repeated subtitle lines stays cheap
+even after the budget is exhausted.
 """
 
 from __future__ import annotations
@@ -24,11 +33,11 @@ import logging
 from collections import OrderedDict
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from autonoma.auth import User, require_active_user
 from autonoma.config import settings
 from autonoma.llm import create_llm_client, llm_config_from_settings
+from autonoma.ratelimit import SlidingWindowLimiter, client_ip
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["translate"])
@@ -42,6 +51,21 @@ router = APIRouter(tags=["translate"])
 _CACHE_CAP = 4096
 _cache: "OrderedDict[tuple[str, str, str], str]" = OrderedDict()
 _cache_lock = asyncio.Lock()
+
+
+# ── Rate limit ────────────────────────────────────────────────────────
+# Public endpoint, so the limit doubles as our abuse gate. 30 req / 60s
+# per IP is enough headroom for a fast-talking captioned stream
+# (~2 lines/sec average for short utterances after dedup), and far
+# below the cost ceiling at which a single anonymous viewer could
+# burn LLM budget. Exposed at module level so tests can ``reset()``
+# between cases.
+_TRANSLATE_LIMIT = 30
+_TRANSLATE_WINDOW_SEC = 60.0
+_MAX_INPUT_LEN = 2000
+_translate_limiter = SlidingWindowLimiter(
+    limit=_TRANSLATE_LIMIT, window_seconds=_TRANSLATE_WINDOW_SEC
+)
 
 
 def _key(from_lang: str, to_lang: str, text: str) -> tuple[str, str, str]:
@@ -102,20 +126,23 @@ async def _translate_via_llm(text: str, from_lang: str, to_lang: str) -> str:
 @router.post("/api/translate")
 async def translate(
     payload: dict[str, Any],
-    _user: User = Depends(require_active_user),
+    request: Request,
 ) -> dict[str, Any]:
+    # Step 1: validate input shape. We do this *before* touching the
+    # rate-limiter so malformed requests (which are usually noise, not
+    # abuse) get a clean 400 without consuming budget.
     text = str(payload.get("text") or "").strip()
     if not text:
         raise HTTPException(
             status_code=400,
             detail={"code": "empty_text", "message": "text is required"},
         )
-    if len(text) > 4000:
+    if len(text) > _MAX_INPUT_LEN:
         raise HTTPException(
             status_code=413,
             detail={
                 "code": "text_too_long",
-                "message": "text exceeds 4000 characters",
+                "message": f"text exceeds {_MAX_INPUT_LEN} characters",
             },
         )
     from_lang = (payload.get("from_lang") or "auto").strip().lower()
@@ -129,6 +156,10 @@ async def translate(
             "skipped": "same_language",
         }
 
+    # Step 2: cache lookup *before* the rate limit so repeated subtitles
+    # keep flowing even after a viewer has exhausted their fresh-LLM
+    # budget. This is the whole point of the LRU — caption lines repeat
+    # constantly during a stream.
     key = _key(from_lang, to_lang, text)
     cached = await _cache_get(key)
     if cached is not None:
@@ -138,6 +169,20 @@ async def translate(
             "to_lang": to_lang,
             "cached": True,
         }
+
+    # Step 3: only *new* texts consume rate-limit budget.
+    ip = client_ip(request)
+    if not _translate_limiter.check_and_consume(ip):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "rate_limited",
+                "message": (
+                    f"translate rate limit exceeded "
+                    f"({_TRANSLATE_LIMIT} requests per {int(_TRANSLATE_WINDOW_SEC)}s)"
+                ),
+            },
+        )
 
     try:
         translated = await _translate_via_llm(text, from_lang, to_lang)
