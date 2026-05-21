@@ -1539,6 +1539,13 @@ class AgentSwarm:
 
     def _update_world_stats(self) -> None:
         """Update leaderboard, check achievements and evolution."""
+        # Mirror per-character XP into ``character_run_xp`` so the
+        # Viewer Fantasy Draft scoreboard survives a swarm crash/restart.
+        # Fire-and-forget: a DB blip here mustn't take down the round
+        # loop. Uses the same create_task pattern as the achievement
+        # emit further down.
+        self._persist_run_xp_snapshot()
+
         for name, agent in self.agents.items():
             if name == "Director":
                 continue
@@ -1603,6 +1610,71 @@ class AgentSwarm:
         # Decay all relationship trust values slightly each round so that
         # long-inactive pairs drift toward 0 over time.
         self.relationships.decay_all()
+
+    def _persist_run_xp_snapshot(self) -> None:
+        """Mirror each character's ``total_xp_earned`` into ``character_run_xp``.
+
+        Called from :meth:`_update_world_stats` on every round tick. The
+        Viewer Fantasy Draft scoreboard reads from this table so its
+        scores survive a swarm crash/restart (in-memory ``AgentStats``
+        is reset on restart; this row is not).
+
+        Fire-and-forget — the round loop must not stall or fail on DB
+        contention. Without a running event loop (sync test paths) we
+        simply skip; ``finish_project`` will still flush at run end.
+        """
+        from autonoma.context import current_session_id
+
+        try:
+            sid = current_session_id.get(None)
+        except Exception:
+            sid = None
+        if not sid:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        if not loop.is_running():
+            return
+
+        # Snapshot inside the sync caller so the coroutine sees a stable
+        # view even if agents mutate while it's awaited.
+        snapshot: list[tuple[int, str, int]] = []
+        for name, agent in self.agents.items():
+            if name == "Director":
+                continue
+            uid = getattr(agent, "character_uuid", "") or ""
+            if not uid:
+                continue
+            stats = getattr(agent, "stats", None)
+            if stats is None:
+                continue
+            try:
+                xp = int(getattr(stats, "total_xp_earned", 0) or 0)
+            except (TypeError, ValueError):
+                xp = 0
+            snapshot.append((int(sid), str(uid), xp))
+        if not snapshot:
+            return
+
+        async def _flush() -> None:
+            # Import inside the coroutine to avoid pulling DB modules
+            # into module-load order for the sync swarm path.
+            from autonoma.draft import upsert_character_run_xp
+
+            for s, u, x in snapshot:
+                try:
+                    await upsert_character_run_xp(s, u, x)
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning(
+                        "[draft] character_run_xp upsert failed for %s: %s", u, exc
+                    )
+
+        try:
+            loop.create_task(_flush())
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[draft] could not schedule run-xp persist: %s", exc)
 
     # ── Fortune Cookies ───────────────────────────────────────────────
 
