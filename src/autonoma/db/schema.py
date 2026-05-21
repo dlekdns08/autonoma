@@ -852,3 +852,35 @@ live_quests = Table(
     Column("activated_round", Integer, nullable=True),
     Column("completed_round", Integer, nullable=True),
 )
+
+
+# ── quest_templates ───────────────────────────────────────────────────────
+# Reusable quest text snippets saved by a user. Lets the host re-propose
+# a frequently used quest card without retyping it. Scoped per-user:
+# every CRUD path checks ``owner_user_id == current_user.id`` (admins
+# don't get a cross-tenant view because templates are intentionally a
+# personal scratchpad — not a marketplace like ``personas``).
+#
+# The ``text`` column mirrors ``live_quests.text`` (VARCHAR(256)) so a
+# template can always be proposed as-is without truncation.
+quest_templates = Table(
+    "quest_templates",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "user_id",
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    ),
+    Column("text", String(256), nullable=False),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+)
+
+Index("ix_quest_templates_user", quest_templates.c.user_id)
