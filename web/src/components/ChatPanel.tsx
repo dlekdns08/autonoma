@@ -198,6 +198,13 @@ export default function ChatPanel({
         </button>
       </div>
 
+      {/* Viewer chat-command bridge hint. The room chat is where these
+          ``!``-prefixed commands actually fire (ChatInput is the host's
+          slash-command panel), so we surface the catalogue here too. */}
+      <div className="text-[10px] font-mono text-white/40">
+        !cheer &lt;agent&gt; · !cookie &lt;agent&gt; · !boo &lt;agent&gt;
+      </div>
+
       <div className="grid grid-cols-2 gap-1 border-t border-white/10 pt-1.5">
         <input
           value={name}
