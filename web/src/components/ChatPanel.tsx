@@ -147,12 +147,29 @@ export default function ChatPanel({
                     #{msgChannel}
                   </span>
                 )}
+                {m.isCommand && (
+                  // Inline "cmd" pill so viewers can tell at a glance
+                  // that the line fired a chat-bridge reaction (vs. a
+                  // plain message that happens to mention an agent).
+                  <span
+                    className="mr-1 rounded bg-purple-500/30 px-1 py-0.5 text-[9px] font-mono text-purple-100"
+                    title="Viewer command"
+                  >
+                    cmd
+                  </span>
+                )}
                 <span
                   className={`mr-1 ${m.isOwner ? "text-amber-300" : "text-cyan-300"}`}
                 >
                   {m.from}:
                 </span>
-                <span className="text-white/90 whitespace-pre-wrap">{m.text}</span>
+                <span
+                  className={`whitespace-pre-wrap ${
+                    m.isCommand ? "text-purple-200" : "text-white/90"
+                  }`}
+                >
+                  {m.text}
+                </span>
               </div>
             );
           })
