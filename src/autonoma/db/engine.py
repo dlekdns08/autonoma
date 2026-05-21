@@ -384,6 +384,17 @@ async def _migration_017_viewer_drafts(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_018_character_run_xp(conn) -> None:
+    """Create the ``character_run_xp`` table (durable draft scoreboard).
+
+    Per-session per-character XP mirror used by the Viewer Fantasy Draft
+    scoreboard so scores survive a swarm restart. The swarm upserts this
+    each round-tick. Standard ``create_all(checkfirst=True)`` pattern;
+    the table is new so no ALTERs needed.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -402,6 +413,7 @@ MIGRATIONS: list[Migration] = [
     (15, _migration_015_custom_achievements),
     (16, _migration_016_clips),
     (17, _migration_017_viewer_drafts),
+    (18, _migration_018_character_run_xp),
 ]
 
 
