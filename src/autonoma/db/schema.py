@@ -886,6 +886,72 @@ quest_templates = Table(
 Index("ix_quest_templates_user", quest_templates.c.user_id)
 
 
+# ── custom_achievements ─────────────────────────────────────────────────
+# Migration 014 — Custom Achievement DSL MVP. Admins can define new
+# badges via a small JSON DSL stored verbatim in ``definition_json``.
+# The evaluator (``autonoma.custom_achievements``) loads enabled rows,
+# tracks per-character counters, and persists wins into
+# ``earned_achievements`` so the existing badge surface picks them up
+# without further changes. ``id`` is the DSL id (matches the catalog
+# lookup key on the existing achievements path) so we can stash custom
+# achievement ids in ``earned_achievements.achievement_id`` directly.
+custom_achievements = Table(
+    "custom_achievements",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("definition_json", Text, nullable=False),
+    Column(
+        "created_by",
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    ),
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    Column("enabled", Integer, nullable=False, default=1),  # 0/1
+)
+
+
+# ── custom_achievement_progress ─────────────────────────────────────────
+# Per-character running counter for each custom achievement. Bumped by
+# the event-bus handlers; once ``count >= threshold`` we award via the
+# normal :func:`autonoma.achievements_db.record_achievement` path.
+custom_achievement_progress = Table(
+    "custom_achievement_progress",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "achievement_id",
+        String(64),
+        ForeignKey("custom_achievements.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column(
+        "character_uuid",
+        String(36),
+        ForeignKey("characters.character_uuid", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # ``scope_key`` is ``"lifetime"`` or ``"session:<id>"``; combined
+    # with achievement_id + character_uuid this gives a unique counter.
+    Column("scope_key", String(64), nullable=False, default="lifetime"),
+    Column("count", Integer, nullable=False, default=0),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "achievement_id", "character_uuid", "scope_key", name="uq_cap_scope"
+    ),
+)
+
+
 # ── viewer_points ────────────────────────────────────────────────────────
 # Channel-points economy MVP. One row per viewer; the balance is the
 # running total of earned (watch heartbeats, votes) minus spent (world
