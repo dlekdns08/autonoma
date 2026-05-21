@@ -511,30 +511,65 @@ async def _bump_and_maybe_award(
 async def _resolve_target_uuids(event: str, data: dict[str, Any]) -> list[str]:
     """Map an event payload to the character_uuid(s) it should affect.
 
-    - ``sandbox.run_finished`` carries an ``agent`` name → resolve to the
-      single most-recent alive character with that name.
-    - ``boss.defeated`` / ``quest.completed`` are collective: fan out to
-      every alive character.
-    """
-    if event == "sandbox.run_finished":
-        name = (data.get("agent") or "").strip()
-        if not name:
-            return []
-        await init_db()
-        engine = get_engine()
-        async with engine.connect() as conn:
-            row = (
-                await conn.execute(
-                    select(characters.c.character_uuid)
-                    .where(characters.c.name == name)
-                    .where(characters.c.is_alive == 1)
-                    .order_by(characters.c.last_seen_at.desc())
-                    .limit(1)
-                )
-            ).first()
-        return [row[0]] if row else []
+    Resolution order, in priority:
 
-    # Collective events — every alive character is a participant.
+    1. ``data["character_uuids"]`` — preferred. Emit sites that know
+       which characters participated (e.g. boss.defeated tracking the
+       agents who dealt damage) include this field. We trust it
+       verbatim and skip every fallback below.
+    2. ``data["agent"]`` (single name) — resolve to the most-recent
+       alive character with that name. Used by sandbox.run_finished and
+       by the legacy ``QuestBoard.check_completion`` quest.completed
+       path, which only knows the agent's display name.
+    3. Collective fan-out — every alive character. Backwards-compat
+       fallback for callers that haven't been migrated yet.
+    """
+    # 1. Preferred: explicit list of character uuids on the payload.
+    raw_uuids = data.get("character_uuids")
+    if raw_uuids:
+        # Accept any iterable of strings; dedup while preserving order.
+        seen: set[str] = set()
+        out: list[str] = []
+        try:
+            iterator = list(raw_uuids)
+        except TypeError:
+            iterator = []
+        for uid in iterator:
+            if not isinstance(uid, str):
+                continue
+            uid = uid.strip()
+            if uid and uid not in seen:
+                seen.add(uid)
+                out.append(uid)
+        if out:
+            return out
+
+    # 2. Single-agent-name event payloads (sandbox + legacy quest_board).
+    if event in ("sandbox.run_finished", "quest.completed"):
+        name = (data.get("agent") or "").strip()
+        if name:
+            await init_db()
+            engine = get_engine()
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        select(characters.c.character_uuid)
+                        .where(characters.c.name == name)
+                        .where(characters.c.is_alive == 1)
+                        .order_by(characters.c.last_seen_at.desc())
+                        .limit(1)
+                    )
+                ).first()
+            if row:
+                return [row[0]]
+        # sandbox.run_finished without a usable name → nothing to bump.
+        if event == "sandbox.run_finished":
+            return []
+        # quest.completed without ``agent`` falls through to the
+        # collective fan-out so the live-quest path (no per-character
+        # info) still works.
+
+    # 3. Collective events — every alive character is a participant.
     await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
