@@ -688,3 +688,152 @@ __all__ = [
     "refresh_cache",
     "install",
 ]
+
+
+# ── Inline smoke test ──────────────────────────────────────────────────
+#
+# Run with::
+#
+#     python -m autonoma.custom_achievements
+#
+# Exercises the two important branches of the evaluator after the
+# per-character payload migration:
+#   (a) explicit ``character_uuids`` scopes the counter to those UUIDs,
+#   (b) absent ``character_uuids`` falls back to the legacy fan-out
+#       across every alive character.
+#
+# Self-contained: spins up a fresh on-disk SQLite under a tempdir, seeds
+# two ``characters`` rows, and inspects ``custom_achievement_progress``
+# directly to verify which UUIDs got incremented.
+
+
+async def _smoke_test() -> None:  # pragma: no cover — manual harness only
+    import tempfile
+    import uuid as _uuid
+    from pathlib import Path
+
+    from autonoma import config as _config
+    from autonoma.db import engine as _engine_mod
+
+    # Isolated DB so we never touch the real data dir.
+    tmpdir = Path(tempfile.mkdtemp(prefix="custom_ach_smoke_"))
+    _config.settings.data_dir = tmpdir
+    _config.settings.db_filename = "smoke.db"
+    _engine_mod._engine = None
+    _engine_mod._initialized = False
+
+    await init_db()
+    engine = get_engine()
+
+    uuid_a = str(_uuid.uuid4())
+    uuid_b = str(_uuid.uuid4())
+
+    # Seed two alive characters so the legacy fan-out has somewhere to
+    # land.
+    async with engine.begin() as conn:
+        for uid, name in ((uuid_a, "Alpha"), (uuid_b, "Beta")):
+            await conn.execute(
+                insert(characters).values(
+                    character_uuid=uid,
+                    seed_hash="smoke",
+                    name=name,
+                    role="tester",
+                    species="cat",
+                    species_emoji="🐱",
+                    catchphrase="",
+                    rarity="common",
+                    is_alive=1,
+                )
+            )
+
+    # Install the boss_slayer_1 definition (threshold=1, lifetime).
+    defn = await create_definition(
+        {
+            "id": "boss_slayer_1",
+            "title": "Boss Slayer I",
+            "tier": "bronze",
+            "xp_reward": 10,
+            "trigger": {
+                "event": "boss.defeated",
+                "count": 1,
+                "scope": "lifetime",
+                "where": {},
+            },
+        },
+        # NULL because we don't seed a ``users`` row in the smoke
+        # harness and ``custom_achievements.created_by`` has a FK to
+        # ``users.id`` (nullable).
+        created_by=None,
+    )
+    assert defn.id == "boss_slayer_1"
+    await refresh_cache()
+
+    async def _progress_count(uid: str) -> int:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(custom_achievement_progress.c.count)
+                    .where(
+                        custom_achievement_progress.c.achievement_id
+                        == "boss_slayer_1"
+                    )
+                    .where(custom_achievement_progress.c.character_uuid == uid)
+                )
+            ).first()
+        return int(row[0]) if row else 0
+
+    # ── Case 1: explicit character_uuids scopes the bump. ──────────────
+    await bus.emit(
+        "boss.defeated",
+        name="Smoke Boss",
+        xp_reward=10,
+        character_uuids=[uuid_a],
+    )
+    # The handler is fire-and-forget under gather, but bus.emit awaits
+    # every handler before returning, so the bump is already durable.
+    a_after = await _progress_count(uuid_a)
+    b_after = await _progress_count(uuid_b)
+    assert a_after == 1, f"expected uuid_a count=1, got {a_after}"
+    assert b_after == 0, (
+        f"expected uuid_b count=0 (scoped event), got {b_after}"
+    )
+    print(
+        f"[ok] scoped emit: uuid_a={a_after} uuid_b={b_after}",
+    )
+
+    # ── Case 2: legacy emit (no character_uuids) fans out. ─────────────
+    await bus.emit(
+        "boss.defeated",
+        name="Legacy Boss",
+        xp_reward=10,
+    )
+    a_after2 = await _progress_count(uuid_a)
+    b_after2 = await _progress_count(uuid_b)
+    assert a_after2 == 2, f"expected uuid_a count=2 after legacy, got {a_after2}"
+    assert b_after2 == 1, (
+        f"expected uuid_b count=1 after legacy fan-out, got {b_after2}"
+    )
+    print(
+        f"[ok] legacy fan-out: uuid_a={a_after2} uuid_b={b_after2}",
+    )
+
+    # ── Case 3: empty character_uuids falls through to fan-out. ────────
+    await bus.emit(
+        "boss.defeated",
+        name="Empty List Boss",
+        xp_reward=10,
+        character_uuids=[],
+    )
+    a_after3 = await _progress_count(uuid_a)
+    b_after3 = await _progress_count(uuid_b)
+    assert a_after3 == 3, f"expected uuid_a count=3 (empty=>fanout), got {a_after3}"
+    assert b_after3 == 2, f"expected uuid_b count=2 (empty=>fanout), got {b_after3}"
+    print(
+        f"[ok] empty list → fan-out: uuid_a={a_after3} uuid_b={b_after3}",
+    )
+
+    print("custom_achievements smoke test: PASS")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    asyncio.run(_smoke_test())
