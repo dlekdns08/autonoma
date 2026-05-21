@@ -1992,6 +1992,12 @@ class BossAgent:
     round_appeared: int = 0
     damage_log: list[str] = field(default_factory=list)
     drops: dict[str, int] = field(default_factory=dict)  # reward on defeat
+    # Names of every agent who dealt damage to this boss across its
+    # lifetime. Insertion-ordered (dict-as-ordered-set) so the final
+    # attacker is the last entry — useful when scoping custom
+    # achievements to "agents who actually fought this boss" instead of
+    # the legacy fan-out across every alive character.
+    attackers: dict[str, int] = field(default_factory=dict)
 
     @staticmethod
     def generate(round_number: int, team_avg_level: int, rng: random.Random) -> BossAgent:
@@ -2022,6 +2028,11 @@ class BossAgent:
         self.hp = max(0, self.hp - damage)
         msg = f"{agent_name} dealt {damage} damage to {self.name}! ({self.hp}/{self.max_hp} HP)"
         self.damage_log.append(msg)
+        # Insertion-ordered dedup of contributors so we can scope
+        # boss.defeated achievement payloads to the agents who actually
+        # fought, not every alive character on the map.
+        if agent_name:
+            self.attackers[agent_name] = self.attackers.get(agent_name, 0) + damage
         if self.hp <= 0:
             self.phase = BossPhase.DEFEATED
             msg += f" {self.name} is DEFEATED!"
