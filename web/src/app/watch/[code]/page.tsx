@@ -177,6 +177,16 @@ export default function WatchPage() {
   // drop button (spend) so they always agree on the live balance.
   const points = usePoints(sessionId, { enabled: sessionId !== null && sessionId > 0 });
 
+  // ── Viewer Fantasy Draft ──────────────────────────────────────────
+  // The hook polls the scoreboard every 5s so the header rank chip
+  // stays fresh; opening the modal reuses the same hook instance (the
+  // modal calls its own ``useFantasyDraft`` but the cookie cache +
+  // backend response are shared, so it's just a state mirror).
+  const [draftOpen, setDraftOpen] = useState(false);
+  const { myRank: draftRank } = useFantasyDraft(sessionId, {
+    enabled: sessionId !== null && sessionId > 0,
+  });
+
   // ── Live subtitles ────────────────────────────────────────────────
   // Mirror VTuberStage's spotlight selection so the translation we
   // overlay always corresponds to the bubble the viewer can see.
