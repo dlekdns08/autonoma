@@ -69,6 +69,14 @@ export interface UseRollingRecorderOptions {
    *  largest visible canvas in the document, which matches the watch
    *  page layout where the VTuber spotlight is the dominant element. */
   getCanvas?: () => HTMLCanvasElement | null;
+  /** Optional accessor for a MediaStream carrying synthesised TTS
+   *  audio (e.g. the shared destination exposed by
+   *  ``useAgentVoice.getRecordingStream``). When present and the
+   *  stream actually has audio tracks at start time, those tracks are
+   *  merged with the canvas video tracks before constructing the
+   *  MediaRecorder so the resulting clip plays with voice. TTS only;
+   *  no microphone capture is performed here. */
+  getAudioStream?: () => MediaStream | null;
 }
 
 interface BufferedChunk {
@@ -89,19 +97,36 @@ interface BufferedChunk {
 const TIMESLICE_MS = 1000;
 
 /** Candidate mime types in priority order. The first one supported by
- *  the browser wins. We deliberately *don't* include audio in any of
- *  the candidates — see the module docstring. */
-const CANDIDATE_MIMES = [
+ *  the browser wins. Audio-capable variants are tried first when we
+ *  actually have audio tracks to mux; otherwise we fall back to the
+ *  video-only list so older browsers without VP*+Opus negotiation still
+ *  get a clean recording. */
+const CANDIDATE_MIMES_AUDIO = [
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/webm;codecs=opus",
+  "video/webm",
+  "video/mp4",
+];
+const CANDIDATE_MIMES_VIDEO_ONLY = [
   "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
   "video/mp4",
 ];
 
-function pickMime(): string | null {
+function pickMime(withAudio: boolean): string | null {
   if (typeof MediaRecorder === "undefined") return null;
-  for (const m of CANDIDATE_MIMES) {
+  const list = withAudio ? CANDIDATE_MIMES_AUDIO : CANDIDATE_MIMES_VIDEO_ONLY;
+  for (const m of list) {
     if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  // If no audio-capable mime is supported, fall through to video-only
+  // so the clip is still produced (just silent).
+  if (withAudio) {
+    for (const m of CANDIDATE_MIMES_VIDEO_ONLY) {
+      if (MediaRecorder.isTypeSupported(m)) return m;
+    }
   }
   return null;
 }
@@ -129,6 +154,10 @@ export function useRollingRecorder(
 ): UseRollingRecorderResult {
   const durationSec = opts.durationSec ?? 30;
   const getCanvas = opts.getCanvas;
+  const getAudioStream = opts.getAudioStream;
+  // Logged once on the first successful start so the operator can
+  // verify in DevTools that audio tracks were actually picked up.
+  const loggedFirstRecordRef = useRef<boolean>(false);
 
   // ``supported`` is computed once on mount because MediaRecorder
   // availability doesn't flip at runtime. We use ``useState`` with a
@@ -137,7 +166,9 @@ export function useRollingRecorder(
   // ``false`` so SSR is stable; the client re-evaluates on first paint.
   const [supported] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
-    return pickMime() !== null && typeof HTMLCanvasElement !== "undefined";
+    // Capability check uses the audio-aware picker so we don't gate
+    // recording on audio support — picker falls back to video-only.
+    return pickMime(false) !== null && typeof HTMLCanvasElement !== "undefined";
   });
   const [recording, setRecording] = useState<boolean>(false);
 
@@ -161,16 +192,14 @@ export function useRollingRecorder(
 
   const start = useCallback(() => {
     if (recorderRef.current) return; // already running
-    const mime = pickMime();
-    if (!mime) return;
     const canvas = (getCanvas ? getCanvas() : null) ?? findLargestCanvas();
     if (!canvas) return;
 
-    let stream: MediaStream;
+    let videoStream: MediaStream;
     try {
       // 30 fps gives a smooth-enough capture without doubling the
       // encode bill against the 60 fps the GPU may be rendering at.
-      stream = canvas.captureStream(30);
+      videoStream = canvas.captureStream(30);
     } catch (err) {
       // Some browsers throw on canvases backed by an OffscreenCanvas
       // (e.g. transferred to a worker) — three-fiber doesn't do that
@@ -179,13 +208,47 @@ export function useRollingRecorder(
       return;
     }
 
+    // Mux the TTS audio stream in if the caller exposed one and it
+    // already has audio tracks. TTS only; no mic. Stream identity is
+    // preserved by referencing the existing audio tracks rather than
+    // cloning, so subsequent agent utterances flow into the recorder
+    // without re-wiring.
+    const audioStream = getAudioStream ? getAudioStream() : null;
+    const audioTracks = audioStream ? audioStream.getAudioTracks() : [];
+    const videoTracks = videoStream.getVideoTracks();
+    const withAudio = audioTracks.length > 0;
+    const stream = withAudio
+      ? new MediaStream([...videoTracks, ...audioTracks])
+      : videoStream;
+
+    const mime = pickMime(withAudio);
+    if (!mime) {
+      videoStream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
     let recorder: MediaRecorder;
     try {
       recorder = new MediaRecorder(stream, { mimeType: mime });
     } catch (err) {
       console.warn("[clip] MediaRecorder construct failed:", err);
-      stream.getTracks().forEach((t) => t.stop());
+      videoStream.getTracks().forEach((t) => t.stop());
       return;
+    }
+
+    if (!loggedFirstRecordRef.current) {
+      loggedFirstRecordRef.current = true;
+      // One-shot diagnostic so the operator can confirm the muxed
+      // stream actually carries audio tracks before the recorder
+      // started encoding.
+      console.info(
+        "[clip] starting recorder",
+        {
+          mime,
+          videoTracks: stream.getVideoTracks().length,
+          audioTracks: stream.getAudioTracks().length,
+        },
+      );
     }
 
     chunksRef.current = [];
@@ -207,14 +270,18 @@ export function useRollingRecorder(
       recorder.start(TIMESLICE_MS);
     } catch (err) {
       console.warn("[clip] MediaRecorder.start failed:", err);
-      stream.getTracks().forEach((t) => t.stop());
+      videoStream.getTracks().forEach((t) => t.stop());
       return;
     }
 
     recorderRef.current = recorder;
-    streamRef.current = stream;
+    // Track the *video* stream specifically so ``stop()`` can release
+    // the canvas tap without yanking the shared TTS audio tracks (those
+    // are owned by useAgentVoice's MediaStreamAudioDestinationNode and
+    // continue to flow into any future recorder).
+    streamRef.current = videoStream;
     setRecording(true);
-  }, [getCanvas, trim]);
+  }, [getCanvas, getAudioStream, trim]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
