@@ -4335,7 +4335,13 @@ from autonoma.routers import (
     achievements as _achievements_router,
 )
 from autonoma.routers import (
+    custom_achievements as _custom_achievements_router,
+)
+from autonoma.routers import (
     anomalies as _anomalies_router,
+)
+from autonoma.routers import (
+    clips as _clips_router,
 )
 from autonoma.routers import (
     coordinator as _coordinator_router,
@@ -4365,6 +4371,9 @@ from autonoma.routers import (
     persona_breed as _persona_breed_router,
 )
 from autonoma.routers import (
+    points as _points_router,
+)
+from autonoma.routers import (
     quests as _quests_router,
 )
 from autonoma.routers import (
@@ -4381,8 +4390,10 @@ app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
 app.include_router(_inspire_router.router)
 app.include_router(_achievements_router.router)
+app.include_router(_custom_achievements_router.router)
 app.include_router(_persona_breed_router.router)
 app.include_router(_quests_router.router)
+app.include_router(_points_router.router)
 app.include_router(_quest_templates_router.router)
 app.include_router(_voice_consent_router.router)
 app.include_router(_fingerspell_router.router)
@@ -4393,6 +4404,7 @@ app.include_router(_viewer_betting_router.router)
 app.include_router(_mocap_live_router.router)
 app.include_router(_live_share_router.router)
 app.include_router(_leaderboard_router.router)
+app.include_router(_clips_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
