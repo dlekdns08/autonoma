@@ -30,8 +30,14 @@ import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import Stage from "@/components/Stage";
 import ViewerOverlay from "@/components/ViewerOverlay";
 import ViewerBettingLiveWidget from "@/components/ViewerBettingLiveWidget";
+import FantasyDraftModal from "@/components/FantasyDraftModal";
 import { useViewerOverlay } from "@/hooks/useViewerOverlay";
+import { useFantasyDraft } from "@/hooks/useFantasyDraft";
 import { useTranslate } from "@/hooks/useTranslate";
+import { usePoints } from "@/hooks/usePoints";
+import PointsChip from "@/components/PointsChip";
+import DropCookieButton from "@/components/DropCookieButton";
+import ClipButton from "@/components/ClipButton";
 
 // MVP language picker for live subtitles. KO is the source (= original,
 // no translation). Switching to any other code lazily translates each
@@ -165,6 +171,12 @@ export default function WatchPage() {
 
   const idle = state.agents.length === 0;
 
+  // ── Channel-points wallet ─────────────────────────────────────────
+  // Polls the balance every 15s and pings ``/heartbeat`` every 60s while
+  // the tab is visible. Shared between the chip (display) and the cookie
+  // drop button (spend) so they always agree on the live balance.
+  const points = usePoints(sessionId, { enabled: sessionId !== null && sessionId > 0 });
+
   // ── Live subtitles ────────────────────────────────────────────────
   // Mirror VTuberStage's spotlight selection so the translation we
   // overlay always corresponds to the bubble the viewer can see.
@@ -286,6 +298,35 @@ export default function WatchPage() {
             );
           })}
         </div>
+        {/* Channel-points wallet + spend UI. Both share the ``points``
+            hook so the chip always reflects the spend immediately.
+            The Fantasy Draft trigger lives next to them so spectators
+            can pick a 3-agent roster without leaving the kiosk view —
+            its rank chip is fed by the same ``useFantasyDraft`` polling
+            loop that the modal uses, so opening the modal is a no-op
+            on the network. */}
+        {sessionId !== null && sessionId > 0 ? (
+          <div className="flex items-center gap-2">
+            <PointsChip sessionId={sessionId} bound={points} />
+            <DropCookieButton agents={state.agents} points={points} />
+            {draftRank !== null ? (
+              <span
+                className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-200"
+                title="Your fantasy draft rank"
+              >
+                #{draftRank}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setDraftOpen(true)}
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[11px] text-amber-200 hover:bg-amber-500/20"
+              aria-label="Open fantasy draft"
+            >
+              🏆 Draft
+            </button>
+          </div>
+        ) : null}
       </header>
 
       {/* ── Main column ──────────────────────────────────────────── */}
@@ -377,6 +418,13 @@ export default function WatchPage() {
           sendCommand={overlaySendCommand}
           remote={overlayState}
         />
+
+        {/* Highlight clip generator — top-right of the stage. The
+            recorder auto-arms on mount so the user always has a 30s
+            rolling buffer ready to capture; click saves and uploads. */}
+        <div className="pointer-events-none absolute right-2 top-2 z-40">
+          <ClipButton sessionId={sessionId} title={code} />
+        </div>
       </main>
     </div>
   );
