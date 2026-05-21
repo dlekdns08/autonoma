@@ -23,12 +23,11 @@ import uuid as _uuid
 import pytest
 from sqlalchemy import insert, select
 
+from autonoma import custom_achievements as ca_mod
 from autonoma.custom_achievements import (
     DSLValidationError,
-    _on_event,
     create_definition,
     list_definitions,
-    refresh_cache,
     set_enabled,
     validate_definition,
 )
@@ -39,6 +38,17 @@ from autonoma.db.schema import (
     earned_achievements,
 )
 from autonoma.event_bus import bus
+
+
+@pytest.fixture(autouse=True)
+def _reinstall_bus_handlers() -> None:
+    """The conftest's autouse ``_reset`` clears every bus subscriber,
+    but ``custom_achievements.install()`` is idempotent under
+    ``_installed=True`` — so without re-subscribing, our emits land in
+    a bus that no longer has a handler. Reset the flag and re-install
+    before each test."""
+    ca_mod._installed = False
+    ca_mod.install()
 
 
 # ── helpers ───────────────────────────────────────────────────────────
