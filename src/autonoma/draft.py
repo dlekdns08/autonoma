@@ -5,17 +5,28 @@ Their score for the session is::
 
     sum(agent.total_xp_earned for agent in picks)  +  10 * sum(len(agent.stats.achievements) for agent in picks)
 
-We compute it live from the swarm's in-memory ``AgentStats`` because:
-  * XP and achievements aren't currently emitted with ``session_id`` on
-    the bus, so building a durable event-log scan would require a
-    separate ingest path; and
-  * the swarm carries authoritative counters anyway — the router can
-    snapshot them per request and the answer is correct within one
-    polling tick.
+The score is computed from *durable* storage so it survives a swarm
+crash/restart:
 
-The persistence side is small: a single ``viewer_drafts`` row per
-(viewer_id, session_id), upserted on submit. The score is *not*
-stored — it would go stale the moment another XP/achievement landed.
+  * Achievements come from ``earned_achievements`` (one row per
+    (character_uuid, achievement_id), written by
+    :mod:`autonoma.achievements_db`). Scoped to the current run by
+    ``project_uuid``.
+  * Per-session XP comes from ``character_run_xp``, a durable mirror
+    upserted from the swarm's per-round tick (see
+    ``AgentSwarm._update_world_stats``). Unlike
+    ``characters.total_xp_earned`` (lifetime, flushed only at run-end)
+    this row is *per-session* and updates inside the run.
+
+A small fallback path remains: if both durable counts are 0 *and* the
+swarm has the agent live with non-zero in-memory stats, we use the live
+numbers so an early-session score doesn't render as 0 before the first
+persistence tick lands.
+
+The persistence side of *drafts* themselves is unchanged: one
+``viewer_drafts`` row per (viewer_id, session_id), upserted on submit.
+The score is computed at read time — storing it would go stale the
+moment another XP/achievement landed.
 """
 
 from __future__ import annotations
@@ -23,13 +34,20 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, UTC
 from typing import Any
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func as sa_func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from autonoma.db.engine import get_engine, init_db
-from autonoma.db.schema import viewer_drafts
+from autonoma.db.schema import (
+    character_run_xp,
+    characters,
+    earned_achievements,
+    project_participants,
+    viewer_drafts,
+)
 
 logger = logging.getLogger(__name__)
 
