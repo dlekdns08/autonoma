@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getAgentVoiceRecordingStream } from "@/hooks/useAgentVoice";
 import { API_BASE_URL } from "@/hooks/useSwarm";
 import { useRollingRecorder } from "@/hooks/useRollingRecorder";
 
@@ -50,7 +51,14 @@ type Status =
 const STATUS_TIMEOUT_MS = 12_000;
 
 export default function ClipButton({ sessionId, title }: ClipButtonProps) {
-  const recorder = useRollingRecorder({ durationSec: 30 });
+  const recorder = useRollingRecorder({
+    durationSec: 30,
+    // Pulls the shared TTS MediaStream that useAgentVoice writes
+    // every agent's synthesised voice into. Read at start() time so
+    // we pick up tracks even if the first utterance arrives after
+    // the recorder mounts. TTS only; no mic capture.
+    getAudioStream: () => getAgentVoiceRecordingStream(),
+  });
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
