@@ -353,6 +353,37 @@ async def _migration_014_viewer_points(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_015_custom_achievements(conn) -> None:
+    """Create the ``custom_achievements`` + progress tables (DSL MVP).
+
+    Admin-defined badge definitions live in ``custom_achievements``;
+    per-character running counters live in
+    ``custom_achievement_progress``. Both are new tables.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
+async def _migration_016_clips(conn) -> None:
+    """Create the ``clips`` table (highlight clip generator MVP).
+
+    One row per uploaded clip blob; the actual bytes live on disk under
+    ``{data_dir}/clips/``. Same ``create_all(checkfirst=True)`` pattern
+    as the other "brand-new table" migrations — see ``db.schema.clips``
+    for the column rationale.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
+async def _migration_017_viewer_drafts(conn) -> None:
+    """Create the ``viewer_drafts`` table (Viewer Fantasy Draft MVP).
+
+    Per-viewer per-session 3-agent roster picks — see
+    ``db.schema.viewer_drafts``. Standard ``create_all(checkfirst=True)``
+    pattern; the table is new so no ALTERs needed.
+    """
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -368,6 +399,9 @@ MIGRATIONS: list[Migration] = [
     (12, _migration_012_feature_pack_2026_05),
     (13, _migration_013_quest_templates),
     (14, _migration_014_viewer_points),
+    (15, _migration_015_custom_achievements),
+    (16, _migration_016_clips),
+    (17, _migration_017_viewer_drafts),
 ]
 
 
