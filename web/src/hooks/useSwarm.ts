@@ -549,15 +549,24 @@ export function useSwarm() {
 
         if (event === "viewer.chat") {
           const id = ++chatSeqRef.current;
+          const rawText = (data.text as string) ?? "";
           setChat((prev) =>
             [
               ...prev.slice(-200),
               {
                 id,
                 from: (data.from as string) ?? "anon",
-                text: (data.text as string) ?? "",
+                text: rawText,
                 isOwner: !!(data.is_owner),
                 timestamp: Date.now(),
+                // Prefer the server-side flag (authoritative — it tracks
+                // exactly what the chat-command bridge interpreted) but
+                // fall back to a local prefix check so older backends
+                // that don't send the field still render the pill.
+                isCommand:
+                  typeof data.is_command === "boolean"
+                    ? (data.is_command as boolean)
+                    : rawText.startsWith("!"),
               },
             ],
           );
