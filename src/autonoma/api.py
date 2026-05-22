@@ -4368,9 +4368,6 @@ from autonoma.routers import (
     achievements as _achievements_router,
 )
 from autonoma.routers import (
-    custom_achievements as _custom_achievements_router,
-)
-from autonoma.routers import (
     anomalies as _anomalies_router,
 )
 from autonoma.routers import (
@@ -4378,6 +4375,12 @@ from autonoma.routers import (
 )
 from autonoma.routers import (
     coordinator as _coordinator_router,
+)
+from autonoma.routers import (
+    custom_achievements as _custom_achievements_router,
+)
+from autonoma.routers import (
+    draft as _draft_router,
 )
 from autonoma.routers import (
     fingerspell as _fingerspell_router,
@@ -4389,6 +4392,9 @@ from autonoma.routers import (
     inspire as _inspire_router,
 )
 from autonoma.routers import (
+    leaderboard as _leaderboard_router,
+)
+from autonoma.routers import (
     live_share as _live_share_router,
 )
 from autonoma.routers import (
@@ -4398,28 +4404,22 @@ from autonoma.routers import (
     mocap_live as _mocap_live_router,
 )
 from autonoma.routers import (
-    leaderboard as _leaderboard_router,
-)
-from autonoma.routers import (
     persona_breed as _persona_breed_router,
 )
 from autonoma.routers import (
     points as _points_router,
 )
 from autonoma.routers import (
-    quests as _quests_router,
+    quest_templates as _quest_templates_router,
 )
 from autonoma.routers import (
-    quest_templates as _quest_templates_router,
+    quests as _quests_router,
 )
 from autonoma.routers import (
     viewer_betting as _viewer_betting_router,
 )
 from autonoma.routers import (
     voice_consent as _voice_consent_router,
-)
-from autonoma.routers import (
-    draft as _draft_router,
 )
 
 app.include_router(_coordinator_router.router)
