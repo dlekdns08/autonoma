@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
