@@ -34,10 +34,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func as sa_func, insert, select, update
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy import func as sa_func
 from sqlalchemy.exc import IntegrityError
 
 from autonoma.db.engine import get_engine, init_db
