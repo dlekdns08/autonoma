@@ -148,9 +148,7 @@ async def test_owner_scoping_isolates_users(app_client: AsyncClient) -> None:
 
 
 async def test_unauthenticated_post_returns_401(app_client: AsyncClient) -> None:
-    r = await app_client.post(
-        "/api/quest-templates", json={"text": "anon attempt"}
-    )
+    r = await app_client.post("/api/quest-templates", json={"text": "anon attempt"})
     assert r.status_code == 401
 
 

@@ -101,9 +101,7 @@ async def authed_client(fresh_db) -> AsyncIterator[tuple[AsyncClient, str]]:
             yield c, user.id
 
 
-def _install_fake_session(
-    session_id: int, owner_user_id: str, swarm: Any | None = None
-) -> None:
+def _install_fake_session(session_id: int, owner_user_id: str, swarm: Any | None = None) -> None:
     from autonoma import api as _api
 
     sess = _api.SessionState.__new__(_api.SessionState)
@@ -285,7 +283,5 @@ async def test_concurrent_spend_only_one_succeeds(
     #     refunded so balance ends the same as the canonical path).
     # The other 200/200 (both succeeded) MUST NOT happen — that's the
     # double-spend bug this test is here to catch.
-    assert statuses != [200, 200], (
-        f"two parallel spends should not both succeed: {statuses}"
-    )
+    assert statuses != [200, 200], f"two parallel spends should not both succeed: {statuses}"
     assert 200 in statuses

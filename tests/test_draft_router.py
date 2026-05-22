@@ -149,9 +149,7 @@ def _isolate_session_registry() -> Any:
     _api._sessions.update(snapshot)
 
 
-def _install_fake_session(
-    session_id: int, owner_user_id: str, swarm: Any = None
-) -> None:
+def _install_fake_session(session_id: int, owner_user_id: str, swarm: Any = None) -> None:
     """Drop a minimal ``SessionState`` into ``_sessions`` so owner +
     existence checks pass for this test."""
     from autonoma import api as _api
@@ -225,9 +223,7 @@ async def test_resubmit_overwrites_no_duplicate_rows(
     engine = get_engine()
     async with engine.connect() as conn:
         rows = (
-            await conn.execute(
-                select(viewer_drafts).where(viewer_drafts.c.session_id == 202)
-            )
+            await conn.execute(select(viewer_drafts).where(viewer_drafts.c.session_id == 202))
         ).all()
     assert len(rows) == 1
     decoded = json.loads(rows[0]._mapping["picks_json"])
@@ -286,19 +282,13 @@ async def test_durable_score_uses_run_xp_and_achievements(
     async with engine.begin() as conn:
         # XP: Alpha=10, Beta=20, Gamma=30 → sum 60.
         await conn.execute(
-            insert(character_run_xp).values(
-                session_id=session_id, character_uuid=uid_a, xp=10
-            )
+            insert(character_run_xp).values(session_id=session_id, character_uuid=uid_a, xp=10)
         )
         await conn.execute(
-            insert(character_run_xp).values(
-                session_id=session_id, character_uuid=uid_b, xp=20
-            )
+            insert(character_run_xp).values(session_id=session_id, character_uuid=uid_b, xp=20)
         )
         await conn.execute(
-            insert(character_run_xp).values(
-                session_id=session_id, character_uuid=uid_c, xp=30
-            )
+            insert(character_run_xp).values(session_id=session_id, character_uuid=uid_c, xp=30)
         )
         # Achievements: Alpha=2 → +20, Beta=1 → +10, Gamma=0.
         await conn.execute(

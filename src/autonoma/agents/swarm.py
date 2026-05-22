@@ -1667,9 +1667,7 @@ class AgentSwarm:
                 try:
                     await upsert_character_run_xp(s, u, x)
                 except Exception as exc:  # pragma: no cover — defensive
-                    logger.warning(
-                        "[draft] character_run_xp upsert failed for %s: %s", u, exc
-                    )
+                    logger.warning("[draft] character_run_xp upsert failed for %s: %s", u, exc)
 
         try:
             loop.create_task(_flush())

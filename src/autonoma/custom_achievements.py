@@ -91,9 +91,7 @@ from autonoma.world import ACHIEVEMENTS
 logger = logging.getLogger(__name__)
 
 
-SUPPORTED_EVENTS = frozenset(
-    {"boss.defeated", "quest.completed", "sandbox.run_finished"}
-)
+SUPPORTED_EVENTS = frozenset({"boss.defeated", "quest.completed", "sandbox.run_finished"})
 SUPPORTED_TIERS = frozenset({"bronze", "silver", "gold", "platinum", ""})
 SUPPORTED_SCOPES = frozenset({"lifetime", "session"})
 
@@ -172,9 +170,7 @@ def validate_definition(raw: Any) -> AchievementDef:
     ach_id = _req_str("id", max_len=64)
     # Restrict id charset so it round-trips cleanly through URLs.
     if not all(c.isalnum() or c in "._-" for c in ach_id):
-        raise DSLValidationError(
-            "'id' may contain only letters, digits, '.', '_', '-'"
-        )
+        raise DSLValidationError("'id' may contain only letters, digits, '.', '_', '-'")
 
     title = _req_str("title", max_len=128)
     description = raw.get("description") or ""
@@ -185,9 +181,7 @@ def validate_definition(raw: Any) -> AchievementDef:
 
     tier = (raw.get("tier") or "").strip()
     if tier and tier not in SUPPORTED_TIERS:
-        raise DSLValidationError(
-            f"'tier' must be one of {sorted(SUPPORTED_TIERS)}"
-        )
+        raise DSLValidationError(f"'tier' must be one of {sorted(SUPPORTED_TIERS)}")
 
     xp_reward_raw = raw.get("xp_reward", 0)
     try:
@@ -203,9 +197,7 @@ def validate_definition(raw: Any) -> AchievementDef:
 
     event = (trig.get("event") or "").strip()
     if event not in SUPPORTED_EVENTS:
-        raise DSLValidationError(
-            f"'trigger.event' must be one of {sorted(SUPPORTED_EVENTS)}"
-        )
+        raise DSLValidationError(f"'trigger.event' must be one of {sorted(SUPPORTED_EVENTS)}")
 
     count_raw = trig.get("count", 1)
     try:
@@ -217,9 +209,7 @@ def validate_definition(raw: Any) -> AchievementDef:
 
     scope = (trig.get("scope") or "lifetime").strip()
     if scope not in SUPPORTED_SCOPES:
-        raise DSLValidationError(
-            f"'trigger.scope' must be one of {sorted(SUPPORTED_SCOPES)}"
-        )
+        raise DSLValidationError(f"'trigger.scope' must be one of {sorted(SUPPORTED_SCOPES)}")
 
     where_raw = trig.get("where", {})
     if where_raw is None:
@@ -232,9 +222,7 @@ def validate_definition(raw: Any) -> AchievementDef:
         if not isinstance(k, str):
             raise DSLValidationError("'trigger.where' keys must be strings")
         if isinstance(v, (dict, list)):
-            raise DSLValidationError(
-                f"'trigger.where.{k}' must be a scalar"
-            )
+            raise DSLValidationError(f"'trigger.where.{k}' must be a scalar")
 
     return AchievementDef(
         id=ach_id,
@@ -283,9 +271,7 @@ async def refresh_cache() -> None:
                 .all()
             )
 
-        new_index: dict[str, list[AchievementDef]] = {
-            ev: [] for ev in SUPPORTED_EVENTS
-        }
+        new_index: dict[str, list[AchievementDef]] = {ev: [] for ev in SUPPORTED_EVENTS}
         # Track ids we register into ACHIEVEMENTS so we can purge stale
         # custom entries on each refresh without nuking the built-in
         # catalog.
@@ -340,9 +326,7 @@ async def list_definitions() -> list[dict[str, Any]]:
         rows = (
             (
                 await conn.execute(
-                    select(custom_achievements).order_by(
-                        custom_achievements.c.created_at.desc()
-                    )
+                    select(custom_achievements).order_by(custom_achievements.c.created_at.desc())
                 )
             )
             .mappings()
@@ -365,9 +349,7 @@ async def list_definitions() -> list[dict[str, Any]]:
     return out
 
 
-async def create_definition(
-    raw: Any, *, created_by: str | None = None
-) -> AchievementDef:
+async def create_definition(raw: Any, *, created_by: str | None = None) -> AchievementDef:
     """Insert a new definition row. Returns the parsed def on success."""
     defn = validate_definition(raw)
     await init_db()
@@ -383,9 +365,7 @@ async def create_definition(
                 )
             )
     except IntegrityError as exc:
-        raise DSLValidationError(
-            f"achievement id '{defn.id}' already exists"
-        ) from exc
+        raise DSLValidationError(f"achievement id '{defn.id}' already exists") from exc
     await refresh_cache()
     return defn
 
@@ -422,9 +402,7 @@ async def delete_definition(achievement_id: str) -> bool:
             )
         )
         result = await conn.execute(
-            delete(custom_achievements).where(
-                custom_achievements.c.id == achievement_id
-            )
+            delete(custom_achievements).where(custom_achievements.c.id == achievement_id)
         )
     ok = result.rowcount > 0
     if ok:
@@ -478,16 +456,9 @@ async def _bump_and_maybe_award(
                 # Lost a race; fall back to update.
                 await conn.execute(
                     update(custom_achievement_progress)
-                    .where(
-                        custom_achievement_progress.c.achievement_id == defn.id
-                    )
-                    .where(
-                        custom_achievement_progress.c.character_uuid
-                        == character_uuid
-                    )
-                    .where(
-                        custom_achievement_progress.c.scope_key == scope_key
-                    )
+                    .where(custom_achievement_progress.c.achievement_id == defn.id)
+                    .where(custom_achievement_progress.c.character_uuid == character_uuid)
+                    .where(custom_achievement_progress.c.scope_key == scope_key)
                     .values(count=custom_achievement_progress.c.count + 1)
                 )
 
@@ -495,9 +466,7 @@ async def _bump_and_maybe_award(
             await conn.execute(
                 select(custom_achievement_progress.c.count)
                 .where(custom_achievement_progress.c.achievement_id == defn.id)
-                .where(
-                    custom_achievement_progress.c.character_uuid == character_uuid
-                )
+                .where(custom_achievement_progress.c.character_uuid == character_uuid)
                 .where(custom_achievement_progress.c.scope_key == scope_key)
             )
         ).first()
@@ -584,9 +553,7 @@ async def _resolve_target_uuids(event: str, data: dict[str, Any]) -> list[str]:
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
-                select(characters.c.character_uuid).where(
-                    characters.c.is_alive == 1
-                )
+                select(characters.c.character_uuid).where(characters.c.is_alive == 1)
             )
         ).fetchall()
     return [r[0] for r in rows]
@@ -629,9 +596,7 @@ async def _on_event(event_name: str, **data: Any) -> None:
             continue
         for character_uuid in targets:
             try:
-                await _bump_and_maybe_award(
-                    defn, character_uuid, session_id=session_id_int
-                )
+                await _bump_and_maybe_award(defn, character_uuid, session_id=session_id_int)
             except Exception as exc:
                 logger.warning(
                     "[custom_ach] bump failed defn=%s char=%s: %s",
@@ -773,10 +738,7 @@ async def _smoke_test() -> None:  # pragma: no cover — manual harness only
             row = (
                 await conn.execute(
                     select(custom_achievement_progress.c.count)
-                    .where(
-                        custom_achievement_progress.c.achievement_id
-                        == "boss_slayer_1"
-                    )
+                    .where(custom_achievement_progress.c.achievement_id == "boss_slayer_1")
                     .where(custom_achievement_progress.c.character_uuid == uid)
                 )
             ).first()
@@ -794,9 +756,7 @@ async def _smoke_test() -> None:  # pragma: no cover — manual harness only
     a_after = await _progress_count(uuid_a)
     b_after = await _progress_count(uuid_b)
     assert a_after == 1, f"expected uuid_a count=1, got {a_after}"
-    assert b_after == 0, (
-        f"expected uuid_b count=0 (scoped event), got {b_after}"
-    )
+    assert b_after == 0, f"expected uuid_b count=0 (scoped event), got {b_after}"
     print(
         f"[ok] scoped emit: uuid_a={a_after} uuid_b={b_after}",
     )
@@ -810,9 +770,7 @@ async def _smoke_test() -> None:  # pragma: no cover — manual harness only
     a_after2 = await _progress_count(uuid_a)
     b_after2 = await _progress_count(uuid_b)
     assert a_after2 == 2, f"expected uuid_a count=2 after legacy, got {a_after2}"
-    assert b_after2 == 1, (
-        f"expected uuid_b count=1 after legacy fan-out, got {b_after2}"
-    )
+    assert b_after2 == 1, f"expected uuid_b count=1 after legacy fan-out, got {b_after2}"
     print(
         f"[ok] legacy fan-out: uuid_a={a_after2} uuid_b={b_after2}",
     )

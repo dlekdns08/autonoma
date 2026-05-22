@@ -196,9 +196,7 @@ async def test_db_failure_cleans_up_orphan_file(
 
     # No new files should be in the clips dir.
     after = set(p.name for p in clips_dir.iterdir())
-    assert after == before, (
-        f"orphan file(s) leaked after DB failure: {after - before}"
-    )
+    assert after == before, f"orphan file(s) leaked after DB failure: {after - before}"
 
 
 # ── GET endpoint ───────────────────────────────────────────────────────

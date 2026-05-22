@@ -339,9 +339,7 @@ async def test_threshold_reach_writes_earned_achievements(fresh_db) -> None:
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
-                select(earned_achievements).where(
-                    earned_achievements.c.character_uuid == uid
-                )
+                select(earned_achievements).where(earned_achievements.c.character_uuid == uid)
             )
         ).all()
     ach_ids = [r._mapping["achievement_id"] for r in rows]
@@ -381,9 +379,7 @@ async def test_boss_attackers_smoke(fresh_db) -> None:
     )
 
     # Case 1: explicit character_uuids scopes the bump.
-    await bus.emit(
-        "boss.defeated", name="Smoke Boss", xp_reward=10, character_uuids=[uid_a]
-    )
+    await bus.emit("boss.defeated", name="Smoke Boss", xp_reward=10, character_uuids=[uid_a])
     assert await _progress_count("boss_slayer_1", uid_a) == 1
     # uid_b NOT advanced. Note: threshold met for uid_a (count=1), so
     # the second case below will not re-award (idempotent).
@@ -396,8 +392,6 @@ async def test_boss_attackers_smoke(fresh_db) -> None:
     assert await _progress_count("boss_slayer_1", uid_b) == 1
 
     # Case 3: empty character_uuids list falls through to fan-out.
-    await bus.emit(
-        "boss.defeated", name="Empty Boss", xp_reward=10, character_uuids=[]
-    )
+    await bus.emit("boss.defeated", name="Empty Boss", xp_reward=10, character_uuids=[])
     assert await _progress_count("boss_slayer_1", uid_a) == 3
     assert await _progress_count("boss_slayer_1", uid_b) == 2

@@ -55,9 +55,7 @@ def _row_to_dict(m: Any) -> dict[str, Any]:
         "id": int(m["id"]),
         "user_id": str(m["user_id"]),
         "text": str(m["text"]),
-        "created_at": (
-            m["created_at"].isoformat() if m["created_at"] is not None else None
-        ),
+        "created_at": (m["created_at"].isoformat() if m["created_at"] is not None else None),
     }
 
 
@@ -117,9 +115,7 @@ async def create_template(
         )
         template_id = int(result.inserted_primary_key[0])
         row = (
-            await conn.execute(
-                select(quest_templates).where(quest_templates.c.id == template_id)
-            )
+            await conn.execute(select(quest_templates).where(quest_templates.c.id == template_id))
         ).first()
 
     if row is None:

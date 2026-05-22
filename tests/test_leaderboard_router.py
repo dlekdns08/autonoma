@@ -116,9 +116,7 @@ async def test_metric_runs_survived_re_sorts(authed_client: AsyncClient) -> None
     await _seed_character(name="Mid", xp=50, runs_survived=1, achievements=2)
     await _seed_character(name="Hi", xp=100, runs_survived=0, achievements=0)
 
-    r = await authed_client.get(
-        "/api/leaderboard/characters?metric=runs_survived"
-    )
+    r = await authed_client.get("/api/leaderboard/characters?metric=runs_survived")
     assert r.status_code == 200, r.text
     rows = r.json()["rows"]
     names = [row["name"] for row in rows]
@@ -133,9 +131,7 @@ async def test_metric_achievements_re_sorts(authed_client: AsyncClient) -> None:
     await _seed_character(name="Mid", xp=50, runs_survived=1, achievements=2)
     await _seed_character(name="Hi", xp=100, runs_survived=0, achievements=5)
 
-    r = await authed_client.get(
-        "/api/leaderboard/characters?metric=achievements"
-    )
+    r = await authed_client.get("/api/leaderboard/characters?metric=achievements")
     assert r.status_code == 200, r.text
     rows = r.json()["rows"]
     names = [row["name"] for row in rows]

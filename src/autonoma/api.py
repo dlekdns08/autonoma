@@ -2664,13 +2664,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     # parser/throttle path can be unit-tested without
                     # standing up a full WS lifecycle.
                     if is_command:
-                        _emitted, session.last_viewer_command_at = (
-                            await _handle_viewer_command(
-                                text,
-                                session_id=session.session_id,
-                                room_id=session.room_id,
-                                last_command_at=session.last_viewer_command_at,
-                            )
+                        _emitted, session.last_viewer_command_at = await _handle_viewer_command(
+                            text,
+                            session_id=session.session_id,
+                            room_id=session.room_id,
+                            last_command_at=session.last_viewer_command_at,
                         )
 
             # ── viewer_overlay (cursors + stickers, feature #6) ──

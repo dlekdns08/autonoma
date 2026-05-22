@@ -255,9 +255,7 @@ async def get_clip(
     await init_db()
     engine = get_engine()
     async with engine.connect() as conn:
-        row = (
-            await conn.execute(select(clips_table).where(clips_table.c.id == clip_id))
-        ).first()
+        row = (await conn.execute(select(clips_table).where(clips_table.c.id == clip_id))).first()
     if row is None:
         raise _err(404, "clip_not_found", "no clip with that id.")
 

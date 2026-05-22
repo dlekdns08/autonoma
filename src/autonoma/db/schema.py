@@ -946,9 +946,7 @@ custom_achievement_progress = Table(
         nullable=False,
         server_default=func.current_timestamp(),
     ),
-    UniqueConstraint(
-        "achievement_id", "character_uuid", "scope_key", name="uq_cap_scope"
-    ),
+    UniqueConstraint("achievement_id", "character_uuid", "scope_key", name="uq_cap_scope"),
 )
 
 

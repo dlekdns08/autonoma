@@ -73,9 +73,7 @@ async def _get_balance_for_update(conn, viewer_id: str) -> int:
     """
     row = (
         await conn.execute(
-            select(viewer_points.c.balance).where(
-                viewer_points.c.viewer_id == str(viewer_id)
-            )
+            select(viewer_points.c.balance).where(viewer_points.c.viewer_id == str(viewer_id))
         )
     ).first()
     if row is None:
@@ -104,13 +102,16 @@ async def _upsert_delta(viewer_id: str, delta: int) -> int:
     async with engine.begin() as conn:
         current = await _get_balance_for_update(conn, viewer_id)
         new_balance = max(0, current + int(delta))
-        if current == 0 and not (
-            await conn.execute(
-                select(viewer_points.c.viewer_id).where(
-                    viewer_points.c.viewer_id == str(viewer_id)
+        if (
+            current == 0
+            and not (
+                await conn.execute(
+                    select(viewer_points.c.viewer_id).where(
+                        viewer_points.c.viewer_id == str(viewer_id)
+                    )
                 )
-            )
-        ).first():
+            ).first()
+        ):
             try:
                 await conn.execute(
                     insert(viewer_points).values(
@@ -171,9 +172,7 @@ async def spend(viewer_id: str, cost: int) -> int:
     async with engine.begin() as conn:
         current = await _get_balance_for_update(conn, viewer_id)
         if current < cost:
-            raise InsufficientBalance(
-                f"need {cost} pts, have {current}"
-            )
+            raise InsufficientBalance(f"need {cost} pts, have {current}")
         new_balance = current - int(cost)
         await conn.execute(
             update(viewer_points)

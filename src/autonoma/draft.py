@@ -183,9 +183,7 @@ def list_session_agents(session_id: int) -> list[dict[str, str]]:
         emoji = str(getattr(persona, "emoji", "") or "")
         role = str(getattr(persona, "role", "") or "")
         mood = getattr(agent, "mood", None)
-        mood_str = (
-            mood.value if mood is not None and hasattr(mood, "value") else str(mood or "")
-        )
+        mood_str = mood.value if mood is not None and hasattr(mood, "value") else str(mood or "")
         rows.append(
             {
                 "name": str(name),
@@ -316,9 +314,7 @@ async def _resolve_character_uuids(
     return resolved
 
 
-async def upsert_character_run_xp(
-    session_id: int, character_uuid: str, xp: int
-) -> None:
+async def upsert_character_run_xp(session_id: int, character_uuid: str, xp: int) -> None:
     """Mirror ``stats.total_xp_earned`` into ``character_run_xp``.
 
     Idempotent — same (session_id, character_uuid) pair gets updated in
@@ -564,7 +560,6 @@ async def scoreboard(session_id: int, my_viewer_id: str | None = None) -> dict[s
     # rank lookup. Other viewers never need to see another viewer's
     # stable id.
     public_rows = [
-        {"viewer_name": r["viewer_name"], "picks": r["picks"], "score": r["score"]}
-        for r in rows
+        {"viewer_name": r["viewer_name"], "picks": r["picks"], "score": r["score"]} for r in rows
     ]
     return {"rows": public_rows, "my_rank": my_rank}
