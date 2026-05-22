@@ -25,14 +25,13 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from autonoma.auth import User, require_active_user
 from autonoma.draft import (
+    PICK_COUNT,
     DraftError,
     InvalidPicks,
-    PICK_COUNT,
     get_draft,
     list_session_agents,
     normalize_picks,
