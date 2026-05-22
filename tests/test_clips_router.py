@@ -18,7 +18,6 @@ Covers:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -27,7 +26,6 @@ from httpx import ASGITransport, AsyncClient
 from autonoma.auth import hash_password
 from autonoma.config import settings
 from autonoma.db.users import create_user
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

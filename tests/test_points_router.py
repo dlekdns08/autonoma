@@ -31,7 +31,6 @@ from autonoma.points import (
     reset_heartbeat_cache,
 )
 
-
 # ── Stub swarm for spend-cookie tests ──────────────────────────────────
 
 

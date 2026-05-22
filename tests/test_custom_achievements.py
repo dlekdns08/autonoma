@@ -17,7 +17,6 @@ DB isolation comes from ``fresh_db`` (tests/conftest.py).
 
 from __future__ import annotations
 
-import json
 import uuid as _uuid
 
 import pytest

@@ -25,7 +25,6 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from autonoma._session_owner import assert_session_owner_or_admin

@@ -30,7 +30,6 @@ from autonoma.db.engine import get_engine, init_db
 from autonoma.db.schema import characters, earned_achievements
 from autonoma.db.users import create_user
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

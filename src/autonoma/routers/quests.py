@@ -35,7 +35,8 @@ from pydantic import BaseModel, Field
 from autonoma._session_owner import assert_session_owner_or_admin
 from autonoma.auth import User, require_active_user, require_admin
 from autonoma.event_bus import bus
-from autonoma.points import VOTE_REWARD, credit as _credit_points
+from autonoma.points import VOTE_REWARD
+from autonoma.points import credit as _credit_points
 from autonoma.quests import (
     QuestTextEmpty,
     QuestTextTooLong,

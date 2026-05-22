@@ -21,7 +21,6 @@ from autonoma.auth import hash_password
 from autonoma.db.users import create_user
 from autonoma.quests import MAX_TEXT_LEN
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 

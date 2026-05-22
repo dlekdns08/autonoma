@@ -23,7 +23,6 @@ from autonoma import api as api_mod
 from autonoma.api import _handle_viewer_command
 from autonoma.event_bus import bus
 
-
 # ── stub swarm + room helpers ──────────────────────────────────────────
 
 

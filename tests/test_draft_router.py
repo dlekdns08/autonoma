@@ -33,12 +33,10 @@ from autonoma.db.schema import (
 )
 from autonoma.db.users import create_user
 from autonoma.draft import (
-    DraftError,
-    InvalidPicks,
     PICK_COUNT,
+    InvalidPicks,
     normalize_picks,
 )
-
 
 # ── Validation (pure functions, no DB needed) ─────────────────────────
 
