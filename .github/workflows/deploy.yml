@@ -24,7 +24,7 @@ jobs:
             docker run --rm -v "$PWD:/ws" alpine sh -c 'rm -rf /ws/output'
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fix Docker credential config
         run: |
