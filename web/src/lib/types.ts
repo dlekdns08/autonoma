@@ -164,6 +164,11 @@ export interface ChatMessage {
    *  like ``!cheer Alex``). Surfaced as a small inline pill in ChatPanel
    *  so other viewers can tell at a glance that a reaction was fired. */
   isCommand?: boolean;
+  /** True when this entry is a Director hint broadcast (``director.hint``
+   *  event) rather than ordinary spectator chat. Chat UIs render these
+   *  with a 💡 marker so it's obvious the line is feeding into the
+   *  Director's next decision, not just decorating the room. */
+  isHint?: boolean;
 }
 
 export interface RelationshipData {

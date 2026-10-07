@@ -573,6 +573,29 @@ export function useSwarm() {
           return;
         }
 
+        if (event === "director.hint") {
+          // Surface accepted hints in the same chat list as ordinary
+          // viewer messages so every spectator sees what landed in the
+          // Director's advisory buffer for the next round. The 💡
+          // marker is the only thing that distinguishes a hint entry
+          // from a regular chat line — see ChatPanel for the styling.
+          const id = ++chatSeqRef.current;
+          setChat((prev) =>
+            [
+              ...prev.slice(-200),
+              {
+                id,
+                from: (data.viewer as string) ?? "anon",
+                text: (data.text as string) ?? "",
+                isOwner: false,
+                timestamp: Date.now(),
+                isHint: true,
+              },
+            ],
+          );
+          return;
+        }
+
         if (event === "auth.failed") {
           setAuthState((prev) => ({
             ...prev,
@@ -1348,6 +1371,22 @@ export function useSwarm() {
     wsRef.current.send(JSON.stringify({ command: "chat", text: trimmed }));
   }, []);
 
+  // Spectator → Director advisory hint. Server sanitizes the text and
+  // enforces a 10s per-viewer cooldown; on success a ``director.hint``
+  // broadcast lands in every viewer's event stream. We do NOT mirror the
+  // server cap (140 chars) here — the input element does that. The
+  // server is the source of truth for throttling; UI just disables the
+  // button optimistically and re-enables on ``director.hint_rejected``
+  // or after the cooldown elapses.
+  const sendDirectorHint = useCallback((text: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    wsRef.current.send(
+      JSON.stringify({ command: "director_hint", text: trimmed }),
+    );
+  }, []);
+
   const setDisplayName = useCallback((name: string) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ command: "set_name", name }));
@@ -1529,6 +1568,7 @@ export function useSwarm() {
     room,
     chat,
     sendChat,
+    sendDirectorHint,
     setDisplayName,
     joinRoom,
     lastRunFieldPaths,

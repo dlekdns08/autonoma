@@ -57,8 +57,18 @@ export default function ChatOverlay({
       {visible.map((m) => (
         <div
           key={m.id}
-          className="animate-[chat-in_220ms_ease-out] rounded-lg bg-black/80 px-3 py-1.5 font-mono text-xs leading-snug text-white shadow-[0_4px_16px_rgba(0,0,0,0.5)] backdrop-blur-sm"
+          className={
+            "animate-[chat-in_220ms_ease-out] rounded-lg px-3 py-1.5 font-mono text-xs leading-snug text-white shadow-[0_4px_16px_rgba(0,0,0,0.5)] backdrop-blur-sm " +
+            // Hint lines get a subtle amber tint so it's instantly clear
+            // they're being fed into the Director — different from the
+            // chatter around them. Non-hint lines stay on the canonical
+            // dark pill so the visual language for regulars doesn't shift.
+            (m.isHint
+              ? "border border-amber-400/40 bg-amber-950/80"
+              : "bg-black/80")
+          }
         >
+          {m.isHint ? <span className="mr-1">💡</span> : null}
           <span
             className="mr-1.5 font-bold"
             style={{ color: colorFor(m.from) }}

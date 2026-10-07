@@ -27,6 +27,7 @@ import { useParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
 import VTuberStage from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
+import DirectorHintComposer from "@/components/DirectorHintComposer";
 import Stage from "@/components/Stage";
 import ViewerOverlay from "@/components/ViewerOverlay";
 import ViewerBettingLiveWidget from "@/components/ViewerBettingLiveWidget";
@@ -71,6 +72,7 @@ export default function WatchPage() {
     room,
     wsRef,
     sessionId,
+    sendDirectorHint,
   } = useSwarm();
 
   // Lock the body to the viewport so a long event log can't push the
@@ -401,6 +403,22 @@ export default function WatchPage() {
         {/* Chat overlay floats on top of the map; tap-through is fine
             because there are no other interactive elements here. */}
         <ChatOverlay messages={chat} />
+
+        {/* Director-hint composer — spectator suggestions that feed the
+            Director's next round (server sanitizes + throttles). Sits in
+            the bottom-left, above the floating ChatOverlay stack so it
+            never clobbers the chat pills. Hidden until the host has
+            actually launched a swarm; the composer's own UI also greys
+            out when the server has no live director registered. */}
+        {connected && sessionId !== null && sessionId > 0 ? (
+          <div className="pointer-events-auto absolute bottom-2 left-2 z-30 w-[300px] max-w-[90vw]">
+            <DirectorHintComposer
+              sendHint={sendDirectorHint}
+              wsRef={wsRef}
+              connected={connected}
+            />
+          </div>
+        ) : null}
 
         {/* Viewer-side betting widget — only meaningful once the host
             has a swarm session attached to the room (sessionId > 0).

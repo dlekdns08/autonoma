@@ -139,6 +139,10 @@ class SessionState:
     # actually drop their socket, which is the right trade-off for an
     # in-memory MVP guard. Reset to 0.0 implicitly on connect.
     last_viewer_command_at: float = 0.0
+    # Last-fired-at timestamp for the director-hint command. Separate
+    # window from chat commands because hints reach an LLM prompt and
+    # warrant a slower cadence (see ``_DIRECTOR_HINT_THROTTLE_SECONDS``).
+    last_director_hint_at: float = 0.0
 
     # ── Compatibility shims (read-through to the room) ──
     @property
@@ -297,6 +301,62 @@ _VIEWER_COMMAND_ICONS: dict[str, str] = {
     "cookie": "🍪",
     "boo": "👎",
 }
+
+# ── Director-hint guardrails ─────────────────────────────────────────────
+# Viewers can post short suggestions that surface in the Director's next
+# situation report. The text reaches an LLM prompt, so the sanitizer has
+# to be conservative: cap length, kill control chars, and defang JSON /
+# prompt-delimiter tokens that would otherwise let a hostile viewer
+# break out of the "viewer suggestions" section into the system harness.
+# 10 seconds per viewer keeps a single spectator from drowning the
+# situation report on their own — a busy room of 10 viewers can still
+# push ~60 hints/min into the buffer (the deque drops the oldest).
+_DIRECTOR_HINT_MAX_CHARS = 140
+_DIRECTOR_HINT_THROTTLE_SECONDS = 10.0
+_DIRECTOR_HINT_BUFFER_SIZE = 5
+
+
+def _sanitize_director_hint(raw: str) -> str:
+    """Defang a viewer-submitted hint before it reaches the Director's prompt.
+
+    Rules (in order):
+      1. Trim, drop empties.
+      2. Strip ASCII control chars (keep regular text + spaces).
+      3. Collapse internal whitespace runs to a single space so a viewer
+         can't smuggle a multi-line prompt past a single-line UI.
+      4. Replace ``{`` / ``}`` with ``(`` / ``)`` so the hint can't close
+         the JSON/dict syntax the harness prompt uses to frame examples.
+      5. Replace ``==`` runs with ``= =`` so a hint can't forge a new
+         ``== SECTION ==`` header inside the situation report.
+      6. Clamp to ``_DIRECTOR_HINT_MAX_CHARS``.
+
+    Returns "" when the hint is empty after sanitization — the caller
+    treats that as a silent no-op (the throttle counter is left alone so
+    accidentally pressing send on a blank input doesn't lock the viewer
+    out for 10s).
+    """
+    if not raw:
+        return ""
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+    # 2: map ASCII whitespace (newlines, tabs, CR, FF, VT) to a plain
+    # space FIRST so the next step preserves word boundaries when the
+    # control char dies. Without this, ``"foo\nbar"`` collapses into
+    # ``"foobar"``, which is uglier and slightly easier to weaponise
+    # (smuggling adjacent tokens through a single-line UI).
+    cleaned = "".join(" " if ch in "\n\r\t\v\f" else ch for ch in cleaned)
+    # 3: drop the remaining non-printable / control chars, then collapse
+    # whitespace runs to a single space.
+    cleaned = "".join(ch for ch in cleaned if ch.isprintable() or ch == " ")
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return ""
+    # 4 + 5: defang section delimiters.
+    cleaned = cleaned.replace("{", "(").replace("}", ")")
+    while "==" in cleaned:
+        cleaned = cleaned.replace("==", "= =")
+    return cleaned[:_DIRECTOR_HINT_MAX_CHARS]
 
 
 async def _handle_viewer_command(
@@ -470,6 +530,11 @@ FORWARDED_EVENTS = [
     "viewer.chat",
     "viewer.cheer",
     "room.viewers",
+    # Spectator → Director advisory hints. Fanned out so every viewer
+    # sees other viewers' submissions land (read-only — only the Director
+    # reads the buffered text into its prompt; the broadcast is purely
+    # presentational).
+    "director.hint",
     # Debate Arena (Feature 20)
     "debate.started",
     "debate.resolved",
@@ -2669,6 +2734,78 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             session_id=session.session_id,
                             room_id=session.room_id,
                             last_command_at=session.last_viewer_command_at,
+                        )
+
+            # ── director_hint ─────────────────────────────────────────
+            # Spectator suggestion that lands in the Director's advisory
+            # buffer for its NEXT think_and_act round. Heavily guarded
+            # because the text reaches an LLM prompt:
+            #   - per-viewer cooldown (separate from chat throttle)
+            #   - sanitizer defangs JSON / section-header tokens
+            #   - capped buffer drops oldest hints under load
+            #   - rendered with explicit "advisory only" framing so a
+            #     hostile hint is weighed, not executed
+            # The Director itself does the buffer-and-drain; the WS layer
+            # just authenticates the room, applies the throttle, and
+            # broadcasts a presentational ``director.hint`` event so other
+            # viewers can see whose hint landed.
+            elif cmd == "director_hint":
+                room = _rooms.get(session.room_id)
+                _now = time.time()
+                cooldown_remaining = max(
+                    0.0,
+                    _DIRECTOR_HINT_THROTTLE_SECONDS - (_now - session.last_director_hint_at),
+                )
+                cleaned = _sanitize_director_hint(msg.get("text") or "")
+                if not cleaned:
+                    # Empty / whitespace-only hint — silent no-op, do NOT
+                    # bump the throttle so a fat-fingered enter on an empty
+                    # composer doesn't lock the viewer out for 10s.
+                    pass
+                elif room is None or room.swarm is None:
+                    await manager.send_to_ws(
+                        ws,
+                        "director.hint_rejected",
+                        {"reason": "no_active_swarm"},
+                    )
+                elif cooldown_remaining > 0:
+                    await manager.send_to_ws(
+                        ws,
+                        "director.hint_rejected",
+                        {
+                            "reason": "throttled",
+                            "retry_in_ms": int(cooldown_remaining * 1000),
+                        },
+                    )
+                else:
+                    viewer_name = session.display_name or f"anon-{session.session_id % 1000}"
+                    queued = False
+                    try:
+                        queued = room.swarm.add_viewer_hint(viewer_name, cleaned)
+                    except (AttributeError, RuntimeError) as e:
+                        # Swarm went stale between the guard and the call.
+                        # Surface a soft reject so the UI can re-enable the
+                        # composer, then move on.
+                        logger.warning(
+                            f"[WS:{session.session_id}] director_hint "
+                            f"add_viewer_hint race (swarm stale): {e!r}"
+                        )
+                    if queued:
+                        session.last_director_hint_at = _now
+                        token = _current_session_id.set(session.session_id)
+                        try:
+                            await bus.emit(
+                                "director.hint",
+                                viewer=viewer_name,
+                                text=cleaned,
+                            )
+                        finally:
+                            _current_session_id.reset(token)
+                    else:
+                        await manager.send_to_ws(
+                            ws,
+                            "director.hint_rejected",
+                            {"reason": "no_director"},
                         )
 
             # ── viewer_overlay (cursors + stickers, feature #6) ──

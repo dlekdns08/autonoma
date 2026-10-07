@@ -888,6 +888,23 @@ class AgentSwarm:
         await asyncio.sleep(wait_seconds)
         logger.info(f"[Swarm] Graceful shutdown complete after {wait_seconds}s wait")
 
+    def add_viewer_hint(self, viewer_name: str, text: str) -> bool:
+        """Forward a sanitized spectator hint to the Director's advisory buffer.
+
+        Returns True when the hint was queued. Returns False if the
+        Director isn't registered yet (swarm is mid-init or torn down)
+        so the WS layer can still surface the broadcast event without
+        pretending the Director consumed it.
+        """
+        director = self.agents.get("Director")
+        if director is None:
+            return False
+        add = getattr(director, "add_viewer_hint", None)
+        if add is None:
+            return False
+        add(viewer_name, text)
+        return True
+
     async def inject_human_message(
         self,
         text: str,
