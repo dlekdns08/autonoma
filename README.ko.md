@@ -126,6 +126,9 @@ web/src/
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | 프로바이더 자격 증명 (접두사 없이도 인식) | — |
 | `AUTONOMA_PROVIDER` | `anthropic` / `openai` / `vllm` | `anthropic` |
 | `AUTONOMA_MODEL` | 모델 ID | `claude-sonnet-5-5` |
+| `AUTONOMA_WORKER_MODEL` | 워커 에이전트 모델 (비우면 Anthropic에서 `claude-haiku-5-5`) | `claude-haiku-5-5` |
+| `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | 티어별 사고 깊이 (`low`…`max`) | `high` / `low` |
+| `AUTONOMA_DECISION_PROTOCOL` | `auto` (네이티브 tool use, vLLM은 JSON), `tool_use`, `json` | `auto` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | 자체 호스팅 OpenAI 호환 서버용 | — |
 | `AUTONOMA_ADMIN_PASSWORD` | 설정 시 웹 UI에서 서버 키 어드민 로그인 활성화 | — |
 | `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | 토글 + 백엔드: `omnivoice` / `none` | `false` / `none` |

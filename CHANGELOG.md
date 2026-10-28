@@ -11,6 +11,19 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Native tool-use decision protocol: each permitted action is a strict
+  tool (`agents/actions.py`); the model calls exactly one per round and
+  large inputs stream via `eager_input_streaming`. `AUTONOMA_DECISION_PROTOCOL`
+  keeps the JSON-in-text contract available (`json`, default on vLLM).
+- Append-only per-agent conversation history with `tool_result` turns,
+  prompt-cache breakpoints, and a bounded reset (`AUTONOMA_AGENT_HISTORY_ROUNDS`).
+- Spectator hints reach the worker agents as mid-conversation
+  `role: system` operator notes (`AutonomousAgent.receive_operator_note`),
+  folded into the user turn on models without that feature.
+- Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
+  `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- `stop_reason: refusal` handling (`agent.refusal` event, idle turn) and
+  server-side `fallbacks: "default"` on models that support it.
 - `pytest-cov` coverage reporting + CI summary.
 - `[tool.ruff.format]` config and `ruff format --check` step in CI.
 - Pre-commit hooks (ruff lint + format, EOF/whitespace, gitleaks secret scan).
@@ -26,6 +39,12 @@ captures work in flight.
   rollback and migration-007 legacy fallback).
 
 ### Changed
+- `anthropic` SDK 0.92 → 2.x (API version `2026-10-21`): `temperature`
+  is no longer sent to Claude (OpenAI/vLLM still honour it); responses
+  are read by block type (5.x models emit `thinking` blocks first);
+  `AUTONOMA_MAX_TOKENS` default 8192 → 16384 because thinking counts.
+- Default model `claude-sonnet-4-6` → `claude-sonnet-5-5`; fallback
+  catalog and UI lists moved to the 5.5 generation.
 - `api.py` shrank from 4,608 → ~4,300 lines after the three extractions.
 - CI workflow gained `ruff check`, `ruff format --check`, `pyright`,
   coverage, and a README-drift warning.
