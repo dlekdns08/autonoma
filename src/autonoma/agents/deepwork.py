@@ -179,6 +179,31 @@ class DeepWorkSession:
             kwargs["max_budget_usd"] = self.max_budget_usd
         if self.effort:
             kwargs["effort"] = self.effort
+        if settings.deep_work_checkpointing:
+            # Snapshots file edits so a failed session can be rewound.
+            kwargs["enable_file_checkpointing"] = True
+        if settings.deep_work_task_budget_tokens:
+            # Advisory token budget the model paces itself against
+            # (distinct from the hard dollar cap above). API minimum 20k.
+            kwargs["task_budget"] = {
+                "total": max(20_000, int(settings.deep_work_task_budget_tokens))
+            }
+        if settings.deep_work_subagents and hasattr(sdk, "AgentDefinition"):
+            kwargs["agents"] = {
+                "tester": sdk.AgentDefinition(
+                    description=(
+                        "Runs the project's tests or the program itself and reports "
+                        "failures with reproduction steps. Delegate verification here."
+                    ),
+                    prompt=(
+                        "You verify work inside the current directory: run tests or the "
+                        "program, read failures, and report precisely what broke and why. "
+                        "Do not edit source files."
+                    ),
+                    tools=["Read", "Bash", "Glob", "Grep"],
+                    model="haiku",
+                ),
+            }
         return sdk.ClaudeAgentOptions(**kwargs)
 
     async def run(self) -> DeepWorkResult:
