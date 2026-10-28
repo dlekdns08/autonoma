@@ -508,6 +508,13 @@ FORWARDED_EVENTS = [
     "agent.spawned",
     "agent.spawn_failed",
     "agent.error",
+    # 2026-10: refusals, delegated-session tool calls, and deep-work
+    # lifecycle (see agents/base.py, agents/deepwork.py).
+    "agent.refusal",
+    "agent.tool_use",
+    "deepwork.started",
+    "deepwork.finished",
+    "deepwork.cancelled",
     "agent.level_up",
     "agent.dream",
     "file.created",
