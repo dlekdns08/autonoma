@@ -312,6 +312,14 @@ class AutonomousAgent:
         return self._llm_config.temperature if self._llm_config else settings.temperature
 
     @property
+    def _advisor_model(self) -> str | None:
+        """Advisor tool pairing: a cheaper executor (this worker) consults a
+        stronger model mid-turn. Empty → off. The Director never uses it."""
+        if self._llm_config is not None:
+            return self._llm_config.advisor_model or None
+        return settings.advisor_model or None
+
+    @property
     def _decision_protocol(self) -> str:
         if self._llm_config is not None:
             return self._llm_config.resolved_decision_protocol()
@@ -819,6 +827,7 @@ RECENT MESSAGES:
             effort=self._effort,
             tools=tools,
             single_tool_call=True,
+            advisor_model=self._advisor_model,
         ):
             if event.kind == "final":
                 final = event.response
@@ -1241,7 +1250,7 @@ RECENT MESSAGES:
                     fix_msg = AgentMessage(
                         sender="ci",
                         recipient=self.name,
-                        msg_type=MessageType.TASK_ASSIGNMENT,
+                        msg_type=MessageType.TASK_ASSIGN,
                         content=format_fix_task(ci),
                     )
                     self.inbox.append(fix_msg)
@@ -1504,7 +1513,7 @@ RECENT MESSAGES:
         )
         self.receive_message(self_msg)
 
-        self.stats.sandbox_runs = getattr(self.stats, "sandbox_runs", 0) + 1
+        self.stats.sandbox_runs += 1
         if result.ok:
             self.stats.add_xp(5)
 
@@ -1733,7 +1742,7 @@ RECENT MESSAGES:
     # on a fire-and-forget without holding the reference lets the
     # event loop GC the task mid-flight, swallowing exceptions and
     # producing the "Task was destroyed but it is pending" warning.
-    _PENDING_ACHIEVEMENT_TASKS: "set[asyncio.Task[None]]" = set()
+    _PENDING_ACHIEVEMENT_TASKS: "set[asyncio.Task[Any]]" = set()
 
     def _schedule_achievement_persist(self, character_uuid: str, ids: list[str]) -> None:
         """Persist newly-earned achievements without blocking the
@@ -1776,7 +1785,7 @@ RECENT MESSAGES:
         )
         AutonomousAgent._PENDING_ACHIEVEMENT_TASKS.add(task)
 
-        def _on_done(t: "asyncio.Task[None]") -> None:
+        def _on_done(t: "asyncio.Task[Any]") -> None:
             AutonomousAgent._PENDING_ACHIEVEMENT_TASKS.discard(t)
             if t.cancelled():
                 return

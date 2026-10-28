@@ -505,6 +505,7 @@ class AgentStats:
     help_given: int = 0
     help_received: int = 0
     errors: int = 0
+    sandbox_runs: int = 0
     tokens_used: int = 0
     rounds_active: int = 0
     gossip_shared: int = 0

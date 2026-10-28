@@ -108,6 +108,22 @@ class Settings(BaseSettings):
     # regenerated on next use.
     gesture_retire_net_votes: int = -3
 
+    # ── Advisor tool ──
+    # Pairs the cheap worker executor with a stronger advisor consulted
+    # mid-turn (server-side ``advisor_20260301``). Empty → off. Valid
+    # pairings: a Haiku 5.5 / Sonnet 5.5 executor may advise with
+    # ``claude-opus-5-5``. Capped per request by ``advisor_max_uses``.
+    advisor_model: str = ""
+    advisor_max_uses: int = 2
+
+    # ── Director interventions ──
+    # When a stall or overdue task is detected the Director asks the
+    # planning-tier model for ONE directive (nudge, reassign, spawn,
+    # approve a review, or wait) instead of only applying rule-based
+    # unblocking. Spectator hints reach that call as operator notes.
+    director_llm_interventions: bool = True
+    director_intervention_cooldown_rounds: int = 3
+
     # ── Deep work (Claude Agent SDK) ──
     # ``native``: workers build one file per round through the decide
     # loop. ``agent_sdk``: a worker that picks up a task delegates the
@@ -115,7 +131,7 @@ class Settings(BaseSettings):
     # ``uv sync --extra agent-sdk``; the SDK bundles the CLI binary and
     # reads ANTHROPIC_API_KEY from the environment). The session's text
     # and tool calls stream to the stage as speech / ``agent.tool_use``.
-    worker_backend: Literal["native", "agent_sdk"] = "native"
+    worker_backend: Literal["native", "agent_sdk", "managed_agents"] = "native"
     deep_work_model: str = ""  # empty → ``model`` (the planning tier)
     deep_work_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "medium"
     deep_work_max_turns: int = 40
@@ -123,6 +139,13 @@ class Settings(BaseSettings):
     deep_work_timeout_s: float = 900.0
     deep_work_allowed_tools: list[str] = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
     deep_work_disallowed_tools: list[str] = ["WebFetch", "WebSearch"]
+    # Agent SDK extras: file checkpointing (undo on failure), an advisory
+    # token budget the session paces itself against (0 → off; ≥ 20 000
+    # when set), and a predefined ``tester`` sub-agent the session may
+    # delegate test runs to.
+    deep_work_checkpointing: bool = True
+    deep_work_task_budget_tokens: int = 0
+    deep_work_subagents: bool = True
 
     # ── Workspace ──
     output_dir: Path = Path("./output")
