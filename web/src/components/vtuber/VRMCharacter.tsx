@@ -38,7 +38,6 @@ import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import {
   VRM,
-  VRMLoaderPlugin,
   VRMUtils,
 } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -56,6 +55,14 @@ import * as THREE from "three";
 import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import type { AgentData, AgentEmote } from "@/lib/types";
 import { vrmFileForAgent } from "./vrmCredits";
+import {
+  createWebGpuRendererFactory,
+  loadWebGpuModules,
+  registerVrmLoaderPlugin,
+  resolveRendererMode,
+  type RendererMode,
+  type WebGpuModules,
+} from "./rendererMode";
 import {
   ClipRuntime,
   clipCache,
@@ -488,6 +495,10 @@ const EMOTE_GESTURE_MAP: Record<string, GestureName> = {
   // same emote path as mood icons).
   "✋": "headshake", // agent.refusal
   "📄": "nod",       // file.created
+  // Viewer-chat sentiment (useChatSentiment, opt-in "chat mood").
+  "💖": "hype",      // positive
+  "💔": "headshake", // negative
+  "💬": "nod",       // neutral
 };
 
 // Alternative gesture picks used by gestureForEmote() so re-emotes don't
@@ -509,6 +520,9 @@ const EMOTE_GESTURE_ALTERNATIVES: Record<string, GestureName[]> = {
   "✿": ["bow", "wave"],
   "✋": ["headshake"],
   "📄": ["nod"],
+  "💖": ["hype", "wave", "greet"],
+  "💔": ["headshake", "bow"],
+  "💬": ["nod", "beat"],
 };
 
 function hashString(s: string): number {
@@ -643,15 +657,24 @@ function vrmFromGltf(gltf: GLTF): VRM {
   return (gltf as unknown as GLTF & { userData: { vrm: VRM } }).userData.vrm;
 }
 
+type LoaderProps = ModelProps & {
+  url: string;
+  /** WebGPU modules when the WebGPU renderer is active; the loader then
+   *  builds MToon node materials. ``null`` = stock WebGL plugin. */
+  webgpu: WebGpuModules | null;
+};
+
 /** Shared-cache variant: r3f's ``useLoader`` keys on URL, so every
  *  mount of the same file shares ONE ``vrm.scene``. Correct for the
  *  dashboard/OBS spotlight (exactly one character on screen). */
-function VRMModelCached({ url, ...rest }: ModelProps & { url: string }) {
-  const gltf = useLoader(GLTFLoader, url, (loader) => {
+function VRMModelCached({ url, webgpu, ...rest }: LoaderProps) {
+  // Materials differ per renderer, so a WebGPU page keys its cache entry
+  // separately (the fragment never reaches the server).
+  const cacheUrl = webgpu ? `${url}#webgpu` : url;
+  const gltf = useLoader(GLTFLoader, cacheUrl, (loader) => {
     // r3f's cache keys on URL alone, so this factory is invoked once per
     // distinct VRM file — we register the VRM parser plugin here.
-    const l = loader as GLTFLoader;
-    l.register((parser) => new VRMLoaderPlugin(parser));
+    registerVrmLoaderPlugin(loader as GLTFLoader, webgpu);
   });
   return <VRMModel vrm={vrmFromGltf(gltf)} {...rest} />;
 }
@@ -660,13 +683,13 @@ function VRMModelCached({ url, ...rest }: ModelProps & { url: string }) {
  *  with ``VRMUtils.deepDispose`` on unmount. Used when several
  *  characters render at once (``/podcast``), where two mounts of the
  *  same file through the shared cache would fight over one scene. */
-function VRMModelIsolated({ url, ...rest }: ModelProps & { url: string }) {
+function VRMModelIsolated({ url, webgpu, ...rest }: LoaderProps) {
   const [vrm, setVrm] = useState<VRM | null>(null);
   useEffect(() => {
     let cancelled = false;
     let loaded: VRM | null = null;
     const loader = new GLTFLoader();
-    loader.register((parser) => new VRMLoaderPlugin(parser));
+    registerVrmLoaderPlugin(loader, webgpu);
     loader
       .loadAsync(url)
       .then((gltf) => {
@@ -687,7 +710,7 @@ function VRMModelIsolated({ url, ...rest }: ModelProps & { url: string }) {
       setVrm(null);
       if (loaded) VRMUtils.deepDispose(loaded.scene);
     };
-  }, [url]);
+  }, [url, webgpu]);
   if (!vrm) return null;
   return <VRMModel vrm={vrm} {...rest} />;
 }
@@ -1992,6 +2015,36 @@ export default function VRMCharacter({
   const Model = isolated ? VRMModelIsolated : VRMModelCached;
   const effectiveState = state ?? agent.state ?? "idle";
 
+  // ── Renderer selection (opt-in WebGPU) ─────────────────────────────
+  // ``?renderer=webgpu`` / NEXT_PUBLIC_RENDERER=webgpu loads the WebGPU
+  // chunks first and only then mounts the Canvas with an async ``gl``
+  // factory. Any failure along the way resolves to ``null`` and the
+  // stock WebGL path below is used unchanged.
+  const [rendererMode] = useState<RendererMode>(resolveRendererMode);
+  const [webgpu, setWebgpu] = useState<WebGpuModules | null | "loading">(
+    rendererMode === "webgpu" ? "loading" : null,
+  );
+  useEffect(() => {
+    if (rendererMode !== "webgpu") return;
+    let cancelled = false;
+    void loadWebGpuModules().then((mods) => {
+      if (!cancelled) setWebgpu(mods);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [rendererMode]);
+  const webgpuMods = webgpu === "loading" ? null : webgpu;
+  const glFactory = useMemo(
+    () => (webgpuMods ? createWebGpuRendererFactory(webgpuMods) : null),
+    [webgpuMods],
+  );
+
+  if (webgpu === "loading") {
+    // Hold the Canvas until the chunks resolve (or fail → WebGL).
+    return <div className="relative h-full w-full overflow-hidden" aria-busy="true" />;
+  }
+
   return (
     <div
       className="relative h-full w-full overflow-hidden"
@@ -2022,7 +2075,9 @@ export default function VRMCharacter({
         // ``premultipliedAlpha`` is left at three's default (true): the
         // DOM compositor expects premultiplied pixels, and ``false``
         // produced dark fringes on MToon alpha edges (hair, lashes).
-        gl={{ alpha: true }}
+        // With WebGPU opted in, ``glFactory`` builds a WebGPURenderer
+        // (awaiting init) and falls back to WebGL if that throws.
+        gl={glFactory ?? { alpha: true }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
         }}
@@ -2041,6 +2096,7 @@ export default function VRMCharacter({
           <Suspense fallback={null}>
             <Model
               url={url}
+              webgpu={webgpuMods}
               vrmFile={file}
               agentName={agent.name}
               mood={agent.mood}
