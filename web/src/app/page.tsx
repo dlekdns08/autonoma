@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSwarm } from "@/hooks/useSwarm";
 import { useAuth } from "@/hooks/useAuth";
 import { useKeyNav } from "@/hooks/useKeyNav";
@@ -17,6 +17,7 @@ import AuthModal from "@/components/AuthModal";
 import ModelSettingsModal from "@/components/ModelSettingsModal";
 import ToastContainer from "@/components/Toast";
 import AgentModal from "@/components/AgentModal";
+import { useGeneratedGestures } from "@/hooks/mocap/useGeneratedGestures";
 import RelationshipWeb from "@/components/RelationshipWeb";
 import ChatInput from "@/components/ChatInput";
 import ChatPanel from "@/components/ChatPanel";
@@ -245,9 +246,36 @@ function Dashboard() {
     }, 60_000);
     return () => clearInterval(t);
   }, []);
+  // Self-authored signature moves — per agent name, resolved ahead of the
+  // per-VRM bindings so a character's own move beats the shared one.
+  const agentNamesForGestures = useMemo(
+    () => state.agents.map((a) => a.name),
+    [state.agents],
+  );
+  const lastSwarmEvent = state.events.length
+    ? state.events[state.events.length - 1]
+    : null;
+  const generatedGestures = useGeneratedGestures(agentNamesForGestures, lastSwarmEvent);
+  // Preview override (▶ in the agent modal): plays a specific clip ref on
+  // one agent for the clip's duration, same TTL discipline as the manual
+  // trigger map above.
+  const previewOverridesRef = useRef<Map<string, { clipRef: string; expiresAt: number }>>(
+    new Map(),
+  );
+  const previewGesture = useCallback((agentName: string, clipRef: string, durationS: number) => {
+    previewOverridesRef.current.set(agentName, {
+      clipRef,
+      expiresAt: Date.now() + Math.max(800, durationS * 1000 + 400),
+    });
+    setManualOverrideBump((n) => n + 1);
+  }, []);
   const mocapClipIdFor = useCallback(
     (agent: AgentData, emote: AgentEmote | null): string | null => {
       const vrmFile = vrmFileForAgent(agent.name);
+      const preview = previewOverridesRef.current.get(agent.name);
+      if (preview && preview.expiresAt > Date.now()) {
+        return preview.clipRef;
+      }
       // Manual override wins over every other trigger — admins fire
       // these knowing they want the gesture to interrupt whatever was
       // playing. TTL-guarded so a fire auto-returns to the normal
@@ -265,14 +293,20 @@ function Dashboard() {
       // one pose layer while mocap drives a conflicting one.
       const st = agent.state;
       if (st && st !== "idle") {
+        const own = generatedGestures.lookup(agent.name, "state", st);
+        if (own) return own;
         const hit = mocapLookup({ vrmFile, kind: "state", value: st });
         if (hit) return hit.clip_id;
       }
       if (emote?.icon && emote.expiresAt > Date.now()) {
+        const own = generatedGestures.lookup(agent.name, "emote", emote.icon);
+        if (own) return own;
         const hit = mocapLookup({ vrmFile, kind: "emote", value: emote.icon });
         if (hit) return hit.clip_id;
       }
       if (agent.mood) {
+        const own = generatedGestures.lookup(agent.name, "mood", agent.mood);
+        if (own) return own;
         const hit = mocapLookup({ vrmFile, kind: "mood", value: agent.mood });
         if (hit) return hit.clip_id;
       }
@@ -283,7 +317,7 @@ function Dashboard() {
       void manualOverrideBump;
       return null;
     },
-    [mocapLookup, manualOverrideBump],
+    [mocapLookup, manualOverrideBump, generatedGestures],
   );
   const { user, logout: httpLogout } = useAuth();
   const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null);
@@ -910,6 +944,18 @@ function Dashboard() {
           onClose={() => setSelectedAgent(null)}
           onSend={sendToAgent}
           relationships={state.relationships}
+          gestures={generatedGestures.forAgent(selectedAgent.name)}
+          onPreviewGesture={(clipRef, durationS) =>
+            previewGesture(selectedAgent.name, clipRef, durationS)
+          }
+          onVoteGesture={(id, up) => void generatedGestures.vote(id, up)}
+          onComposeGesture={(kind, value) =>
+            void generatedGestures.generate(selectedAgent.name, kind, value, {
+              force: true,
+              role: selectedAgent.role,
+              mood: selectedAgent.mood,
+            })
+          }
         />
       )}
 

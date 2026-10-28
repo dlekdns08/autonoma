@@ -80,13 +80,15 @@ export function useGeneratedGestures(
     [enabled],
   );
 
-  // Fetch once per agent as it appears on stage.
+  // Fetch once per agent as it appears on stage. The network round-trip
+  // (and its setState) is deferred to a microtask so the effect itself
+  // never sets state synchronously.
   useEffect(() => {
-    for (const name of agentNames) {
-      if (fetchedRef.current.has(name)) continue;
-      fetchedRef.current.add(name);
-      void fetchAgent(name);
-    }
+    const fresh = agentNames.filter((n) => !fetchedRef.current.has(n));
+    if (fresh.length === 0) return;
+    for (const name of fresh) fetchedRef.current.add(name);
+    const task = Promise.resolve().then(() => Promise.all(fresh.map((n) => fetchAgent(n))));
+    void task;
   }, [agentNames, fetchAgent]);
 
   // Refetch the affected agent on generation / retirement.
@@ -94,7 +96,9 @@ export function useGeneratedGestures(
     if (!lastEvent) return;
     if (lastEvent.event !== "gesture.generated" && lastEvent.event !== "gesture.retired") return;
     const agent = lastEvent.data.agent as string | undefined;
-    if (agent) void fetchAgent(agent);
+    if (!agent) return;
+    const task = Promise.resolve().then(() => fetchAgent(agent));
+    void task;
   }, [lastEvent, fetchAgent]);
 
   const index = useMemo(() => {

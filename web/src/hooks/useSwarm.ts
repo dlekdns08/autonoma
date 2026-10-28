@@ -243,6 +243,12 @@ export function useSwarm() {
   const voiceEvents = useVoiceEventState();
   const voiceBindingsRefreshToken = voiceEvents.refreshToken;
   const voiceBindingEvent = voiceEvents.latestEvent;
+  // Read through a ref inside ``handleMessage`` / ``connect`` (same
+  // pattern as ``sfxRef``/``voiceRef`` below) so those callbacks keep a
+  // stable identity instead of re-creating — and re-opening the
+  // socket — whenever the voice-event state object changes.
+  const voiceEventsRef = useRef(voiceEvents);
+  voiceEventsRef.current = voiceEvents;
   // Multi-viewer state — defaults to a private room of one. The host
   // gets `code` filled in on `swarm.starting`; viewers get it from the
   // ?room= query param on first connect.
@@ -467,7 +473,7 @@ export function useSwarm() {
         // Same row-level patch channel for voice bindings. Suppress the
         // event-log entry so voice config churn doesn't flood the log.
         if (event === "voice.bindings.updated") {
-          voiceEvents.applyPatch({
+          voiceEventsRef.current.applyPatch({
             vrm_file: String(data.vrm_file ?? ""),
             profile_id:
               data.profile_id == null ? null : String(data.profile_id),
@@ -1344,7 +1350,7 @@ export function useSwarm() {
       // token so ``useMocapBindings`` does a full GET on reconnect.
       setMocapBindingsRefreshToken((n) => n + 1);
       // Same treatment for voice bindings.
-      voiceEvents.bumpRefresh();
+      voiceEventsRef.current.bumpRefresh();
       // Set up heartbeat ping every 30 seconds
       clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
@@ -1613,13 +1619,9 @@ export function useSwarm() {
       if (!current.has(name)) voiceRef.current.cleanupAgent(name);
     }
     knownAgentNamesRef.current = current;
-    // ``voiceRef`` is intentionally omitted from deps: it's a stable
-    // ref whose ``.current`` we read at call time, so listing it
-    // would either force a re-run on every voice-object identity
-    // change (defeating the ref pattern) or be a tautology if React
-    // ever optimises ref deps. ESLint rule disabled inline so the
-    // intent doesn't get auto-"fixed" by a future PR.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // ``voiceRef`` is a stable ref whose ``.current`` we read at call
+    // time, so it doesn't belong in the deps (the lint rule agrees —
+    // refs are exempt).
   }, [state.agents]);
 
   // Drop cookies ~1.2s after they open, so Stage has time to play the poof.

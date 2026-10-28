@@ -3,12 +3,127 @@
 import { useRef, useState } from "react";
 import { useModalA11y } from "@/hooks/useModalA11y";
 import type { AgentData, RelationshipData } from "@/lib/types";
+import type {
+  GeneratedGesture,
+  GeneratedTriggerKind,
+} from "@/hooks/mocap/useGeneratedGestures";
 
 interface Props {
   agent: AgentData;
   onClose: () => void;
   onSend?: (agentName: string, message: string) => void;
   relationships?: RelationshipData[];
+  /** Self-authored signature moves for this agent (see useGeneratedGestures). */
+  gestures?: GeneratedGesture[];
+  onPreviewGesture?: (clipRef: string, durationS: number) => void;
+  onVoteGesture?: (id: string, up: boolean) => void;
+  onComposeGesture?: (kind: GeneratedTriggerKind, value: string) => void;
+}
+
+const COMPOSE_SLOTS: ReadonlyArray<{ kind: GeneratedTriggerKind; value: string; label: string }> = [
+  { kind: "state", value: "celebrating", label: "celebrate" },
+  { kind: "state", value: "thinking", label: "think" },
+  { kind: "state", value: "spawning", label: "entrance" },
+  { kind: "emote", value: "💡", label: "idea" },
+];
+
+function SignatureMoves({
+  gestures,
+  onPreview,
+  onVote,
+  onCompose,
+}: {
+  gestures: GeneratedGesture[];
+  onPreview?: (clipRef: string, durationS: number) => void;
+  onVote?: (id: string, up: boolean) => void;
+  onCompose?: (kind: GeneratedTriggerKind, value: string) => void;
+}) {
+  const [voted, setVoted] = useState<Record<string, boolean>>({});
+  return (
+    <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] text-white/30 font-mono">Signature moves</div>
+        <div className="text-[10px] text-white/25 font-mono">
+          {gestures.length ? `${gestures.length} composed` : "none yet"}
+        </div>
+      </div>
+      {gestures.length > 0 && (
+        <ul className="flex flex-col gap-1.5 mb-2">
+          {gestures.map((g) => {
+            const net = g.votes_up - g.votes_down;
+            return (
+              <li
+                key={g.id}
+                className="flex items-center gap-2 rounded-md bg-black/20 px-2 py-1.5 text-[11px] font-mono"
+              >
+                <button
+                  type="button"
+                  onClick={() => onPreview?.(g.clip_ref, g.duration_s)}
+                  className="rounded px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 border border-cyan-500/20 hover:bg-cyan-500/25"
+                  aria-label={`Preview ${g.name}`}
+                  title="Preview on stage"
+                >
+                  ▶
+                </button>
+                <span className="flex-1 truncate text-white/80">{g.name}</span>
+                <span className="text-white/35">
+                  {g.trigger_kind}:{g.trigger_value}
+                </span>
+                <span
+                  className={`rounded px-1 ${g.source === "llm" ? "text-purple-300 bg-purple-500/10" : "text-white/40 bg-white/5"}`}
+                  title={g.source === "llm" ? "composed by the choreographer" : "procedural fallback"}
+                >
+                  {g.source === "llm" ? "✨" : "⚙"}
+                </span>
+                <span className={`w-7 text-right ${net < 0 ? "text-red-300" : "text-white/50"}`}>
+                  {net > 0 ? `+${net}` : net}
+                </span>
+                <button
+                  type="button"
+                  disabled={!!voted[g.id]}
+                  onClick={() => {
+                    setVoted((v) => ({ ...v, [g.id]: true }));
+                    onVote?.(g.id, true);
+                  }}
+                  className="rounded px-1 hover:bg-white/10 disabled:opacity-30"
+                  aria-label={`Upvote ${g.name}`}
+                >
+                  👍
+                </button>
+                <button
+                  type="button"
+                  disabled={!!voted[g.id]}
+                  onClick={() => {
+                    setVoted((v) => ({ ...v, [g.id]: true }));
+                    onVote?.(g.id, false);
+                  }}
+                  className="rounded px-1 hover:bg-white/10 disabled:opacity-30"
+                  aria-label={`Downvote ${g.name}`}
+                >
+                  👎
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {onCompose && (
+        <div className="flex flex-wrap gap-1.5">
+          {COMPOSE_SLOTS.map((slot) => (
+            <button
+              key={`${slot.kind}:${slot.value}`}
+              type="button"
+              onClick={() => onCompose(slot.kind, slot.value)}
+              className="rounded-full bg-purple-500/15 px-2.5 py-1 text-[11px] text-purple-300 font-mono border border-purple-500/20 hover:bg-purple-500/25"
+              title={`Compose a new ${slot.label} move`}
+            >
+              ✨ {slot.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // SVG radar chart for agent stats
@@ -141,7 +256,16 @@ function MoodSparkline({ mood }: { mood: string }) {
   );
 }
 
-export default function AgentModal({ agent, onClose, onSend, relationships = [] }: Props) {
+export default function AgentModal({
+  agent,
+  onClose,
+  onSend,
+  relationships = [],
+  gestures = [],
+  onPreviewGesture,
+  onVoteGesture,
+  onComposeGesture,
+}: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const dialogRef = useModalA11y<HTMLDivElement>({ onEscape: onClose });
   const [tab, setTab] = useState<"stats" | "info" | "profile">("stats");
@@ -289,6 +413,16 @@ export default function AgentModal({ agent, onClose, onSend, relationships = [] 
 
           {tab === "info" && (
             <div className="flex flex-col gap-3">
+              {/* Self-authored gestures */}
+              {(gestures.length > 0 || onComposeGesture) && (
+                <SignatureMoves
+                  gestures={gestures}
+                  onPreview={onPreviewGesture}
+                  onVote={onVoteGesture}
+                  onCompose={onComposeGesture}
+                />
+              )}
+
               {/* Traits */}
               {agent.traits && agent.traits.length > 0 && (
                 <div className="rounded-lg bg-white/[0.03] p-3 border border-white/5">
