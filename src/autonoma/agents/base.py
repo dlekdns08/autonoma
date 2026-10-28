@@ -252,7 +252,11 @@ class AutonomousAgent:
         self._last_action_error: bool = False
         # Spectator / operator notes queued for the next decision.
         self._operator_notes: list[str] = []
+        # Background Claude Agent SDK session (``worker_backend=agent_sdk``).
+        self._deep_work: asyncio.Task[Any] | None = None
+        self._deep_work_task_id: str = ""
         self._total_tokens = 0
+        self._total_cost_usd = 0.0
         self._consecutive_errors = 0
         self._mood_rng = random.Random()
 
@@ -323,12 +327,19 @@ class AutonomousAgent:
     def total_tokens(self) -> int:
         return self._total_tokens
 
+    @property
+    def total_cost_usd(self) -> float:
+        """Dollar cost reported by delegated sessions (deep work only)."""
+        return self._total_cost_usd
+
     # ── Feature 27: Cancellation ───────────────────────────────────────
 
     def cancel(self, reason: str = "shutdown") -> None:
         """Cancel this agent. Subsequent think_and_act calls will return immediately."""
         self._cancelled = True
         self._cancellation_reason = reason
+        if self._deep_work is not None and not self._deep_work.done():
+            self._deep_work.cancel()
         logger.info(f"[{self.name}] Cancelled: {reason}")
 
     # ── Core Loop ──────────────────────────────────────────────────────
@@ -341,6 +352,19 @@ class AutonomousAgent:
                 f"[{self.name}] Skipping think_and_act: cancelled ({self._cancellation_reason})"
             )
             return {"agent": self.name, "action": "idle", "cancelled": True}
+
+        # ── Deep work in flight: no LLM round, just keep the stage honest ──
+        if self._deep_work is not None:
+            if not self._deep_work.done():
+                await self._set_state(AgentState.WORKING)
+                return {
+                    "agent": self.name,
+                    "action": "deep_work",
+                    "task_id": self._deep_work_task_id,
+                    "in_progress": True,
+                }
+            self._deep_work = None
+            self._deep_work_task_id = ""
 
         circuit = _strategy_lookup(
             "safety.enforcement_level", self.policy.safety.enforcement_level
@@ -1026,7 +1050,145 @@ RECENT MESSAGES:
             elif task is not None and started:
                 await bus.emit("task.started", agent=self.name, task_id=task.id)
 
+            if task is not None and (claimed or started) and self._deep_work_enabled():
+                self._start_deep_work(task, project)
+                return {
+                    "agent": self.name,
+                    "action": "work_on_task",
+                    "task_id": task_id,
+                    "deep_work": "started",
+                }
+
         return {"agent": self.name, "action": "work_on_task", "task_id": task_id}
+
+    # ── Deep work (Claude Agent SDK) ──────────────────────────────────
+
+    def _deep_work_enabled(self) -> bool:
+        if settings.worker_backend != "agent_sdk":
+            return False
+        from autonoma.agents import deepwork
+
+        if not deepwork.is_available():
+            logger.warning(
+                f"[{self.name}] worker_backend=agent_sdk but claude-agent-sdk is not "
+                "installed (uv sync --extra agent-sdk); falling back to native actions"
+            )
+            return False
+        return True
+
+    def _start_deep_work(self, task: Task, project: ProjectState) -> None:
+        if self._deep_work is not None and not self._deep_work.done():
+            return
+        self._deep_work_task_id = task.id
+        self._deep_work = asyncio.create_task(self._run_deep_work(task, project))
+
+    async def _run_deep_work(self, task: Task, project: ProjectState) -> None:
+        """Run one Agent SDK session for ``task`` and fold its output back
+        into the project: register touched files, then complete the task."""
+        from autonoma.agents.deepwork import DeepWorkSession
+        from autonoma.workspace import WorkspaceManager
+
+        await self._set_state(AgentState.WORKING)
+        await self._say(f"Deep work on '{task.title}' — building it for real.", style="bold")
+        await bus.emit("deepwork.started", agent=self.name, task_id=task.id, title=task.title)
+
+        workspace = WorkspaceManager()
+        try:
+            # Make sure what the swarm already produced is on disk so the
+            # session builds on it rather than beside it.
+            await workspace.write_all(project)
+        except Exception:
+            logger.exception(f"[{self.name}] deep work: workspace sync failed; continuing")
+        project_dir = workspace.base_dir / project.name
+
+        async def on_text(text: str) -> None:
+            await self._say(text.strip().splitlines()[0][:160], style="dim")
+
+        async def on_tool(name: str, tool_input: dict[str, Any]) -> None:
+            detail = str(
+                tool_input.get("file_path")
+                or tool_input.get("command")
+                or tool_input.get("pattern")
+                or ""
+            )[:120]
+            await bus.emit("agent.tool_use", agent=self.name, tool=name, detail=detail)
+
+        session = DeepWorkSession(
+            agent_name=self.name,
+            role=self.persona.role,
+            task_id=task.id,
+            task_title=task.title,
+            task_description=task.description,
+            project_description=project.description,
+            project_dir=project_dir,
+            on_text=on_text,
+            on_tool=on_tool,
+        )
+        try:
+            result = await session.run()
+        except asyncio.CancelledError:
+            await bus.emit("deepwork.cancelled", agent=self.name, task_id=task.id)
+            raise
+
+        # Register every file the session touched as a project artifact so
+        # the file tree, XP, and the CI loop see it like any other create.
+        known = {f.path for f in project.files}
+        for rel in result.files:
+            content = result.file_contents.get(rel)
+            if content is None:
+                continue
+            artifact = FileArtifact(
+                path=rel,
+                content=content,
+                created_by=self.name,
+                description=f"deep work: {task.title}",
+            )
+            project.files.append(artifact)
+            if rel not in task.artifacts:
+                task.artifacts.append(rel)
+            if rel not in known:
+                self.stats.files_created += 1
+                self.stats.add_xp(15)
+            await bus.emit(
+                "file.created",
+                agent=self.name,
+                path=rel,
+                size=len(content),
+                description=artifact.description,
+            )
+
+        await bus.emit(
+            "deepwork.finished",
+            agent=self.name,
+            task_id=task.id,
+            ok=result.ok,
+            files=len(result.files),
+            turns=result.turns,
+            cost_usd=result.cost_usd,
+            duration_s=result.duration_s,
+            error=result.error,
+        )
+        self._total_cost_usd += result.cost_usd
+
+        if result.ok or result.files:
+            summary = result.summary or f"Built {len(result.files)} file(s)."
+            if not result.ok:
+                summary = f"{summary}\n(partial: {result.error})"
+            self.memory.remember(f"Deep work done: {task.title}", "success", self._round_number)
+            await self._action_complete_task(
+                {"target_task_id": task.id, "task_output": summary}, project
+            )
+        else:
+            self.memory.remember(
+                f"Deep work failed on {task.title}: {result.error[:60]}",
+                "failure",
+                self._round_number,
+            )
+            await self._set_mood(Mood.FRUSTRATED)
+            await self._say(
+                f"Couldn't finish '{task.title}': {result.error[:60]}", style="bold red"
+            )
+            self.stats.errors += 1
 
     async def _action_create_file(self, decision: dict, project: ProjectState) -> dict[str, Any]:
         """Create a file artifact."""

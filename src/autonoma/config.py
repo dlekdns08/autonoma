@@ -88,6 +88,22 @@ class Settings(BaseSettings):
     # trail). Keeps the cached prefix bounded.
     agent_history_rounds: int = 12
 
+    # ── Deep work (Claude Agent SDK) ──
+    # ``native``: workers build one file per round through the decide
+    # loop. ``agent_sdk``: a worker that picks up a task delegates the
+    # building to a Claude Code session in ``output/<project>/`` (needs
+    # ``uv sync --extra agent-sdk``; the SDK bundles the CLI binary and
+    # reads ANTHROPIC_API_KEY from the environment). The session's text
+    # and tool calls stream to the stage as speech / ``agent.tool_use``.
+    worker_backend: Literal["native", "agent_sdk"] = "native"
+    deep_work_model: str = ""  # empty → ``model`` (the planning tier)
+    deep_work_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "medium"
+    deep_work_max_turns: int = 40
+    deep_work_max_budget_usd: float = 1.0  # 0 → no budget cap
+    deep_work_timeout_s: float = 900.0
+    deep_work_allowed_tools: list[str] = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+    deep_work_disallowed_tools: list[str] = ["WebFetch", "WebSearch"]
+
     # ── Workspace ──
     output_dir: Path = Path("./output")
 
