@@ -11,6 +11,12 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- MCP server rebuilt on the official `mcp` SDK (`MCPServer`, formerly
+  `FastMCP`): the standard streamable-HTTP transport is served at `/mcp`
+  (stateless, JSON responses) with the same five tools, typed arguments
+  and `X-MCP-Token` gate. The legacy `POST /mcp/jsonrpc` endpoint stays
+  and dispatches through the same tool registry. `mcp>=2.3` is now a
+  core dependency.
 - Native tool-use decision protocol: each permitted action is a strict
   tool (`agents/actions.py`); the model calls exactly one per round and
   large inputs stream via `eager_input_streaming`. `AUTONOMA_DECISION_PROTOCOL`
@@ -22,6 +28,20 @@ captures work in flight.
   folded into the user turn on models without that feature.
 - Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
   `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- Managed Agents (`autonoma.managed`, opt-in): `worker_backend=managed_agents`
+  runs each task as an outcome-driven hosted session (rubric drafted from
+  the task, per-character memory store attached, outputs copied back);
+  dreams consolidate a run's sessions into the character's memories;
+  cron-scheduled deployments and a verified webhook receiver under
+  `/api/managed/*` (admin).
+- Director interventions: on a stall or overdue task the Director asks
+  the planning model for one directive (nudge / reassign / spawn /
+  approve review / wait) via tool use; spectator hints reach that call
+  as an operator-channel system message. `director.intervention` event.
+- Advisor tool (`advisor_20260301`): `AUTONOMA_ADVISOR_MODEL` lets the
+  Haiku 5.5 worker executor consult a stronger model mid-turn.
+- Deep work extras: Agent SDK file checkpointing, advisory task budget,
+  and a predefined `tester` sub-agent.
 - Self-authored gestures (`autonoma.gestures`): a motion-family DSL,
   procedural expander, joint-limit/velocity validator, LLM choreographer
   with procedural fallback, `generated_gestures` table (migration 019),
@@ -49,10 +69,23 @@ captures work in flight.
   rollback and migration-007 legacy fallback).
 
 ### Changed
+- CI: the runner is configurable via the `CI_RUNNER` repository
+  variable with a GitHub-hosted fallback (`ubuntu-latest`), and the job
+  has a 30-minute `timeout-minutes` ceiling. Pyright stays non-blocking
+  until the remaining backlog is cleared; the coverage gate stays at 55.
+- `autonoma.api` split into routers: auth/admin users, harness, workspace
+  (files, templates, history, agent memory, export), runs/checkpoints,
+  health, models and mocap now live under `autonoma.routers.*`; the DB
+  persistence helpers moved to `autonoma._api_persist`. Paths, auth
+  dependencies, status codes and registration order are unchanged and
+  every name previously importable from `autonoma.api` is re-exported.
+  `api.py` went from ~4,600 to ~2,400 lines.
 - `anthropic` SDK 0.92 → 2.x (API version `2026-10-21`): `temperature`
   is no longer sent to Claude (OpenAI/vLLM still honour it); responses
   are read by block type (5.x models emit `thinking` blocks first);
   `AUTONOMA_MAX_TOKENS` default 8192 → 16384 because thinking counts.
+- OpenAI fallback catalog moved off the retiring gpt-4o / o1 ids (live
+  `/v1/models` remains authoritative).
 - Default model `claude-sonnet-4-6` → `claude-sonnet-5-5`; fallback
   catalog and UI lists moved to the 5.5 generation.
 - `api.py` shrank from 4,608 → ~4,300 lines after the three extractions.

@@ -62,7 +62,7 @@ to enable.
 - **Anomaly detection** — repetition, mood-drift, file-churn, LLM-error-burst rules emit `session.anomaly` events that surface in the A/B compare report.
 - **A/B preset comparison** — pick two finished runs (`/admin/ab-compare`), compare tasks-done %, rounds, anomalies, LLM cost.
 - **Swarm-vs-swarm coordinator** — invite-based matchmaking + ELO leaderboard. The local instance hosts the coordinator endpoints under `/api/coordinator/*`.
-- **MCP server** — exposes `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events` as MCP tools so Claude Code / Cursor can drive Autonoma directly. Off by default; gated by `AUTONOMA_MCP_SERVER_ENABLED`.
+- **MCP server** — built on the official `mcp` SDK; serves the standard streamable-HTTP transport at `/mcp` (plus the legacy `POST /mcp/jsonrpc` endpoint) and exposes `list_sessions`, `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events` as MCP tools so Claude Code / Cursor can drive Autonoma directly. Point a client at `http://<host>:8000/mcp` with an `X-MCP-Token` header equal to `AUTONOMA_COORDINATOR_TOKEN`. Off by default; gated by `AUTONOMA_MCP_SERVER_ENABLED`.
 - **Auto CI loop** — every file an agent creates is sandbox-checked (ruff for `.py`, `tsc` for `.ts/.tsx`, `json.loads` for `.json`); failures fold back into the agent's inbox as a fix-task.
 - **OpenTelemetry + Prometheus** — `setup_otel()` exports traces to OTLP; `/metrics` serves Prometheus scrape format.
 
@@ -158,8 +158,11 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_WORKER_MODEL` | Worker agents' model (empty → `claude-haiku-5-5` on Anthropic) | `claude-haiku-5-5` |
 | `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | Thinking depth per tier (`low`…`max`) | `high` / `low` |
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (native tool use; JSON on vLLM), `tool_use`, or `json` | `auto` |
-| `AUTONOMA_WORKER_BACKEND` | `native` (one file per round) or `agent_sdk` (delegate each task to a Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`) | `native` |
+| `AUTONOMA_WORKER_BACKEND` | `native` (one file per round), `agent_sdk` (Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`), or `managed_agents` (Anthropic-hosted outcome-driven session with a per-character memory store) | `native` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
+| `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
+| `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |
+| `AUTONOMA_MANAGED_DREAMS_ENABLED` | After a run, consolidate each character's hosted sessions into its memory store (`worker_backend=managed_agents`) | `false` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | For self-hosted OpenAI-compatible servers | — |
 | `AUTONOMA_ADMIN_PASSWORD` | If set, enables server-key admin login in the web UI | — |
 | `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | Toggle + backend: `omnivoice` / `none` | `false` / `none` |
