@@ -64,6 +64,9 @@ omnivoice-mlx = [
 memory-rag = [
     "sentence-transformers>=2.7",
 ]
+agent-sdk = [
+    "claude-agent-sdk>=0.2.170",
+]
 
 # Microsoft VibeVoice intentionally omitted from optional-dependencies
 # because uv struggles to resolve the upstream git source against our
