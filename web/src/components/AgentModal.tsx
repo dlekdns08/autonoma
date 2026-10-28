@@ -18,6 +18,8 @@ interface Props {
   onPreviewGesture?: (clipRef: string, durationS: number) => void;
   onVoteGesture?: (id: string, up: boolean) => void;
   onComposeGesture?: (kind: GeneratedTriggerKind, value: string) => void;
+  /** Download a signature move as a VRM Animation (.vrma). */
+  onExportGesture?: (clipRef: string, name: string) => void;
 }
 
 const COMPOSE_SLOTS: ReadonlyArray<{ kind: GeneratedTriggerKind; value: string; label: string }> = [
@@ -32,11 +34,13 @@ function SignatureMoves({
   onPreview,
   onVote,
   onCompose,
+  onExport,
 }: {
   gestures: GeneratedGesture[];
   onPreview?: (clipRef: string, durationS: number) => void;
   onVote?: (id: string, up: boolean) => void;
   onCompose?: (kind: GeneratedTriggerKind, value: string) => void;
+  onExport?: (clipRef: string, name: string) => void;
 }) {
   const [voted, setVoted] = useState<Record<string, boolean>>({});
   return (
@@ -65,6 +69,17 @@ function SignatureMoves({
                 >
                   ▶
                 </button>
+                {onExport && (
+                  <button
+                    type="button"
+                    onClick={() => onExport(g.clip_ref, g.name)}
+                    className="rounded px-1.5 py-0.5 bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white"
+                    aria-label={`Export ${g.name} as .vrma`}
+                    title="Download as VRM Animation (.vrma)"
+                  >
+                    ⤓
+                  </button>
+                )}
                 <span className="flex-1 truncate text-white/80">{g.name}</span>
                 <span className="text-white/35">
                   {g.trigger_kind}:{g.trigger_value}
@@ -265,6 +280,7 @@ export default function AgentModal({
   onPreviewGesture,
   onVoteGesture,
   onComposeGesture,
+  onExportGesture,
 }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const dialogRef = useModalA11y<HTMLDivElement>({ onEscape: onClose });
@@ -420,6 +436,7 @@ export default function AgentModal({
                   onPreview={onPreviewGesture}
                   onVote={onVoteGesture}
                   onCompose={onComposeGesture}
+                  onExport={onExportGesture}
                 />
               )}
 

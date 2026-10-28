@@ -183,6 +183,7 @@ function Dashboard() {
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
     audioBlocked, unlockAudio,
+    chatMood,
     lastRunFieldPaths,
     sandboxMetrics,
     checkpoints,
@@ -226,7 +227,16 @@ function Dashboard() {
       clipId: mocapTriggerFiredEvent.clip_id,
       expiresAt: Date.now() + MANUAL_OVERRIDE_TTL_MS,
     });
-    setManualOverrideBump((n) => n + 1);
+    // The bump only exists to re-run ``mocapClipIdFor``; defer it one
+    // microtask so it isn't a synchronous setState in the effect body
+    // (still lands before the next paint).
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setManualOverrideBump((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [mocapTriggerFiredEvent]);
   // Sweep expired overrides every minute so the map doesn't grow
   // unbounded across a long session. An override that's already past
@@ -497,7 +507,6 @@ function Dashboard() {
     // wins is the right call (the panel polls /api/quests on top of
     // this for full history, and the ticker keeps a queue internally).
     if (nextLiveAchievement) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLiveAchievement(nextLiveAchievement);
     }
     if (nextLiveQuestEvent) {
@@ -521,10 +530,13 @@ function Dashboard() {
 
   // If auth is lost while the settings modal is open, drop the open
   // state so the modal doesn't silently re-appear once the user
-  // re-authenticates through AuthModal.
-  useEffect(() => {
+  // re-authenticates through AuthModal. Derived during render from the
+  // auth transition (prev-value pattern) instead of an effect.
+  const [prevNeedsAuth, setPrevNeedsAuth] = useState(needsAuth);
+  if (needsAuth !== prevNeedsAuth) {
+    setPrevNeedsAuth(needsAuth);
     if (needsAuth && settingsOpen) setSettingsOpen(false);
-  }, [needsAuth, settingsOpen]);
+  }
 
   // Floating user chrome (chip + settings modal). Rendered inside every
   // Dashboard layout variant so the ⚙ action is reachable from idle,
@@ -791,6 +803,7 @@ function Dashboard() {
                 onSend={sendChat}
                 onSetName={setDisplayName}
                 onJoinRoom={joinRoom}
+                chatMood={chatMood}
               />
             </div>
           )}
@@ -956,6 +969,15 @@ function Dashboard() {
               mood: selectedAgent.mood,
             })
           }
+          onExportGesture={(clipRef) => {
+            // The .vrma builder (GLTFExporter + three-vrm-animation) is
+            // pulled in on demand so the dashboard route stays lean.
+            void import("@/lib/mocap/vrma")
+              .then((m) =>
+                m.exportClipRefAsVrma(clipRef, `/vrm/${vrmFileForAgent(selectedAgent.name)}`),
+              )
+              .catch((err: unknown) => console.warn("[gestures] .vrma export failed", err));
+          }}
         />
       )}
 

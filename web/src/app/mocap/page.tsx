@@ -35,6 +35,8 @@ import TimelineTrimmer from "@/components/mocap/TimelineTrimmer";
 import ClipLibrary from "@/components/mocap/ClipLibrary";
 import BindingEditor from "@/components/mocap/BindingEditor";
 import { encodeClip } from "@/lib/mocap/gzipEncode";
+import { exportClipRefAsVrma, importVrmaAsClip } from "@/lib/mocap/vrma";
+import { RECORD_FPS } from "@/lib/mocap/config";
 import {
   ClipRuntime,
   clipCache,
@@ -251,19 +253,22 @@ export default function MocapPage() {
   const selectedSampleRef = useRef<ClipSample>(createSampleBuffer());
   const selectedRafRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!draftClip) {
-      trimRuntimeRef.current = null;
-      setTrimStart(0);
-      setTrimEnd(0);
-      setPlayhead(0);
-      playheadRef.current = 0;
-      return;
-    }
-    trimRuntimeRef.current = new ClipRuntime(draftClip, 0, { loop: false });
+  // Trim window + playhead reset whenever the draft changes. Derived
+  // during render (prev-value comparison) rather than in an effect so
+  // the reset lands in the same commit as the new draft; the runtime
+  // and playhead refs are refreshed in the effect, which is where ref
+  // writes belong.
+  const [prevDraftForTrim, setPrevDraftForTrim] = useState<MocapClip | null>(draftClip);
+  if (draftClip !== prevDraftForTrim) {
+    setPrevDraftForTrim(draftClip);
     setTrimStart(0);
-    setTrimEnd(draftClip.durationS);
+    setTrimEnd(draftClip ? draftClip.durationS : 0);
     setPlayhead(0);
+  }
+  useEffect(() => {
+    trimRuntimeRef.current = draftClip
+      ? new ClipRuntime(draftClip, 0, { loop: false })
+      : null;
     playheadRef.current = 0;
   }, [draftClip]);
 
@@ -440,6 +445,56 @@ export default function MocapPage() {
     } catch (err) {
       setStage("error");
       setStageMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // ── VRMA import / export ───────────────────────────────────────────
+  // Import samples the .vrma through the selected catalog VRM at the
+  // recorder's fps into the normal clip format, validates the length
+  // against the server ceiling, and uploads through the same path as a
+  // recording (``sourceVrm`` = the selected rig).
+  const onImportVrma = async (file: File) => {
+    if (!targetVrm) return;
+    setStage("uploading");
+    setStageMessage(`${file.name} 변환 중…`);
+    try {
+      const bytes = await file.arrayBuffer();
+      const clip = await importVrmaAsClip(bytes, `/vrm/${targetVrm}`, {
+        name: file.name.replace(/\.(vrma|glb|gltf)$/i, "") || `vrma-${Date.now()}`,
+        sourceVrm: targetVrm,
+        fps: RECORD_FPS,
+        maxDurationS,
+      });
+      const { payloadGzB64, rawSizeBytes } = await encodeClip(clip);
+      const res = await clipsApi.upload({
+        name: clip.name,
+        sourceVrm: clip.sourceVrm,
+        payloadGzB64,
+        expectedSizeBytes: rawSizeBytes,
+      });
+      if (!res.ok) {
+        setStage("error");
+        setStageMessage(`업로드 실패: ${res.reason}`);
+        return;
+      }
+      setStage("idle");
+      setStageMessage(`"${clip.name}" 가져오기 완료 (${clip.durationS.toFixed(1)}s)`);
+      setRefreshToken((n) => n + 1);
+    } catch (err) {
+      setStage("error");
+      setStageMessage(`VRMA 가져오기 실패: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  // Export builds a translation-only T-pose skeleton from the clip's
+  // source rig (falling back to the selected one) and downloads a .vrma.
+  const onExportClip = async (clipId: string) => {
+    const summary = clipsApi.clips.find((c) => c.id === clipId);
+    const rig = summary?.source_vrm || targetVrm;
+    if (!rig) return;
+    try {
+      await exportClipRefAsVrma(clipId, `/vrm/${rig}`);
+    } catch (err) {
+      setStageMessage(`VRMA 내보내기 실패: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -881,7 +936,29 @@ export default function MocapPage() {
         {targetVrm && (
           <section className="grid gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-2">
-              <h2 className="font-mono text-sm font-semibold text-white/80">클립 라이브러리</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-mono text-sm font-semibold text-white/80">클립 라이브러리</h2>
+                <label
+                  className={`cursor-pointer rounded border border-white/15 px-2 py-0.5 font-mono text-[10px] text-white/70 hover:border-white/35 hover:text-white ${
+                    stage === "uploading" ? "pointer-events-none opacity-50" : ""
+                  }`}
+                  title="VRM Animation(.vrma)을 현재 선택된 VRM 기준으로 샘플링해 클립으로 저장"
+                >
+                  ⤒ .vrma 가져오기
+                  <input
+                    type="file"
+                    accept=".vrma,.glb,.gltf,model/gltf-binary"
+                    className="sr-only"
+                    disabled={stage === "uploading"}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      // Reset so re-picking the same file fires onChange again.
+                      e.target.value = "";
+                      if (f) void onImportVrma(f);
+                    }}
+                  />
+                </label>
+              </div>
               <ClipLibrary
                 clips={clipsApi.clips}
                 loading={clipsApi.loading}
@@ -894,6 +971,7 @@ export default function MocapPage() {
                 }
                 onRename={clipsApi.rename}
                 onDelete={clipsApi.remove}
+                onExport={onExportClip}
               />
             </div>
             <div className="flex flex-col gap-2">

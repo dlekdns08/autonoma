@@ -20,6 +20,9 @@ interface Props {
   onSelect: (clipId: string) => void;
   onRename: (clipId: string, name: string) => Promise<boolean>;
   onDelete: (clipId: string) => Promise<boolean>;
+  /** Download the clip as a VRM Animation (.vrma). Read-only, so it is
+   *  offered for every visible clip, not just the user's own. */
+  onExport?: (clipId: string) => Promise<void> | void;
 }
 
 export default function ClipLibrary({
@@ -32,6 +35,7 @@ export default function ClipLibrary({
   onSelect,
   onRename,
   onDelete,
+  onExport,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -115,6 +119,25 @@ export default function ClipLibrary({
             <span className="text-white/40">
               {clip.duration_s.toFixed(1)}s · {clip.source_vrm}
             </span>
+            {onExport && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setBusyId(clip.id);
+                  try {
+                    await onExport(clip.id);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+                disabled={busyId === clip.id}
+                className="rounded border border-white/10 px-1.5 py-0.5 text-white/50 hover:border-white/25 hover:text-white"
+                title=".vrma로 내보내기"
+                aria-label={`"${clip.name}" 클립을 .vrma로 내보내기`}
+              >
+                vrma
+              </button>
+            )}
             {canEdit && (
               <button
                 type="button"
