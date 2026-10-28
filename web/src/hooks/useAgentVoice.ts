@@ -60,6 +60,14 @@ interface AgentSlot {
   amp: number;
   /** True between audio_start and audio.ended. Drives speakingAgents. */
   speaking: boolean;
+  /** Target amplitude for the text-driven fallback (``markSpeakingFromText``);
+   *  -1 when no fallback is active. ``getMouthAmplitude`` eases toward it
+   *  only while the real analyser isn't producing sound, so the two
+   *  writers never fight over ``amp``. */
+  textTarget: number;
+  /** Set when ``audio.play()`` was rejected by the autoplay policy. The
+   *  one-shot user-gesture unlock replays these. */
+  pendingPlay: boolean;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -172,12 +180,47 @@ export interface UseAgentVoiceResult {
   requestSpeak: (agentName: string, text: string) => void;
   /** Drop a specific agent's resources (call on agent.despawned). */
   cleanupAgent: (agentName: string) => void;
+  /**
+   * True while the browser's autoplay policy is blocking TTS: either
+   * ``audio.play()`` was rejected or the AudioContext is still
+   * ``suspended`` after a play attempt. A pointerdown/keydown anywhere
+   * on the page clears it automatically; ``unlockAudio`` does the same
+   * from an explicit button.
+   */
+  audioBlocked: boolean;
+  /** Resume the AudioContext and replay any utterance that was rejected
+   *  by the autoplay policy. Must be called from a user gesture. */
+  unlockAudio: () => void;
 }
 
 export function useAgentVoice(): UseAgentVoiceResult {
   const slotsRef = useRef<Map<string, AgentSlot>>(new Map());
   const ctxRef = useRef<AudioContext | null>(null);
   const [speakingAgents, setSpeakingAgents] = useState<Set<string>>(() => new Set());
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
+  // each call can cancel the prior timer/interval without rerendering.
+  // Mixed timer types match the call sites — ``window.setTimeout``
+  // returns DOM ``number`` while bare ``setInterval`` resolves to
+  // ``NodeJS.Timeout`` under @types/node. Keeping the declared types
+  // aligned with the callers avoids casts at assignment.
+  const fallbackTimersRef = useRef<
+    Map<string, { clear: number; amp: ReturnType<typeof setInterval> }>
+  >(new Map());
+
+  /** Stop the text-driven fake-speak for one agent (real audio took
+   *  over, or the agent was interrupted/cleaned up). Leaves the speaking
+   *  flag alone — the caller decides that. */
+  const cancelTextFallback = useCallback((agentName: string) => {
+    const fb = fallbackTimersRef.current.get(agentName);
+    if (fb) {
+      clearInterval(fb.amp);
+      clearTimeout(fb.clear);
+      fallbackTimersRef.current.delete(agentName);
+    }
+    const slot = slotsRef.current.get(agentName);
+    if (slot) slot.textTarget = -1;
+  }, []);
 
   const ensureContext = useCallback((): AudioContext | null => {
     if (ctxRef.current) return ctxRef.current;
@@ -209,22 +252,61 @@ export function useAgentVoice(): UseAgentVoiceResult {
       buf: null,
       amp: 0,
       speaking: false,
+      textTarget: -1,
+      pendingPlay: false,
     };
     slotsRef.current.set(agent, slot);
     return slot;
   }, []);
+
+  // ── Autoplay unlock ────────────────────────────────────────────────
+  // Chrome/Safari create the AudioContext ``suspended`` and reject
+  // ``audio.play()`` until the page has seen a user gesture. A
+  // MediaElementSource wired into a suspended context plays SILENCE
+  // even when play() resolves, so a single early ``resume()`` attempt
+  // (the old behaviour) left the whole session mute. Resume on every
+  // play attempt, and on the first gesture replay whatever was refused.
+  const unlockAudio = useCallback(() => {
+    const ctx = ctxRef.current ?? sharedAudioCtx;
+    const finish = () => {
+      for (const slot of slotsRef.current.values()) {
+        if (slot.pendingPlay && slot.audio.src) {
+          slot.pendingPlay = false;
+          slot.speaking = true;
+          slot.audio.play().catch(() => {
+            slot.pendingPlay = true;
+            slot.speaking = false;
+          });
+        }
+      }
+      const stillBlocked =
+        (ctx !== null && ctx.state === "suspended") ||
+        Array.from(slotsRef.current.values()).some((s) => s.pendingPlay);
+      setAudioBlocked(stillBlocked);
+    };
+    if (ctx && ctx.state === "suspended") {
+      ctx.resume().then(finish, finish);
+    } else {
+      finish();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!audioBlocked || typeof window === "undefined") return;
+    const onGesture = () => unlockAudio();
+    window.addEventListener("pointerdown", onGesture, { passive: true });
+    window.addEventListener("keydown", onGesture);
+    return () => {
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+    };
+  }, [audioBlocked, unlockAudio]);
 
   const connectAnalyser = useCallback(
     (slot: AgentSlot) => {
       if (slot.source && slot.analyser) return;
       const ctx = ensureContext();
       if (!ctx) return;
-      // Some browsers gate AudioContext until a user gesture. The first
-      // start command is a click on "speak", which counts — but if we got
-      // here pre-gesture, resume() is a no-op until then.
-      if (ctx.state === "suspended") {
-        void ctx.resume().catch(() => {});
-      }
       try {
         const src = ctx.createMediaElementSource(slot.audio);
         const an = ctx.createAnalyser();
@@ -349,6 +431,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
           // reference to the underlying bytes.
           const prevSrc = slot.audio.src;
           slot.audio.src = url;
+          slot.pendingPlay = false;
           slot.audio.onended = () => {
             slot.speaking = false;
             slot.amp = 0;
@@ -363,15 +446,32 @@ export function useAgentVoice(): UseAgentVoiceResult {
           // Connect the analyser only on first play — createMediaElementSource
           // can only be called once per element.
           connectAnalyser(slot);
+          // Every play attempt re-tries resume(): a context that was
+          // created pre-gesture stays suspended (silent output) until
+          // someone asks again after the gesture.
+          const ctx = ctxRef.current;
+          if (ctx && ctx.state === "suspended") {
+            void ctx.resume().catch(() => {});
+          }
           slot.speaking = true;
           setSpeaking(agent, true);
-          slot.audio.play().catch(() => {
-            // Autoplay rejected (no user gesture yet). We still emit the
-            // speaking state briefly so the bubble shows.
-            slot.speaking = false;
-            setSpeaking(agent, false);
-            URL.revokeObjectURL(url);
-          });
+          slot.audio
+            .play()
+            .then(() => {
+              // Real audio is flowing — retire the text-driven fake
+              // amplitude so the analyser is the only writer.
+              cancelTextFallback(agent);
+              if (ctx && ctx.state === "suspended") setAudioBlocked(true);
+            })
+            .catch(() => {
+              // Autoplay rejected (no user gesture yet). Keep the blob
+              // alive so the gesture unlock can replay it; the text
+              // fallback keeps the mouth moving meanwhile.
+              slot.pendingPlay = true;
+              slot.speaking = false;
+              setSpeaking(agent, false);
+              setAudioBlocked(true);
+            });
           if (prevSrc && prevSrc.startsWith("blob:")) {
             // Revoke the previous URL after a short delay so any final
             // decode doesn't reach for a freed buffer.
@@ -387,19 +487,42 @@ export function useAgentVoice(): UseAgentVoiceResult {
         }
       }
     },
-    [connectAnalyser, ensureSlot, setSpeaking],
+    [cancelTextFallback, connectAnalyser, ensureSlot, setSpeaking],
   );
 
   const getMouthAmplitude = useCallback((agent: string): number => {
     const slot = slotsRef.current.get(agent);
     if (!slot) return 0;
-    if (!slot.speaking || !slot.analyser || !slot.buf) {
+    // Exactly one writer per frame, in priority order:
+    //   1. the analyser, while the <audio> element is actually playing;
+    //   2. the text-driven target, while a fake-speak window is open;
+    //   3. decay toward silence.
+    // Previously (1) ran whenever an analyser existed — even with the
+    // element paused — so it zeroed the fake amplitude a frame after
+    // every injection and the mouth flickered at ~8 Hz.
+    const audio = slot.audio;
+    const analyser = slot.analyser;
+    const buf = slot.buf;
+    const playing =
+      slot.speaking &&
+      analyser !== null &&
+      buf !== null &&
+      !!audio.src &&
+      !audio.paused &&
+      !audio.ended;
+    if (!playing || analyser === null || buf === null) {
+      if (slot.speaking && slot.textTarget >= 0) {
+        // Ease toward the randomly-stepped target (~110 ms time constant
+        // at 60 fps) instead of hard-writing it, so the fallback mouth
+        // moves like a syllable envelope rather than a square wave.
+        slot.amp += (slot.textTarget - slot.amp) * 0.18;
+        return slot.amp;
+      }
       // Decay so the mouth eases shut even if no events arrive.
       slot.amp *= 0.85;
       return slot.amp;
     }
-    const buf = slot.buf;
-    slot.analyser.getByteTimeDomainData(buf);
+    analyser.getByteTimeDomainData(buf);
     // Time-domain bytes are centered at 128. RMS gives a reasonable
     // envelope for vowel/consonant energy without the cost of an FFT.
     let sum = 0;
@@ -415,16 +538,6 @@ export function useAgentVoice(): UseAgentVoiceResult {
     slot.amp = slot.amp * 0.5 + target * 0.5;
     return slot.amp;
   }, []);
-
-  // Per-agent fallback timers for markSpeakingFromText. Kept in a ref so
-  // each call can cancel the prior timer/interval without rerendering.
-  // Mixed timer types match the call sites — ``window.setTimeout``
-  // returns DOM ``number`` while bare ``setInterval`` resolves to
-  // ``NodeJS.Timeout`` under @types/node. Keeping the declared types
-  // aligned with the callers avoids casts at assignment.
-  const fallbackTimersRef = useRef<
-    Map<string, { clear: number; amp: ReturnType<typeof setInterval> }>
-  >(new Map());
 
   const markSpeakingFromText = useCallback(
     (agentName: string, text: string) => {
@@ -445,20 +558,19 @@ export function useAgentVoice(): UseAgentVoiceResult {
       slot.speaking = true;
       setSpeaking(agentName, true);
 
-      // Fake amplitude oscillation. Yields only when the real analyser
-      // isn't already producing a stronger signal, so when server TTS
-      // audio lands mid-line the real envelope takes over cleanly.
-      let target = 0.25;
+      // Fake amplitude: step a TARGET every ~130 ms (one syllable-ish);
+      // ``getMouthAmplitude`` eases ``amp`` toward it only while no real
+      // audio is playing, so when server TTS lands mid-line the analyser
+      // envelope takes over without the two fighting.
+      slot.textTarget = 0.25;
       const ampTimer = setInterval(() => {
-        target = 0.12 + Math.random() * 0.4;
-        if (slot.amp < 0.55) {
-          slot.amp = slot.amp * 0.55 + target * 0.45;
-        }
+        slot.textTarget = 0.12 + Math.random() * 0.4;
       }, 130);
 
       const clearTimer = window.setTimeout(() => {
         clearInterval(ampTimer);
         fallbackTimersRef.current.delete(agentName);
+        slot.textTarget = -1;
         // Only drop the speaking flag if no other source (audio element
         // or Web Speech) is currently holding it true.
         if (!slot.audio.src || slot.audio.paused || slot.audio.ended) {
@@ -491,42 +603,56 @@ export function useAgentVoice(): UseAgentVoiceResult {
     [markSpeakingFromText],
   );
 
+  /** Detach a slot's <audio> + Web Audio nodes. Without the disconnects
+   *  the source/analyser stayed wired into ``ctx.destination`` and the
+   *  recording tap for the life of the context, one orphaned pair per
+   *  despawned agent. */
+  const teardownSlot = (slot: AgentSlot) => {
+    try {
+      slot.audio.pause();
+      const src = slot.audio.src;
+      slot.audio.removeAttribute("src");
+      slot.audio.load();
+      if (src && src.startsWith("blob:")) URL.revokeObjectURL(src);
+    } catch {
+      /* element may already be torn down */
+    }
+    try {
+      slot.analyser?.disconnect();
+      slot.source?.disconnect();
+    } catch {
+      /* context already closed */
+    }
+    slot.analyser = null;
+    slot.source = null;
+    slot.buf = null;
+    // Release any mid-utterance chunks so despawning an agent during
+    // speech doesn't leak the accumulated bytes until the next GC.
+    slot.chunks = [];
+    slot.pendingPlay = false;
+    slot.textTarget = -1;
+  };
+
   const cleanupAgent = useCallback((agentName: string) => {
     const slot = slotsRef.current.get(agentName);
     if (slot) {
-      try {
-        slot.audio.pause();
-        const src = slot.audio.src;
-        slot.audio.removeAttribute("src");
-        slot.audio.load();
-        if (src && src.startsWith("blob:")) URL.revokeObjectURL(src);
-      } catch {
-        /* element may already be torn down */
-      }
-      // Release any mid-utterance chunks so despawning an agent during
-      // speech doesn't leak the accumulated bytes until the next GC.
-      slot.chunks = [];
+      teardownSlot(slot);
       slotsRef.current.delete(agentName);
     }
-    const fallback = fallbackTimersRef.current.get(agentName);
-    if (fallback) {
-      clearInterval(fallback.amp);
-      clearTimeout(fallback.clear);
-      fallbackTimersRef.current.delete(agentName);
-    }
+    cancelTextFallback(agentName);
     setSpeakingAgents((prev) => {
       if (!prev.has(agentName)) return prev;
       const next = new Set(prev);
       next.delete(agentName);
       return next;
     });
-  }, []);
+  }, [cancelTextFallback]);
 
   const interruptAll = useCallback(() => {
     // Pause every active agent without dismantling the slot map or
     // the AudioContext — those are expensive to rebuild and we expect
     // playback to resume right after the user finishes speaking.
-    for (const [agentName, slot] of slotsRef.current) {
+    slotsRef.current.forEach((slot, agentName) => {
       try {
         if (!slot.audio.paused) {
           slot.audio.pause();
@@ -537,28 +663,17 @@ export function useAgentVoice(): UseAgentVoiceResult {
       slot.chunks = [];
       slot.speaking = false;
       slot.amp = 0;
+      slot.pendingPlay = false;
       // Clear any text-driven fake-speak in flight so the lip-sync
       // doesn't keep oscillating after we mute.
-      const fb = fallbackTimersRef.current.get(agentName);
-      if (fb) {
-        clearInterval(fb.amp);
-        clearTimeout(fb.clear);
-        fallbackTimersRef.current.delete(agentName);
-      }
-    }
+      cancelTextFallback(agentName);
+    });
     setSpeakingAgents((prev) => (prev.size === 0 ? prev : new Set()));
-  }, []);
+  }, [cancelTextFallback]);
 
   const reset = useCallback(() => {
     for (const slot of slotsRef.current.values()) {
-      try {
-        slot.audio.pause();
-        slot.audio.removeAttribute("src");
-        slot.audio.load();
-      } catch {
-        /* element may already be torn down */
-      }
-      slot.chunks = [];
+      teardownSlot(slot);
     }
     slotsRef.current.clear();
     for (const t of fallbackTimersRef.current.values()) {
@@ -608,6 +723,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
       requestSpeak,
       cleanupAgent,
       getRecordingStream,
+      audioBlocked,
+      unlockAudio,
     }),
     [
       pushAudioEvent,
@@ -619,6 +736,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
       requestSpeak,
       cleanupAgent,
       getRecordingStream,
+      audioBlocked,
+      unlockAudio,
     ],
   );
 }

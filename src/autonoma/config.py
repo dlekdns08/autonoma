@@ -88,6 +88,26 @@ class Settings(BaseSettings):
     # trail). Keeps the cached prefix bounded.
     agent_history_rounds: int = 12
 
+    # ── Self-authored gestures (autonoma.gestures) ──
+    # When on, every spawned worker gets a small set of signature moves
+    # composed by an LLM choreographer (cached per agent name + trigger;
+    # ≈1k output tokens on the worker tier each). Off → the stage keeps
+    # the hand-written gestures. Manual generation via POST /api/gestures
+    # works regardless of this flag.
+    gesture_gen_enabled: bool = False
+    gesture_gen_model: str = ""  # empty → worker model
+    gesture_gen_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "low"
+    # ``kind:value`` triggers generated at spawn. ``emote:@mood`` expands
+    # to the emote icon of the agent's current mood.
+    gesture_gen_signature_triggers: list[str] = [
+        "state:celebrating",
+        "state:thinking",
+        "emote:@mood",
+    ]
+    # A gesture whose net votes fall to this value is retired and
+    # regenerated on next use.
+    gesture_retire_net_votes: int = -3
+
     # ── Deep work (Claude Agent SDK) ──
     # ``native``: workers build one file per round through the decide
     # loop. ``agent_sdk``: a worker that picks up a task delegates the

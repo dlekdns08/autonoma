@@ -41,7 +41,7 @@ import {
   VRMLoaderPlugin,
   VRMUtils,
 } from "@pixiv/three-vrm";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   Component,
   Suspense,
@@ -53,7 +53,7 @@ import {
   type ReactNode,
 } from "react";
 import * as THREE from "three";
-import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import type { AgentData, AgentEmote } from "@/lib/types";
 import { vrmFileForAgent } from "./vrmCredits";
 import {
@@ -101,7 +101,45 @@ interface Props {
    *  per participant regardless of name. Empty/undefined → fall back
    *  to the hashed default. */
   vrmFileOverride?: string;
+  /** Load a private GLTF instance for this mount instead of going
+   *  through r3f's URL-keyed ``useLoader`` cache. Required whenever
+   *  several ``VRMCharacter``s can be on screen at once (the podcast
+   *  grid): a cached ``vrm.scene`` is a single ``Object3D`` and the
+   *  second ``<primitive>`` would steal it from the first canvas. The
+   *  instance is ``VRMUtils.deepDispose``d on unmount. */
+  isolated?: boolean;
+  /** Most recent tool call for this agent (from ``agent.tool_use``).
+   *  A changed ``at`` fires a short working-pose pulse; ``open_pr``
+   *  additionally plays the hype gesture. */
+  lastTool?: { tool: string; detail: string; at: number } | null;
+  /** Pixel-ratio override for the canvas (e.g. ``/obs?dpr=2``). When
+   *  unset the default ``[1, 2]`` / ``[1, 1.25]`` bounds apply. */
+  dpr?: number;
 }
+
+// Agents that have already played their first-appearance ``greet``
+// wave this page session. Keyed by agent name so a spotlight hand-off
+// (which remounts ``VRMModel``) doesn't replay the hello every time.
+const greetedAgents = new Set<string>();
+// Per-agent timestamp (ms) of the last mood-triggered gesture — the
+// backend piggybacks ``mood`` on every ``agent.state`` event, so a
+// run of state flips with a changed mood would otherwise queue one
+// mood gesture per flip.
+const lastMoodGestureAt = new Map<string, number>();
+const MOOD_GESTURE_DEBOUNCE_MS = 5000;
+
+/** Honour ``prefers-reduced-motion`` for the 3D idle/gesture loop. CSS
+ *  animations are covered globally (``globals.css``), but the VRM is
+ *  driven from ``useFrame`` and needs an explicit opt-in. Evaluated
+ *  once per page load; the OS toggle is rare enough that a reload is
+ *  acceptable. */
+const REDUCED_MOTION: boolean =
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Idle/sway amplitude multiplier under reduced motion. Blink and
+// lip-sync are kept at full strength (they carry information).
+const IDLE_SCALE = REDUCED_MOTION ? 0.25 : 1;
 
 // ── Mocap playback crossfade ─────────────────────────────────────────
 //
@@ -160,7 +198,16 @@ const STATE_EXPRESSION_BOOST: Record<string, Partial<MoodTarget>> = {
   working:     { relaxed: 0.1 },
   talking:     { happy: 0.1 },
   thinking:    { relaxed: 0.15 },
+  // Pose overlays exist for these two (see applyStateOverlay) — give
+  // the face a matching read so the droop / "waking up" isn't neutral.
+  error:       { sad: 0.35 },
+  spawning:    { surprised: 0.2 },
 };
+
+// Short-lived expression overlay played on an ``agent.refusal`` (the
+// "✋" emote). Blended on top of mood for REFUSAL_BOOST_S seconds.
+const REFUSAL_BOOST: Partial<MoodTarget> = { sad: 0.3, angry: 0.1 };
+const REFUSAL_BOOST_S = 2;
 
 const EMOTE_KEYS: (keyof MoodTarget)[] = [
   "happy",
@@ -169,6 +216,10 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
   "relaxed",
   "surprised",
 ];
+
+// Five VRM vowel blendshapes, hoisted so the frame loop doesn't rebuild
+// the array every frame.
+const VOWELS = ["aa", "ih", "ou", "ee", "oh"] as const;
 
 // ── Procedural gesture system ────────────────────────────────────────
 //
@@ -183,7 +234,15 @@ const EMOTE_KEYS: (keyof MoodTarget)[] = [
 // against the VRoid-style rigs in `public/vrm/`; different rigs may
 // need a second pass.
 
-type GestureName = "wave" | "greet" | "hype" | "think" | "bow" | "beat" | "nod";
+type GestureName =
+  | "wave"
+  | "greet"
+  | "hype"
+  | "think"
+  | "bow"
+  | "beat"
+  | "nod"
+  | "headshake";
 
 // Fraction of each gesture's duration that should feel like the attack
 // (rise from 0 → 1). The rest is a slower settle back to 0. Tuned by eye
@@ -357,6 +416,15 @@ const GESTURES: Record<
       if (b.chest) b.chest.rotation.x += env * 0.02;
     },
   },
+  // Side-to-side "no" — two full cycles of yaw. Played on
+  // ``agent.refusal`` so a declined turn reads on the body, not just
+  // in the subtitle.
+  headshake: {
+    duration: 0.8,
+    apply: (t, b, env) => {
+      if (b.head) b.head.rotation.y += env * Math.sin(t * Math.PI * 4) * 0.18;
+    },
+  },
 };
 
 // Mood → weighted gesture options. Tuples are [gesture, weight]. Uniform
@@ -371,7 +439,6 @@ const MOOD_GESTURE_OPTIONS: Partial<Record<string, readonly WeightedGesture[]>> 
   happy:       [["wave", 2], ["bow", 1]],
   determined:  [["hype", 1]],
   focused:     [["think", 1]],
-  celebrating: [["hype", 2], ["wave", 1]],
   curious:     [["think", 2], ["wave", 1]],
   tired:       [["think", 2], ["bow", 1]],
   nostalgic:   [["bow", 2], ["think", 1]],
@@ -416,6 +483,11 @@ const EMOTE_GESTURE_MAP: Record<string, GestureName> = {
   // Soft/bow — relaxed, nostalgic
   "～": "bow",    // relaxed
   "✿": "bow",    // nostalgic
+  // Frontend-synthesised reactions (useSwarm maps backend events that
+  // carry no icon of their own onto these so the VRM reacts via the
+  // same emote path as mood icons).
+  "✋": "headshake", // agent.refusal
+  "📄": "nod",       // file.created
 };
 
 // Alternative gesture picks used by gestureForEmote() so re-emotes don't
@@ -435,6 +507,8 @@ const EMOTE_GESTURE_ALTERNATIVES: Record<string, GestureName[]> = {
   "✧": ["wave", "hype"],
   "～": ["bow", "wave"],
   "✿": ["bow", "wave"],
+  "✋": ["headshake"],
+  "📄": ["nod"],
 };
 
 function hashString(s: string): number {
@@ -547,7 +621,6 @@ function blinkOffsetForName(name: string): number {
 // ── Inner component: loaded VRM bound to the animation loop ──────────
 
 interface ModelProps {
-  url: string;
   /** VRM filename (e.g. ``"midori.vrm"``) — used to compare against a
    *  playing clip's ``sourceVrm`` so finger tracks recorded on a
    *  different rig can be suppressed during playback. */
@@ -560,10 +633,67 @@ interface ModelProps {
   cameraResetNonce?: number;
   emote?: AgentEmote | null;
   mocapClipId?: string | null;
+  lastTool?: Props["lastTool"];
+}
+
+/** Pull the parsed VRM off a loaded GLTF. The plugin attaches it onto
+ *  ``gltf.userData.vrm`` — the GLTF type doesn't know about that
+ *  extension, so go through unknown. */
+function vrmFromGltf(gltf: GLTF): VRM {
+  return (gltf as unknown as GLTF & { userData: { vrm: VRM } }).userData.vrm;
+}
+
+/** Shared-cache variant: r3f's ``useLoader`` keys on URL, so every
+ *  mount of the same file shares ONE ``vrm.scene``. Correct for the
+ *  dashboard/OBS spotlight (exactly one character on screen). */
+function VRMModelCached({ url, ...rest }: ModelProps & { url: string }) {
+  const gltf = useLoader(GLTFLoader, url, (loader) => {
+    // r3f's cache keys on URL alone, so this factory is invoked once per
+    // distinct VRM file — we register the VRM parser plugin here.
+    const l = loader as GLTFLoader;
+    l.register((parser) => new VRMLoaderPlugin(parser));
+  });
+  return <VRMModel vrm={vrmFromGltf(gltf)} {...rest} />;
+}
+
+/** Per-mount variant: a private ``GLTFLoader`` fetch + parse, disposed
+ *  with ``VRMUtils.deepDispose`` on unmount. Used when several
+ *  characters render at once (``/podcast``), where two mounts of the
+ *  same file through the shared cache would fight over one scene. */
+function VRMModelIsolated({ url, ...rest }: ModelProps & { url: string }) {
+  const [vrm, setVrm] = useState<VRM | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let loaded: VRM | null = null;
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    loader
+      .loadAsync(url)
+      .then((gltf) => {
+        const v = vrmFromGltf(gltf);
+        if (cancelled) {
+          VRMUtils.deepDispose(v.scene);
+          return;
+        }
+        loaded = v;
+        setVrm(v);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.warn(`[VRMCharacter] isolated load failed for ${url}`, err);
+      });
+    return () => {
+      cancelled = true;
+      setVrm(null);
+      if (loaded) VRMUtils.deepDispose(loaded.scene);
+    };
+  }, [url]);
+  if (!vrm) return null;
+  return <VRMModel vrm={vrm} {...rest} />;
 }
 
 function VRMModel({
-  url,
+  vrm,
   vrmFile,
   agentName,
   mood,
@@ -573,20 +703,16 @@ function VRMModel({
   cameraResetNonce,
   emote,
   mocapClipId,
-}: ModelProps) {
+  lastTool,
+}: ModelProps & { vrm: VRM }) {
   const { camera } = useThree();
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
-  const gltf = useLoader(GLTFLoader, url, (loader) => {
-    // r3f's cache keys on URL alone, so this factory is invoked once per
-    // distinct VRM file — we register the VRM parser plugin here.
-    const l = loader as GLTFLoader;
-    l.register((parser) => new VRMLoaderPlugin(parser));
-  });
-
-  // The plugin attaches the parsed VRM onto gltf.userData.vrm — the
-  // GLTF type doesn't know about that extension, so go through unknown.
-  const vrm = (gltf as unknown as GLTF & { userData: { vrm: VRM } })
-    .userData.vrm;
+  // Gaze jitter target. ``vrm.lookAt`` tracks this object (a child of
+  // the camera) instead of the camera itself, so the frame loop can
+  // drift it a few centimetres to fake natural eye wander without
+  // fighting three-vrm's own lookAt applier (which overwrites the
+  // look* expressions every ``vrm.update``).
+  const gazeTargetRef = useRef<THREE.Object3D | null>(null);
 
   // One-time scene prep: older (VRM 0.x) models point -Z, modern (1.0)
   // models point +Z. `rotateVRM0` is a no-op on 1.0 so calling it
@@ -594,6 +720,26 @@ function VRMModel({
   useEffect(() => {
     if (!vrm) return;
     VRMUtils.rotateVRM0(vrm);
+    // Post-load mesh optimisation (three-vrm's documented step): drop
+    // vertices no primitive references, then merge the per-mesh
+    // skeletons VRoid exports into one so the rig renders in far fewer
+    // skinned draw calls. Guarded by a scene flag because the cached
+    // scene is shared across remounts and both passes mutate geometry.
+    const sceneData = (vrm.scene.userData ??= {}) as { optimized?: boolean };
+    if (!sceneData.optimized) {
+      sceneData.optimized = true;
+      try {
+        VRMUtils.removeUnnecessaryVertices(vrm.scene);
+        VRMUtils.combineSkeletons(vrm.scene);
+      } catch (err) {
+        console.warn("[VRMCharacter] VRM optimisation pass failed", err);
+      }
+    }
+    // The cached scene keeps whatever the previous mount left behind
+    // (a half-closed blink, an open mouth, hair mid-swing). Start every
+    // mount from rest so the first frame doesn't flash the stale pose.
+    vrm.expressionManager?.resetValues();
+    vrm.springBoneManager?.reset();
     const h = vrm.humanoid;
     // Drop the T-pose arms so they hang down the sides. Going to
     // ±1.40 rad (~80° from horizontal) leaves only a ~10° splay at the
@@ -635,21 +781,28 @@ function VRMModel({
       leftHand: h?.getNormalizedBoneNode("leftHand") ?? null,
       rightHand: h?.getNormalizedBoneNode("rightHand") ?? null,
     };
-    // Gaze targeting: wire the VRM's lookAt system to track the camera
-    // so eyes follow the viewer as they orbit. three-vrm reads the
-    // target's world position each `vrm.update(delta)` call, so there's
-    // nothing to do in the render loop.
+    // Gaze targeting: wire the VRM's lookAt system to a jitter object
+    // parented under the camera so eyes follow the viewer as they
+    // orbit, with a small per-frame wander applied in the render loop.
+    // three-vrm reads the target's world position each
+    // `vrm.update(delta)` call.
+    const gaze = new THREE.Object3D();
+    camera.add(gaze);
+    gazeTargetRef.current = gaze;
     if (vrm.lookAt) {
-      vrm.lookAt.target = camera;
+      vrm.lookAt.target = gaze;
     }
     // Disable any leftover frustum culling weirdness on morphed meshes.
     vrm.scene.traverse((o) => {
       o.frustumCulled = false;
     });
     return () => {
-      // r3f caches the loaded gltf; we don't fully dispose here because
-      // the same VRM may be reused by another mount. VRMUtils.deepDispose
-      // would run only on full app teardown.
+      camera.remove(gaze);
+      gazeTargetRef.current = null;
+      if (vrm.lookAt && vrm.lookAt.target === gaze) vrm.lookAt.target = null;
+      // r3f caches the loaded gltf (cached variant); we don't dispose
+      // here because the same VRM may be reused by another mount. The
+      // isolated variant disposes in ``VRMModelIsolated``.
     };
   }, [vrm, camera]);
 
@@ -660,6 +813,9 @@ function VRMModel({
   // impressions always include a visible hello wave. Skipped while a
   // gesture is already running.
   useEffect(() => {
+    // Reduced motion: no ambient fillers and no hello wave. Blink,
+    // lip-sync and the (scaled) breathing loop still run.
+    if (REDUCED_MOTION) return;
     let cancelled = false;
     let timer: number | undefined;
     // Weighted: hand waves are the headline so we tip the pool toward
@@ -670,12 +826,19 @@ function VRMModel({
       "nod", "nod",
       "think",
     ];
-    // Initial hello wave — fires once ~0.6-1.2s after mount, unconditionally.
-    const hello = window.setTimeout(() => {
-      if (cancelled) return;
-      // Initial greet is a headline moment — same tier as state events.
-      requestGestureRef.current("greet", GESTURE_PRIORITY.state);
-    }, 600 + Math.random() * 600);
+    // Initial hello wave — fires once ~0.6-1.2s after the agent's FIRST
+    // mount this session. Spotlight hand-offs remount this component,
+    // and waving at every switch pre-empted the first 2.6s of talking
+    // beats in busy conversations.
+    let hello: number | undefined;
+    if (!greetedAgents.has(agentName)) {
+      greetedAgents.add(agentName);
+      hello = window.setTimeout(() => {
+        if (cancelled) return;
+        // Initial greet is a headline moment — same tier as state events.
+        requestGestureRef.current("greet", GESTURE_PRIORITY.state);
+      }, 600 + Math.random() * 600);
+    }
     const scheduleNext = () => {
       const delay = 6000 + Math.random() * 6000; // 6–12s
       timer = window.setTimeout(() => {
@@ -689,10 +852,10 @@ function VRMModel({
     timer = window.setTimeout(scheduleNext, 4000 + Math.random() * 2000);
     return () => {
       cancelled = true;
-      window.clearTimeout(hello);
+      if (hello !== undefined) window.clearTimeout(hello);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, []);
+  }, [agentName]);
 
   // Mood-triggered gestures — picks randomly from MOOD_GESTURE_OPTIONS
   // so the same mood doesn't always play the exact same clip. Re-fires
@@ -700,6 +863,7 @@ function VRMModel({
   // a long-held `excited` mood keeps producing occasional `hype`/`wave`
   // clips instead of playing exactly once.
   useEffect(() => {
+    if (REDUCED_MOTION) return;
     const options = MOOD_GESTURE_OPTIONS[mood];
     if (!options || options.length === 0) return;
     let cancelled = false;
@@ -707,11 +871,16 @@ function VRMModel({
     const playOne = () => {
       if (cancelled) return;
       const next = pickWeighted(options);
+      lastMoodGestureAt.set(agentName, Date.now());
       requestGestureRef.current(next, GESTURE_PRIORITY.mood);
     };
+    // Debounce the "mood just changed" pick: ``agent.state`` events
+    // carry mood too, so a burst of state flips must not fire a mood
+    // gesture per flip. The held-mood re-fire cadence is unaffected.
+    const sinceLast = Date.now() - (lastMoodGestureAt.get(agentName) ?? 0);
     const scheduleNext = (initial: boolean) => {
       const delay = initial
-        ? 200 + Math.random() * 600
+        ? Math.max(200 + Math.random() * 600, MOOD_GESTURE_DEBOUNCE_MS - sinceLast)
         : 9000 + Math.random() * 9000; // 9-18s while mood is held
       timer = window.setTimeout(() => {
         playOne();
@@ -723,7 +892,7 @@ function VRMModel({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [mood]);
+  }, [mood, agentName]);
 
   // Emote-triggered gestures — fires whenever a new emote arrives (seq bumps).
   // This mirrors what the pixel character shows above their head so the VTuber
@@ -731,6 +900,11 @@ function VRMModel({
   useEffect(() => {
     if (!emote) return;
     const gesture = gestureForEmote(emote.icon, agentName, emote.seq ?? 0);
+    // Refusal: also tint the face for a couple of seconds (read in the
+    // frame loop's mood section).
+    if (emote.icon === "✋") {
+      stateRef.current.refusalUntil = performance.now() / 1000 + REFUSAL_BOOST_S;
+    }
     const delay = 80 + Math.random() * 120; // slight human lag
     const timer = window.setTimeout(() => {
       requestGestureRef.current(gesture, GESTURE_PRIORITY.emote);
@@ -738,6 +912,18 @@ function VRMModel({
     return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emote?.seq]);
+
+  // Tool-use reactions. A new ``lastTool.at`` fires a ~0.6s working
+  // pulse (chest lean + arms in, see frame loop); ``open_pr`` is a
+  // headline moment and gets the hype clip on top.
+  useEffect(() => {
+    if (!lastTool) return;
+    stateRef.current.toolPulseStart = performance.now() / 1000;
+    if (lastTool.tool === "open_pr") {
+      requestGestureRef.current("hype", GESTURE_PRIORITY.state);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastTool?.at]);
 
   // State-triggered gestures. Celebrating always fires hype; talking
   // fires an initial punctuation plus occasional beat gestures on a
@@ -837,6 +1023,16 @@ function VRMModel({
     chestPumpStart: -1,
     chestPumpCooldownUntil: 0,
     prevAmpForPump: 0,
+    // Seconds (performance.now()/1000) until which REFUSAL_BOOST applies.
+    refusalUntil: 0,
+    // Start of the current tool-use working pulse; -1 when idle.
+    toolPulseStart: -1,
+    // Reused per-frame scratch for the blended expression target so the
+    // mood section doesn't allocate an object every frame.
+    moodTarget: { happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0 } as Record<
+      keyof MoodTarget,
+      number
+    >,
   });
 
   // Single arbitration path for every gesture trigger. Replaces the four
@@ -1086,15 +1282,14 @@ function VRMModel({
       // Vowel bias changes every ~180ms during speech. Math.floor(now * 5.5)
       // gives ~5.5 steps/sec; phase offsets per-agent so two characters
       // speaking simultaneously don't share the same mouth shape.
-      const vowels: ("aa" | "ih" | "ou" | "ee" | "oh")[] = ["aa", "ih", "ou", "ee", "oh"];
-      const vowelIdx = Math.floor(now * 5.5 + phase) % vowels.length;
-      const nbrIdx = (vowelIdx + 1) % vowels.length;
-      for (let i = 0; i < vowels.length; i++) {
-        em.setValue(vowels[i], 0);
+      const vowelIdx = Math.floor(now * 5.5 + phase) % VOWELS.length;
+      const nbrIdx = (vowelIdx + 1) % VOWELS.length;
+      for (let i = 0; i < VOWELS.length; i++) {
+        em.setValue(VOWELS[i], 0);
       }
       if (curved >= 0.04) {
-        em.setValue(vowels[vowelIdx], curved);
-        em.setValue(vowels[nbrIdx], curved * 0.3);
+        em.setValue(VOWELS[vowelIdx], curved);
+        em.setValue(VOWELS[nbrIdx], curved * 0.3);
       }
     }
 
@@ -1102,10 +1297,11 @@ function VRMModel({
     if (em) {
       const base = MOOD_MAP[mood] ?? {};
       const boost = STATE_EXPRESSION_BOOST[state] ?? {};
-      const target: MoodTarget = {};
+      const refusal = now < st.refusalUntil ? REFUSAL_BOOST : null;
+      const target = st.moodTarget;
       let rawSum = 0;
       for (const key of EMOTE_KEYS) {
-        const v = (base[key] ?? 0) + (boost[key] ?? 0);
+        const v = (base[key] ?? 0) + (boost[key] ?? 0) + (refusal?.[key] ?? 0);
         target[key] = v;
         rawSum += v;
       }
@@ -1137,29 +1333,22 @@ function VRMModel({
         const neutralTarget = targetSum < 0.15 ? 0.25 : 0;
         em.setValue("neutral", neutralTarget);
       }
-      // ── Subtle eye-glance micro-motion ─────────────────────────────
-      // vrm.lookAt.target still points at the camera, but these
-      // blendshapes offset the baseline so the eyes drift naturally on
-      // a slow cycle. Amplitudes kept modest (0.15-0.3) to read as gaze
-      // rather than spasm. `thinking` biases upward ("looking away to
-      // think"), `talking` biases slightly down-toward-camera.
-      const glanceX = Math.sin(now * (2 * Math.PI) / 5.3 + phase) * 0.25;       // period ~5.3s
-      const glanceY = Math.sin(now * (2 * Math.PI) / 7.1 + phase * 1.3) * 0.2;  // period ~7.1s
-      let lookL = 0, lookR = 0, lookU = 0, lookD = 0;
-      if (glanceX >= 0) lookR = glanceX; else lookL = -glanceX;
-      if (glanceY >= 0) lookU = glanceY; else lookD = -glanceY;
-      if (state === "thinking") {
-        lookU = Math.min(1, lookU + 0.35);
-        lookD = Math.max(0, lookD - 0.2);
-      } else if (state === "talking") {
-        lookD = Math.min(1, lookD + 0.1);
-        lookU = Math.max(0, lookU - 0.1);
-      }
-      // Null-guard each one — minimalist rigs may not define look* slots.
-      if (em.getExpression?.("lookLeft")) em.setValue("lookLeft", lookL);
-      if (em.getExpression?.("lookRight")) em.setValue("lookRight", lookR);
-      if (em.getExpression?.("lookUp")) em.setValue("lookUp", lookU);
-      if (em.getExpression?.("lookDown")) em.setValue("lookDown", lookD);
+    }
+
+    // ── Subtle eye-glance micro-motion ───────────────────────────────
+    // Drift the lookAt target (a child of the camera) a few centimetres
+    // on two slow cycles so the gaze wanders instead of locking dead on
+    // the lens. Writing look* expressions directly doesn't work: three-vrm
+    // overwrites them in ``vrm.update`` for expression-type rigs and
+    // bone-type rigs don't define them. `thinking` biases upward
+    // ("looking away to think"), `talking` slightly down toward the lens.
+    const gaze = gazeTargetRef.current;
+    if (gaze) {
+      const glanceX = Math.sin(now * (2 * Math.PI) / 5.3 + phase) * 0.3 * IDLE_SCALE;       // ~5.3s
+      let glanceY = Math.sin(now * (2 * Math.PI) / 7.1 + phase * 1.3) * 0.2 * IDLE_SCALE;  // ~7.1s
+      if (state === "thinking") glanceY += 0.35;
+      else if (state === "talking") glanceY -= 0.1;
+      gaze.position.set(glanceX, glanceY, 0);
     }
 
     // ── Blink ────────────────────────────────────────────────────────
@@ -1213,8 +1402,10 @@ function VRMModel({
     // renders in a narrow 356px-wide panel — at that size subtle motion
     // becomes invisible. Primary waves roughly doubled; secondary
     // "muscle tremor" waves kept small on purpose.
-    const breathe = Math.sin(now * 1.4 + phase);          // ~13 BPM
-    const breatheSlow = Math.sin(now * 0.7 + phase * 0.6); // half speed breath
+    // Under prefers-reduced-motion every idle sine below is scaled by
+    // IDLE_SCALE (0.25) — breathing stays perceptible, sway all but stops.
+    const breathe = Math.sin(now * 1.4 + phase) * IDLE_SCALE;          // ~13 BPM
+    const breatheSlow = Math.sin(now * 0.7 + phase * 0.6) * IDLE_SCALE; // half speed breath
 
     // ── Weight shift / contrapposto ──────────────────────────────────
     // Real standing poses shift weight between feet on a ~4-6s cycle.
@@ -1222,7 +1413,7 @@ function VRMModel({
     // chest counter-tilts (contrapposto) the other way so the torso
     // reads as shifted without any actual translation (humanoid bones
     // are normalized rotations only).
-    const weightShift = Math.sin(now * 0.35 + phase) * 1;
+    const weightShift = Math.sin(now * 0.35 + phase) * IDLE_SCALE;
 
     if (bones.chest) {
       // Chest breathes forward-back; tiny side sway adds life.
@@ -1251,14 +1442,14 @@ function VRMModel({
     // Left and right use deliberately different frequencies so they never
     // sync up — that's what makes idle hands look robotic when they do.
 
-    const lPrimary   = Math.sin(now * 0.52 + phase) * 0.10
-                     + Math.sin(now * 0.19 + phase * 1.3) * 0.038;
-    const lSway      = Math.sin(now * 0.37 + phase + 0.8) * 0.05;
-    const lSecondary = Math.sin(now * 1.3  + phase * 0.8) * 0.012;
-    const rPrimary   = Math.sin(now * 0.67 + phase + 2.1) * 0.10
-                     + Math.sin(now * 0.24 + phase * 0.7) * 0.034;
-    const rSway      = Math.sin(now * 0.41 + phase + 3.4) * 0.045;
-    const rSecondary = Math.sin(now * 1.1  + phase * 1.2) * 0.011;
+    const lPrimary   = (Math.sin(now * 0.52 + phase) * 0.10
+                     + Math.sin(now * 0.19 + phase * 1.3) * 0.038) * IDLE_SCALE;
+    const lSway      = Math.sin(now * 0.37 + phase + 0.8) * 0.05 * IDLE_SCALE;
+    const lSecondary = Math.sin(now * 1.3  + phase * 0.8) * 0.012 * IDLE_SCALE;
+    const rPrimary   = (Math.sin(now * 0.67 + phase + 2.1) * 0.10
+                     + Math.sin(now * 0.24 + phase * 0.7) * 0.034) * IDLE_SCALE;
+    const rSway      = Math.sin(now * 0.41 + phase + 3.4) * 0.045 * IDLE_SCALE;
+    const rSecondary = Math.sin(now * 1.1  + phase * 1.2) * 0.011 * IDLE_SCALE;
 
     // Upper arms breathe with the chest — they hang from it.
     const chestCoupling = breathe * 0.018;
@@ -1378,11 +1569,27 @@ function VRMModel({
     // NOT accumulate across frames. Any axis left un-set drifts without
     // bound whenever something does "+= value" to it each frame.
     if (bones.head) {
-      bones.head.rotation.y = Math.sin(now * 0.45 + phase) * 0.055        // gentle look-left/right
-                             + Math.sin(now * 0.17 + phase * 0.6) * 0.016; // slow drift
-      bones.head.rotation.x = Math.sin(now * 0.32 + phase + 0.5) * 0.025
+      bones.head.rotation.y = (Math.sin(now * 0.45 + phase) * 0.055        // gentle look-left/right
+                             + Math.sin(now * 0.17 + phase * 0.6) * 0.016) * IDLE_SCALE; // slow drift
+      bones.head.rotation.x = Math.sin(now * 0.32 + phase + 0.5) * 0.025 * IDLE_SCALE
                              + nodX + beatNodX; // subtle idle nod + speech nods
       bones.head.rotation.z = 0; // reset every frame — gestures/state add on top safely
+    }
+
+    // ── Tool-use working pulse ───────────────────────────────────────
+    // ``agent.tool_use`` → a brief lean-in with the arms pulled in, the
+    // same silhouette as the `working` overlay but as a 0.6 s beat so
+    // back-to-back tool calls read as activity rather than a frozen pose.
+    if (st.toolPulseStart >= 0) {
+      const pt = now - st.toolPulseStart;
+      if (pt > 0.6) {
+        st.toolPulseStart = -1;
+      } else {
+        const penv = Math.sin((pt / 0.6) * Math.PI);
+        if (bones.chest) bones.chest.rotation.x += 0.05 * penv;
+        if (bones.leftUpperArm) bones.leftUpperArm.rotation.z -= 0.08 * penv;
+        if (bones.rightUpperArm) bones.rightUpperArm.rotation.z += 0.08 * penv;
+      }
     }
 
     // ── Chest-pump beat during talking ───────────────────────────────
@@ -1412,6 +1619,37 @@ function VRMModel({
     }
     if (chestPumpX !== 0 && bones.chest) {
       bones.chest.rotation.x += chestPumpX;
+    }
+
+    // ── State-driven pose overlays (with cross-fade) ─────────────────
+    // These add DELTAS on top of bones already SET in the idle section.
+    // head.rotation.z is safe to use here because idle now resets it to 0.
+    // Applied BEFORE gestures so a gesture's quaternion delta composes
+    // on top of the state pose — previously the overlay was skipped
+    // entirely while a gesture played, so `celebrating` arms dropped
+    // to idle for the length of every hype/nod clip and snapped back.
+    //
+    // State transitions cross-fade over ~350ms to eliminate pose snaps:
+    //   previous overlay scaled by (1 - stateBlend)
+    //   new      overlay scaled by      stateBlend
+    {
+      // Ease stateBlend 0 → 1 over ~350ms (k = 1 - exp(-delta/tau)).
+      if (st.stateBlend < 1) {
+        const tau = 0.35;
+        st.stateBlend = Math.min(1, st.stateBlend + delta / tau);
+        // Snap below a tiny epsilon to 1 so float drift can't leave the
+        // previous overlay mixed in at sub-perceptual weight forever.
+        if (st.stateBlend >= 0.999) {
+          st.stateBlend = 1;
+          st.prevState = null;
+        }
+      }
+      const newW = st.stateBlend;
+      const oldW = 1 - newW;
+      applyStateOverlay(state, newW, bones, now, phase);
+      if (st.prevState && oldW > 0) {
+        applyStateOverlay(st.prevState, oldW, bones, now, phase);
+      }
     }
 
     // ── Gesture playback ─────────────────────────────────────────────
@@ -1454,34 +1692,6 @@ function VRMModel({
       }
     }
 
-    // ── State-driven pose overlays (with cross-fade) ─────────────────
-    // These add DELTAS on top of bones already SET in the idle section.
-    // head.rotation.z is safe to use here because idle now resets it to 0.
-    // Applied after gestures so state never fights an active gesture clip.
-    //
-    // State transitions cross-fade over ~350ms to eliminate pose snaps:
-    //   previous overlay scaled by (1 - stateBlend)
-    //   new      overlay scaled by      stateBlend
-    if (!st.gesture) {
-      // Ease stateBlend 0 → 1 over ~350ms (k = 1 - exp(-delta/tau)).
-      if (st.stateBlend < 1) {
-        const tau = 0.35;
-        st.stateBlend = Math.min(1, st.stateBlend + delta / tau);
-        // Snap below a tiny epsilon to 1 so float drift can't leave the
-        // previous overlay mixed in at sub-perceptual weight forever.
-        if (st.stateBlend >= 0.999) {
-          st.stateBlend = 1;
-          st.prevState = null;
-        }
-      }
-      const newW = st.stateBlend;
-      const oldW = 1 - newW;
-      applyStateOverlay(state, newW, bones, now, phase);
-      if (st.prevState && oldW > 0) {
-        applyStateOverlay(st.prevState, oldW, bones, now, phase);
-      }
-    }
-
     // ── Mocap clip override with crossfade ───────────────────────────
     // When a clip is active for the current (agent, mood/emote/state),
     // sample it and OVERWRITE the procedural pose on bones it drives.
@@ -1498,6 +1708,13 @@ function VRMModel({
     // face-only clip still produces a smooth motion on arms instead of
     // a jump.
     const playback = mocapPlaybackRef.current;
+    // The common case is "no clip at all" — skip the whole sampling /
+    // blend section (it allocates two Sets and walks four key lists)
+    // so the procedural-only path stays allocation-free.
+    if (!playback.current && !playback.previous) {
+      vrm.update(delta);
+      return;
+    }
     const nowSec = performance.now() / 1000;
     const fadeElapsed = nowSec - playback.fadeStartedAt;
     const fadeAlpha = playback.previous
@@ -1506,22 +1723,21 @@ function VRMModel({
 
     const sampleA = mocapSampleARef.current;
     const sampleB = mocapSampleBRef.current;
-    // Clear both buffers so stale keys from the last frame don't leak
-    // into the covered-bones union.
-    for (const k of Object.keys(sampleA.bones)) {
-      delete sampleA.bones[k as MocapBone];
+    // ``sampleInto`` clears its own buffer before writing. A side with
+    // no runtime must be cleared explicitly so last frame's keys don't
+    // leak into the covered-bones union.
+    if (playback.current) {
+      playback.current.sampleInto(nowSec, sampleA);
+    } else {
+      for (const k of Object.keys(sampleA.bones)) delete sampleA.bones[k as MocapBone];
+      for (const k of Object.keys(sampleA.expressions)) delete sampleA.expressions[k as MocapExpression];
     }
-    for (const k of Object.keys(sampleA.expressions)) {
-      delete sampleA.expressions[k as MocapExpression];
+    if (playback.previous) {
+      playback.previous.sampleInto(nowSec, sampleB);
+    } else {
+      for (const k of Object.keys(sampleB.bones)) delete sampleB.bones[k as MocapBone];
+      for (const k of Object.keys(sampleB.expressions)) delete sampleB.expressions[k as MocapExpression];
     }
-    for (const k of Object.keys(sampleB.bones)) {
-      delete sampleB.bones[k as MocapBone];
-    }
-    for (const k of Object.keys(sampleB.expressions)) {
-      delete sampleB.expressions[k as MocapExpression];
-    }
-    if (playback.current) playback.current.sampleInto(nowSec, sampleA);
-    if (playback.previous) playback.previous.sampleInto(nowSec, sampleB);
 
     // Cross-rig retargeting (minimal): body + face tracks are generic
     // enough to play across rigs, but finger bones use different local
@@ -1755,6 +1971,9 @@ export default function VRMCharacter({
   emote,
   mocapClipId,
   vrmFileOverride,
+  isolated = false,
+  lastTool,
+  dpr,
 }: Props) {
   // ``vrmFileOverride`` wins when set so the podcast page can pin
   // arbitrary VRMs per participant. Fall back to the name-hashed
@@ -1764,17 +1983,20 @@ export default function VRMCharacter({
     [vrmFileOverride, agent.name],
   );
   const url = `/vrm/${file}`;
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Reset the error state when the underlying file changes — a different
-  // agent might have a working asset even if the previous one failed.
-  useEffect(() => {
-    setLoadError(null);
-  }, [url]);
+  // The failure is remembered together with the URL it belongs to, and
+  // the boundary below is keyed on the URL — so switching to a
+  // different file both remounts the boundary (clearing its caught
+  // state) and hides the banner, with no reset effect needed.
+  const [loadError, setLoadError] = useState<{ url: string; message: string } | null>(null);
+  const showLoadError = loadError !== null && loadError.url === url;
+  const Model = isolated ? VRMModelIsolated : VRMModelCached;
+  const effectiveState = state ?? agent.state ?? "idle";
 
   return (
     <div
       className="relative h-full w-full overflow-hidden"
+      role="img"
+      aria-label={`${agent.name} — ${agent.mood || "neutral"}, ${effectiveState}`}
       // Only the gallery tile should fire onClick on the whole area —
       // in spotlight the OrbitControls need the drag gestures and the
       // parent attaches click handlers to separate overlay elements.
@@ -1785,8 +2007,10 @@ export default function VRMCharacter({
     >
       <Canvas
         // `dpr` bounded so a Retina display doesn't hammer the GPU on 10
-        // simultaneous Canvases.
-        dpr={[1, spotlight ? 2 : 1.25]}
+        // simultaneous Canvases. An explicit ``dpr`` prop (``/obs?dpr=``)
+        // pins it — OBS Browser Sources report devicePixelRatio 1, so a
+        // 1080p capture would otherwise render the character at 1×.
+        dpr={dpr ?? [1, spotlight ? 2 : 1.25]}
         // `flat` keeps colors close to the VRM's texture intent instead
         // of applying tone mapping.
         flat
@@ -1795,7 +2019,10 @@ export default function VRMCharacter({
         // (and any non-OBS gradient behind the stage) show through the
         // canvas's empty pixels. Without these the renderer paints the
         // whole tile opaque black and streams lose the character cut-out.
-        gl={{ alpha: true, premultipliedAlpha: false }}
+        // ``premultipliedAlpha`` is left at three's default (true): the
+        // DOM compositor expects premultiplied pixels, and ``false``
+        // produced dark fringes on MToon alpha edges (hair, lashes).
+        gl={{ alpha: true }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
         }}
@@ -1807,24 +2034,28 @@ export default function VRMCharacter({
         <directionalLight position={[1.2, 2, 1.5]} intensity={1.25} />
         <directionalLight position={[-1.5, 1.2, -1]} intensity={0.35} />
         <directionalLight position={[0, 1.8, -2.2]} intensity={0.55} color="#c4b5fd" />
-        <VRMLoadErrorBoundary onError={setLoadError}>
+        <VRMLoadErrorBoundary
+          key={url}
+          onError={(message) => setLoadError({ url, message })}
+        >
           <Suspense fallback={null}>
-            <VRMModel
+            <Model
               url={url}
               vrmFile={file}
               agentName={agent.name}
               mood={agent.mood}
-              state={state ?? agent.state ?? "idle"}
+              state={effectiveState}
               getMouthAmplitude={getMouthAmplitude}
               spotlight={spotlight}
               cameraResetNonce={cameraResetNonce}
               emote={emote}
               mocapClipId={mocapClipId}
+              lastTool={lastTool}
             />
           </Suspense>
         </VRMLoadErrorBoundary>
       </Canvas>
-      {loadError && spotlight && (
+      {showLoadError && spotlight && (
         <div
           role="status"
           aria-live="polite"

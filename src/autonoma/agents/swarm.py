@@ -888,6 +888,48 @@ class AgentSwarm:
         await asyncio.sleep(wait_seconds)
         logger.info(f"[Swarm] Graceful shutdown complete after {wait_seconds}s wait")
 
+    def _schedule_signature_gestures(self, agent: AutonomousAgent) -> None:
+        if not settings.gesture_gen_enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._generate_signature_gestures(agent))
+
+    async def _generate_signature_gestures(self, agent: AutonomousAgent) -> None:
+        from autonoma.agents.base import MOOD_EMOTE
+        from autonoma.gestures import service as gesture_service
+        from autonoma.gestures.choreographer import CharacterContext
+        from autonoma.llm import create_llm_client, llm_config_from_settings
+
+        try:
+            cfg = self._llm_config or llm_config_from_settings()
+            client = create_llm_client(cfg) if cfg.api_key or cfg.provider == "vllm" else None
+            model = settings.gesture_gen_model or cfg.resolved_worker_model()
+            bones = agent.bones
+            ctx = CharacterContext(
+                name=agent.name,
+                role=agent.persona.role,
+                species=bones.species if bones else "",
+                traits=[t.value for t in bones.traits] if bones else [],
+                catchphrase=bones.catchphrase if bones else "",
+                rarity=bones.rarity if bones else "",
+                mood=agent.mood.value,
+            )
+            for kind, value in gesture_service.signature_triggers(agent.mood.value, MOOD_EMOTE):
+                await gesture_service.ensure_gesture(
+                    agent_name=agent.name,
+                    kind=kind,
+                    value=value,
+                    ctx=ctx,
+                    client=client,
+                    model=model,
+                    character_uuid=getattr(agent, "character_uuid", "") or "",
+                )
+        except Exception:
+            logger.exception(f"[Swarm] signature gesture generation failed for {agent.name}")
+
     def add_viewer_hint(self, viewer_name: str, text: str) -> bool:
         """Forward a sanitized spectator hint to the Director's advisory buffer.
 
@@ -1016,6 +1058,11 @@ class AgentSwarm:
         current_mood = getattr(agent, "mood", None)
         if current_mood is not None:
             self._last_moods[name] = current_mood
+
+        # Self-authored signature moves (autonoma.gestures) — best effort,
+        # off the spawn path; the stage uses hand-written gestures until
+        # ``gesture.generated`` arrives.
+        self._schedule_signature_gestures(agent)
 
         # Narrate the spawn
         if agent.bones:

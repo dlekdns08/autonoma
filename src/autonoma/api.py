@@ -515,6 +515,8 @@ FORWARDED_EVENTS = [
     "deepwork.started",
     "deepwork.finished",
     "deepwork.cancelled",
+    "gesture.generated",
+    "gesture.retired",
     "agent.level_up",
     "agent.dream",
     "file.created",
@@ -4496,7 +4498,10 @@ app.include_router(_cutscenes_router.router)
 from autonoma.routers import scheduler as _scheduler_router  # noqa: E402
 
 app.include_router(_scheduler_router.router)
+from autonoma.routers import gestures as _gestures_router  # noqa: E402
 from autonoma.routers import translate as _translate_router  # noqa: E402
+
+app.include_router(_gestures_router.router)
 
 app.include_router(_translate_router.router)
 

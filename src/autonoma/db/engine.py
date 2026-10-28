@@ -395,6 +395,13 @@ async def _migration_018_character_run_xp(conn) -> None:
     await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
 
 
+async def _migration_019_generated_gestures(conn) -> None:
+    """Create the ``generated_gestures`` table (self-authored signature
+    moves — see ``autonoma.gestures``). Same ``create_all(checkfirst=True)``
+    pattern as the other brand-new-table migrations."""
+    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, checkfirst=True))
+
+
 MIGRATIONS: list[Migration] = [
     (1, _migration_001_baseline),
     (2, _migration_002_users),
@@ -414,6 +421,7 @@ MIGRATIONS: list[Migration] = [
     (16, _migration_016_clips),
     (17, _migration_017_viewer_drafts),
     (18, _migration_018_character_run_xp),
+    (19, _migration_019_generated_gestures),
 ]
 
 

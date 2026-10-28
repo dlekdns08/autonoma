@@ -541,6 +541,54 @@ mocap_bindings = Table(
     ),
 )
 
+# ── generated_gestures ───────────────────────────────────────────────────
+# Self-authored signature moves (see ``autonoma.gestures``). One row per
+# (agent name, trigger). The payload is the same gzipped ``MocapClip``
+# wire format as ``mocap_clips`` so the stage plays it unchanged; the
+# score is kept so a gesture can be re-expanded or shown in the editor.
+generated_gestures = Table(
+    "generated_gestures",
+    metadata,
+    Column("id", String(36), primary_key=True),  # uuid4
+    Column("agent_name", String(64), nullable=False, index=True),
+    Column("character_uuid", String(36), nullable=False, server_default=""),
+    Column("trigger_kind", String(16), nullable=False),  # mood|emote|state|manual
+    Column("trigger_value", String(64), nullable=False),
+    Column("name", String(64), nullable=False),
+    Column("score_json", Text, nullable=False),
+    Column("payload_gz", LargeBinary, nullable=False),
+    Column("duration_s", Float, nullable=False),
+    Column("fps", Integer, nullable=False),
+    Column("frame_count", Integer, nullable=False),
+    Column("source", String(16), nullable=False, server_default="llm"),  # llm|fallback
+    Column("model", String(64), nullable=False, server_default=""),
+    Column("votes_up", Integer, nullable=False, server_default="0"),
+    Column("votes_down", Integer, nullable=False, server_default="0"),
+    Column("status", String(16), nullable=False, server_default="active"),  # active|retired
+    Column(
+        "created_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "agent_name",
+        "trigger_kind",
+        "trigger_value",
+        "status",
+        "created_at",
+        name="uq_generated_gestures_slot",
+    ),
+)
+
+Index(
+    "ix_generated_gestures_lookup",
+    generated_gestures.c.agent_name,
+    generated_gestures.c.trigger_kind,
+    generated_gestures.c.trigger_value,
+    generated_gestures.c.status,
+)
+
 Index(
     "ix_mocap_bindings_vrm",
     mocap_bindings.c.vrm_file,
