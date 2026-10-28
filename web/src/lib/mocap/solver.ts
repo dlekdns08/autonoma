@@ -676,7 +676,7 @@ export class MocapSolver {
     this._handMirroredCount = 0;
     if (!result) return 0;
     const hands = result.landmarks;
-    const sides = result.handednesses;
+    const sides = result.handedness;
     if (!hands || !sides) return 0;
     const n = Math.min(hands.length, sides.length, 2);
     for (let i = 0; i < n; i++) {

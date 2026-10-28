@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 
-const TASKS_VERSION = "0.10.17";
+const TASKS_VERSION = "1.2.0";
 const TASKS_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VERSION}/wasm`;
 const MODELS = {
   "face_landmarker.task":
@@ -34,6 +34,12 @@ const WASM_FILES = [
   "vision_wasm_internal.wasm",
   "vision_wasm_nosimd_internal.js",
   "vision_wasm_nosimd_internal.wasm",
+  // Added in tasks-vision 1.x: the ES-module build of the runtime that
+  // ``FilesetResolver.forVisionTasks(base, useModule=true)`` loads. We
+  // keep ``useModule`` at its default (false) but ship the files so the
+  // option can be flipped without another fetch.
+  "vision_wasm_module_internal.js",
+  "vision_wasm_module_internal.wasm",
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

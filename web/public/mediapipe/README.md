@@ -9,6 +9,7 @@ Contents after the fetch:
 | -------------------------------- | --------------------------------------- |
 | `vision_wasm_internal.{js,wasm}` | SIMD build of the Tasks Vision runtime  |
 | `vision_wasm_nosimd_internal.*`  | Fallback for browsers without SIMD      |
+| `vision_wasm_module_internal.*`  | ES-module runtime build (tasks-vision 1.x) |
 | `face_landmarker.task`           | 468-point face mesh + 52 blendshapes    |
 | `pose_landmarker_full.task`      | 33-keypoint full-body pose              |
 | `hand_landmarker.task`           | 21 landmarks × up to 2 hands (optional) |

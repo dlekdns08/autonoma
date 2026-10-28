@@ -145,7 +145,7 @@ export interface UseMocapReturn {
    *  or the detector hasn't produced a frame yet. */
   poseLandmarksRef: React.RefObject<NormalizedLandmark[] | null>;
   /** Latest ``HandLandmarkerResult`` (contains ``landmarks`` +
-   *  ``handednesses``). ``null`` when camera is off or hands capture
+   *  ``handedness``). ``null`` when camera is off or hands capture
    *  is disabled. Ref-stable; same 30fps rationale as pose. */
   handLandmarksRef: React.RefObject<HandLandmarkerResult | null>;
   /** True while a recording is actively collecting frames. */
