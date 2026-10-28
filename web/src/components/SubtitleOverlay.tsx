@@ -53,31 +53,26 @@ export default function SubtitleOverlay({
   showOriginal = true,
 }: SubtitleOverlayProps) {
   const { translate } = useTranslate();
-  const [current, setCurrent] = useState<RenderState | null>(null);
+  // Only the async translation result lives in state; the "no
+  // translation needed" case is derived straight from the latest line
+  // during render so no effect has to setState synchronously.
+  const [translated, setTranslated] = useState<RenderState | null>(null);
   const lastIdRef = useRef<string | null>(null);
+  const last = speechLines[speechLines.length - 1];
+  const needsTranslate = !!toLang && toLang !== fromLang;
 
   // Watch the latest line. Skip duplicates so an idempotent re-render
   // doesn't re-translate the same string.
   useEffect(() => {
-    const last = speechLines[speechLines.length - 1];
+    if (!needsTranslate || !toLang) return;
     if (!last) return;
     if (last.id === lastIdRef.current) return;
     lastIdRef.current = last.id;
 
-    if (!toLang || toLang === fromLang) {
-      setCurrent({
-        id: last.id,
-        agent: last.agent,
-        original: last.text,
-        translated: last.text,
-      });
-      return;
-    }
-
     let cancelled = false;
     void translate(last.text, fromLang, toLang).then((tr) => {
       if (cancelled) return;
-      setCurrent({
+      setTranslated({
         id: last.id,
         agent: last.agent,
         original: last.text,
@@ -87,7 +82,19 @@ export default function SubtitleOverlay({
     return () => {
       cancelled = true;
     };
-  }, [speechLines, fromLang, toLang, translate]);
+  }, [last, needsTranslate, fromLang, toLang, translate]);
+
+  let current: RenderState | null = null;
+  if (last) {
+    if (!needsTranslate) {
+      current = { id: last.id, agent: last.agent, original: last.text, translated: last.text };
+    } else if (translated) {
+      // Keep showing the previous translated line until the new one
+      // resolves — matches the old behaviour where ``current`` only
+      // changed once the promise settled.
+      current = translated;
+    }
+  }
 
   if (!current) return null;
 

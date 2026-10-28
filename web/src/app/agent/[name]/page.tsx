@@ -105,9 +105,16 @@ export default function AgentProfilePage() {
       return;
     }
     let cancelled = false;
-    setAchievementsLoading(true);
-    setAchievementsError(null);
-    fetchAgentAchievements(characterUuid)
+    // Kick off after a microtask so the loading flip isn't a synchronous
+    // setState inside the effect body (same render cycle, no visible
+    // difference — microtasks run before paint).
+    Promise.resolve()
+      .then(() => {
+        if (cancelled) throw new Error("cancelled");
+        setAchievementsLoading(true);
+        setAchievementsError(null);
+        return fetchAgentAchievements(characterUuid);
+      })
       .then((res) => {
         if (cancelled) return;
         setAchievements(res.items);

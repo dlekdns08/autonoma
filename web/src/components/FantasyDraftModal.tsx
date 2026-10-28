@@ -46,14 +46,13 @@ export default function FantasyDraftModal({ sessionId, onClose }: Props) {
   // sync with ``myPicks`` afterwards — once the user starts editing,
   // a poll-induced refresh shouldn't yank their selection.
   const [picks, setPicks] = useState<string[]>(() => myPicks ?? []);
-  const seededRef = useRef(false);
-  useEffect(() => {
-    if (seededRef.current) return;
-    if (myPicks && myPicks.length > 0) {
-      setPicks(myPicks);
-      seededRef.current = true;
-    }
-  }, [myPicks]);
+  // One-shot seed once the roster arrives, derived during render so it
+  // lands in the same commit as the data (no effect round-trip).
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && myPicks && myPicks.length > 0) {
+    setSeeded(true);
+    setPicks(myPicks);
+  }
 
   // Fetch the agent roster on mount (and on session change). The
   // scoreboard is fetched by the hook's polling loop.

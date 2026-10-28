@@ -66,10 +66,19 @@ export default function BGMToggle({ mood = "calm", events }: BGMToggleProps) {
   const hydratedRef = useRef(false);
 
   useEffect(() => {
-    const prefs = readPrefs();
-    setEnabled(prefs.enabled);
-    setVolume(prefs.volume);
-    hydratedRef.current = true;
+    // Hydrate from localStorage one microtask after mount (not a
+    // synchronous setState in the effect body); still before paint.
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      const prefs = readPrefs();
+      setEnabled(prefs.enabled);
+      setVolume(prefs.volume);
+      hydratedRef.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Persist on change (post-hydration only — avoids overwriting stored

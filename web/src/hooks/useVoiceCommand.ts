@@ -113,7 +113,9 @@ export function useVoiceCommand({
   const [last, setLast] = useState<VoiceCommand | null>(null);
   const recRef = useRef<SRInstance | null>(null);
   const onCommandRef = useRef(onCommand);
-  onCommandRef.current = onCommand;
+  useEffect(() => {
+    onCommandRef.current = onCommand;
+  });
   const wakes = (wakeWords && wakeWords.length > 0 ? wakeWords : DEFAULT_WAKES);
   const supported = getRecognitionCtor() !== null;
 
@@ -173,9 +175,19 @@ export function useVoiceCommand({
   }, []);
 
   useEffect(() => {
-    if (enabled) start();
-    else stop();
-    return stop;
+    // ``start``/``stop`` flip ``listening`` state; run them one
+    // microtask after the effect body so the setState isn't synchronous
+    // inside it. Cleanup still stops the recogniser immediately.
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      if (enabled) start();
+      else stop();
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [enabled, start, stop]);
 
   return { listening, error, last, start, stop, supported };

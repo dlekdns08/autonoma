@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   useHarnessPresets,
   type HarnessContent,
@@ -815,13 +815,14 @@ export default function HarnessPanel({
     [presets, schema, selectedId],
   );
 
+  // Reset the working copy whenever the base preset changes — the
+  // prev-value comparison runs during render so the reset is part of
+  // the same commit instead of a follow-up effect render.
   const [prevBase, setPrevBase] = useState<HarnessContent | null>(null);
-  useEffect(() => {
-    if (schema && base !== prevBase) {
-      setPrevBase(base);
-      setWorking(base);
-    }
-  }, [base, schema, prevBase]);
+  if (schema && base !== prevBase) {
+    setPrevBase(base);
+    setWorking(base);
+  }
 
   const modifiedSections = useMemo(() => {
     const out = new Set<string>();

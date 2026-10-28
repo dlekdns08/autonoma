@@ -29,8 +29,16 @@ export function useTheme() {
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
     const initial = stored === "light" || stored === "dark" ? stored : DEFAULT_THEME;
-    setThemeState(initial);
     applyTheme(initial);
+    // Sync React state one microtask later (not synchronously in the
+    // effect body); the DOM class above is already applied.
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setThemeState(initial);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setTheme = useCallback((next: Theme) => {

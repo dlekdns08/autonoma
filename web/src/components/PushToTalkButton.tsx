@@ -86,8 +86,10 @@ export default function PushToTalkButton({
   // re-render — a keydown landing during the gap silently misfires.
   const beginRef = useRef(beginPress);
   const endRef = useRef(endPress);
-  beginRef.current = beginPress;
-  endRef.current = endPress;
+  useEffect(() => {
+    beginRef.current = beginPress;
+    endRef.current = endPress;
+  });
 
   useEffect(() => {
     if (!spaceHotkey) return;

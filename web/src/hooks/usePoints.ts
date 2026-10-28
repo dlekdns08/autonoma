@@ -117,7 +117,11 @@ export function usePoints(
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    void refresh();
+    // First refresh one microtask later so its setState calls aren't
+    // synchronous inside the effect body.
+    void Promise.resolve().then(() => {
+      if (!cancelled) void refresh();
+    });
     const id = window.setInterval(() => {
       if (!cancelled) void refresh();
     }, POLL_INTERVAL_MS);

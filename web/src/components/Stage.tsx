@@ -92,6 +92,9 @@ export default function Stage({
   // ── Camera state ──────────────────────────────────────────────────────
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
   const dragRef = useRef<{ startX: number; startY: number; camX: number; camY: number } | null>(null);
+  // Mirror of ``dragRef !== null`` for the cursor style — render can't
+  // read the ref, so the mouse handlers keep this boolean in sync.
+  const [dragging, setDragging] = useState(false);
 
   const resetCamera = useCallback(() => setCamera({ x: 0, y: 0, scale: 1 }), []);
 
@@ -112,6 +115,7 @@ export default function Stage({
       camX: camera.x,
       camY: camera.y,
     };
+    setDragging(true);
   }, [camera.x, camera.y]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -127,6 +131,7 @@ export default function Stage({
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
+    setDragging(false);
   }, []);
 
   const handleDoubleClick = useCallback(() => {
@@ -188,7 +193,7 @@ export default function Stage({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onDoubleClick={handleDoubleClick}
-        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+        style={{ cursor: dragging ? "grabbing" : "grab" }}
       >
         <div
           style={{
@@ -220,7 +225,7 @@ export default function Stage({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onDoubleClick={handleDoubleClick}
-      style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+      style={{ cursor: dragging ? "grabbing" : "grab" }}
     >
       <div
         style={{

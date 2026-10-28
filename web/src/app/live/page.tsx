@@ -111,7 +111,7 @@ function EmptyState() {
       </h2>
       <p className="max-w-md font-mono text-[11px] text-white/50">
         Hosts: open a swarm and flip{" "}
-        <span className="text-fuchsia-300">"Make this room public"</span>{" "}
+        <span className="text-fuchsia-300">&ldquo;Make this room public&rdquo;</span>{" "}
         from the share button to land here.
       </p>
       <Link

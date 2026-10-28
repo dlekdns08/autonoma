@@ -97,6 +97,18 @@ export default function AchievementsTicker({
     return () => clearTimeout(t);
   }, [liveQueue]);
 
+  // Clock for the opacity ramp. Render must stay pure (no ``Date.now()``
+  // in the JSX), so the age is computed from this state, ticked at
+  // 2 Hz only while live entries exist — the CSS 700 ms opacity
+  // transition smooths between ticks.
+  const [now, setNow] = useState(() => Date.now());
+  const hasLive = liveQueue.length > 0;
+  useEffect(() => {
+    if (!hasLive) return;
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [hasLive]);
+
   // Static base — the server-fetched ``recent`` list. Newest at the right
   // matches the WS append direction.
   const baseEntries = useMemo<InternalEntry[]>(() => {
@@ -140,7 +152,7 @@ export default function AchievementsTicker({
             // via a CSS transition; static base entries stay at full
             // opacity. We compute a target opacity from age.
             const isLive = entry.pushedAt > 0;
-            const age = isLive ? Date.now() - entry.pushedAt : 0;
+            const age = isLive ? Math.max(0, now - entry.pushedAt) : 0;
             const opacity = isLive
               ? Math.max(0, 1 - age / FADE_MS)
               : 0.85;

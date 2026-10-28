@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import type { TaskData } from "@/lib/types";
 
 interface Props {
@@ -13,8 +13,10 @@ export default function ReviewQueue({ tasks, currentRound = 0 }: Props) {
   // Entry-round tracker is per-component-instance — previously a module
   // singleton, which leaked state across mount/unmount cycles and across
   // simultaneously-rendered instances (e.g. in tests or multi-project
-  // views). useRef keeps it render-stable without triggering re-renders.
-  const reviewEntryRound = useRef<Record<string, number>>({});
+  // views). Held in state (not a ref) because render reads it; it is
+  // rebuilt during render from the previous map whenever the review
+  // set or round changes, which keeps the "first-seen round" semantics
+  // without an effect.
 
   // Filter tasks in "review" status or assigned to a reviewer role.
   const reviewTasks = tasks.filter(
@@ -24,19 +26,26 @@ export default function ReviewQueue({ tasks, currentRound = 0 }: Props) {
   // Record first-seen round for each task, and drop stale keys when the
   // task is no longer in review. The cleanup matters because a long
   // session can accumulate thousands of keys otherwise.
-  useEffect(() => {
-    const seen = new Set<string>();
+  const [entryRounds, setEntryRounds] = useState<Record<string, number>>({});
+  const nextEntryRounds = useMemo(() => {
+    const next: Record<string, number> = {};
+    let changed = false;
     for (const t of reviewTasks) {
       const key = t.id ?? t.title;
-      seen.add(key);
-      if (reviewEntryRound.current[key] === undefined) {
-        reviewEntryRound.current[key] = currentRound;
-      }
+      const prev = entryRounds[key];
+      next[key] = prev === undefined ? currentRound : prev;
+      if (prev === undefined) changed = true;
     }
-    for (const key of Object.keys(reviewEntryRound.current)) {
-      if (!seen.has(key)) delete reviewEntryRound.current[key];
+    if (!changed && Object.keys(entryRounds).length !== Object.keys(next).length) {
+      changed = true;
     }
-  }, [reviewTasks, currentRound]);
+    return changed ? next : entryRounds;
+    // ``reviewTasks`` is a fresh array each render; the memo keys on its
+    // contents via ``tasks``.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, currentRound, entryRounds]);
+  if (nextEntryRounds !== entryRounds) setEntryRounds(nextEntryRounds);
+  const reviewEntryRound = nextEntryRounds;
 
   const count = reviewTasks.length;
 
@@ -78,7 +87,7 @@ export default function ReviewQueue({ tasks, currentRound = 0 }: Props) {
           ) : (
             reviewTasks.map((task) => {
               const key = task.id ?? task.title;
-              const entryRound = reviewEntryRound.current[key] ?? currentRound;
+              const entryRound = reviewEntryRound[key] ?? currentRound;
               const waitingRounds = currentRound - entryRound;
               const isOverdue = waitingRounds > 3;
 

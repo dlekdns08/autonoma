@@ -23,7 +23,8 @@ export default function TemplateSelector({ selectedId, onSelect, disabled }: Pro
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // ``loading`` is initialised to true and this effect runs once on
+    // mount, so there is nothing to flip here.
     fetch(`${API_BASE_URL}/api/templates`)
       .then((r) => r.json())
       .then((data: { templates: TemplateInfo[] }) => {

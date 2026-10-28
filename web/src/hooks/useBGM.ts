@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { BGMEngine, type Mood, type Pulse } from "@/lib/bgm";
 
@@ -46,18 +46,19 @@ export function moodToLayer(mood: string): Mood {
 }
 
 export function useBGM(opts: UseBGMOptions): UseBGMReturn {
-  const engineRef = useRef<BGMEngine | null>(null);
+  // Lazy-init the engine once per mount in the browser (a ``useState``
+  // initializer is the sanctioned "compute once" hatch — writing a ref
+  // during render is not). The engine itself is dormant until
+  // `start()` is called from a user gesture.
+  const [initialEngine] = useState<BGMEngine | null>(() =>
+    typeof window !== "undefined" ? new BGMEngine() : null,
+  );
+  const engineRef = useRef<BGMEngine | null>(initialEngine);
   // Track which event ids we've already pulsed for. Compared with `>`
   // for numeric ids; falls back to a Set for string ids.
   const lastSeenNumIdRef = useRef<number>(-Infinity);
   const seenStringIdsRef = useRef<Set<string>>(new Set());
   const startedRef = useRef(false);
-
-  // Lazy-init the engine on first render in the browser. The engine
-  // itself is dormant until `start()` is called from a user gesture.
-  if (engineRef.current === null && typeof window !== "undefined") {
-    engineRef.current = new BGMEngine();
-  }
 
   const start = useCallback(() => {
     if (!engineRef.current) return;
