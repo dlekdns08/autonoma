@@ -146,7 +146,9 @@ async def test_session_streams_and_collects_changed_files(
 
     opts = fake_sdk.calls[0]["options"]
     assert opts["cwd"] == str(project_dir)
-    assert opts["permission_mode"] == "bypassPermissions"
+    # OS sandbox on by default → edits auto-accepted, bash only when sandboxed.
+    assert opts["permission_mode"] == "acceptEdits"
+    assert opts["sandbox"]["enabled"] is True
     assert opts["setting_sources"] == []
     assert opts["model"] == "claude-sonnet-5-5"
     assert opts["effort"] == "medium"

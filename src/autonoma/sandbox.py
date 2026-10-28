@@ -5,7 +5,8 @@ letting that code touch the host system. Port of Claude Code's sandbox
 philosophy (see PoC/claude-code-source-code/src/utils/sandbox/) adapted for:
 - multi-agent concurrency (global semaphore)
 - tight resource limits (rlimit via preexec_fn on POSIX)
-- platform-aware backend: macOS sandbox-exec, Linux bwrap, rlimit-only fallback.
+- platform-aware backend: Anthropic sandbox runtime (``srt``) when installed,
+  else macOS sandbox-exec / Linux bwrap, rlimit-only fallback.
 
 Only the coder/tester harnesses get the run_code capability by default.
 """
@@ -144,7 +145,7 @@ def _sanitized_env(workdir: Path) -> dict[str, str]:
 # ── rlimit preexec (POSIX) ──────────────────────────────────────────────────
 
 
-def _make_preexec(limits: SandboxLimits):
+def _make_preexec(limits: SandboxLimits, *, light: bool = False):
     """Build the ``preexec_fn`` that applies rlimits to the sandboxed child.
 
     macOS note: seatbelt profiles express filesystem + network rules but
@@ -174,13 +175,20 @@ def _make_preexec(limits: SandboxLimits):
             rlimits.append((const, value))
 
     _add("RLIMIT_CPU", (limits.cpu_time_sec, limits.cpu_time_sec))
-    _add("RLIMIT_AS", (mem_bytes, mem_bytes))
-    _add("RLIMIT_DATA", (mem_bytes, mem_bytes))
-    _add("RLIMIT_RSS", (mem_bytes, mem_bytes))
+    if not light:
+        # ``light`` is used for the ``srt`` backend: these limits would
+        # land on the Node-based runtime itself (V8 needs a large address
+        # space and srt forks helpers/proxies), so the interpreter inside
+        # the sandbox gets ``ulimit -v`` / ``ulimit -u`` instead.
+        _add("RLIMIT_AS", (mem_bytes, mem_bytes))
+        _add("RLIMIT_DATA", (mem_bytes, mem_bytes))
+        _add("RLIMIT_RSS", (mem_bytes, mem_bytes))
+        _add("RLIMIT_NPROC", (limits.max_processes, limits.max_processes))
+        _add("RLIMIT_NOFILE", (256, 256))
+    else:
+        _add("RLIMIT_NOFILE", (1024, 1024))
     _add("RLIMIT_STACK", (64 * 1024 * 1024, 64 * 1024 * 1024))
     _add("RLIMIT_FSIZE", (fsize_bytes, fsize_bytes))
-    _add("RLIMIT_NOFILE", (256, 256))
-    _add("RLIMIT_NPROC", (limits.max_processes, limits.max_processes))
     _add("RLIMIT_CORE", (0, 0))
 
     def _apply() -> None:
@@ -228,8 +236,45 @@ def _macos_profile(workdir: Path) -> str:
 # ── backend detection ───────────────────────────────────────────────────────
 
 
+def _srt_binary() -> str | None:
+    """Anthropic Sandbox Runtime (``srt``) — seatbelt on macOS, bubblewrap on
+    Linux, plus proxy-based network filtering; no container, no root.
+    Install: ``npm i -g @anthropic-ai/sandbox-runtime``."""
+    try:
+        from autonoma.config import settings
+
+        configured = getattr(settings, "srt_binary", "") or ""
+    except Exception:
+        configured = ""
+    if configured:
+        return configured if Path(configured).exists() else shutil.which(configured)
+    return shutil.which("srt")
+
+
+def _configured_backend() -> str:
+    try:
+        from autonoma.config import settings
+
+        return str(getattr(settings, "sandbox_backend", "auto") or "auto")
+    except Exception:
+        return "auto"
+
+
 def _detect_backend() -> str:
     system = platform.system()
+    wanted = _configured_backend()
+    if wanted == "srt":
+        return "srt" if _srt_binary() else _native_backend(system)
+    if wanted in ("seatbelt", "bwrap", "rlimit"):
+        return wanted
+    # auto: prefer srt (cross-platform, network allow-list, credential
+    # deny rules) when installed, then the OS-native primitives.
+    if system in ("Darwin", "Linux") and _srt_binary():
+        return "srt"
+    return _native_backend(system)
+
+
+def _native_backend(system: str) -> str:
     if system == "Darwin" and shutil.which("sandbox-exec"):
         return "seatbelt"
     if system == "Linux" and shutil.which("bwrap"):
@@ -252,6 +297,7 @@ def backend_info() -> dict[str, object]:
         "backend": _detect_backend(),
         "sandbox_exec": shutil.which("sandbox-exec"),
         "bwrap": shutil.which("bwrap"),
+        "srt": _srt_binary(),
         "max_concurrent": _SEM_CAPACITY,
         "rlimit_memory_enforced": system == "Linux",
     }
@@ -310,7 +356,7 @@ class CodeSandbox:
 
             argv = self._build_argv(language, script_path, workdir)
             env = _sanitized_env(workdir)
-            preexec = _make_preexec(self.limits)
+            preexec = _make_preexec(self.limits, light=self.backend == "srt")
             start = time.monotonic()
 
             try:
@@ -367,7 +413,84 @@ class CodeSandbox:
         if self.backend == "bwrap":
             return self._bwrap_argv(inner, workdir)
 
+        if self.backend == "srt":
+            return self._srt_argv(inner, workdir)
+
         return inner
+
+    def _srt_argv(self, inner: list[str], workdir: Path) -> list[str]:
+        """Wrap the interpreter in Anthropic's sandbox runtime.
+
+        Policy: no network at all; writes only inside the scratch workdir;
+        reads denied for every home directory and re-allowed for the
+        workdir and the interpreter's own install (``srt`` additionally
+        denies credential files such as ``~/.ssh`` by default). Memory is
+        capped with ``ulimit -v`` *inside* the sandbox so the Node-based
+        runtime itself is not starved.
+        """
+        import json
+
+        real_workdir = os.path.realpath(str(workdir))
+        # Reads: srt switches to deny-all-except as soon as ``allowRead`` is
+        # non-empty, which breaks interpreters living under a home
+        # directory (venvs, uv-managed pythons). Keep the read model
+        # default-allow and deny the sensitive regions explicitly; srt also
+        # applies its own mandatory credential-file denies (~/.ssh keys,
+        # cloud credentials, …). Writes: only the scratch workdir.
+        home = os.path.realpath(os.path.expanduser("~"))
+        deny_read = [
+            os.path.join(home, d)
+            for d in (
+                ".ssh",
+                ".aws",
+                ".gnupg",
+                ".kube",
+                ".docker",
+                ".config",
+                ".netrc",
+                ".npmrc",
+                ".pypirc",
+                ".zshrc",
+                ".bashrc",
+                ".bash_history",
+                ".zsh_history",
+                ".claude",
+                ".anthropic",
+            )
+        ]
+        try:
+            from autonoma.config import settings as _settings
+
+            deny_read.append(os.path.realpath(str(_settings.data_dir)))
+            deny_read.append(os.path.join(os.getcwd(), ".env"))
+        except Exception:
+            pass
+        policy = {
+            "filesystem": {
+                "denyRead": deny_read,
+                "allowRead": [],
+                "allowWrite": [real_workdir],
+                "denyWrite": [],
+            },
+            # Both keys are required by srt's schema; empty allow-list = no network.
+            "network": {"allowedDomains": [], "deniedDomains": []},
+        }
+        settings_path = workdir / ".srt-settings.json"
+        settings_path.write_text(json.dumps(policy), encoding="utf-8")
+        settings_path.chmod(0o600)
+        mem_kb = int(self.limits.memory_mb) * 1024
+        # ``srt -c`` runs a shell string (like ``sh -c``); passing ``sh -c``
+        # as positional arguments instead makes commander swallow ``-c``
+        # as srt's own option. Quote every interpreter argument.
+        import shlex
+
+        shell = (
+            f"ulimit -v {mem_kb} 2>/dev/null; "
+            f"ulimit -u {int(self.limits.max_processes)} 2>/dev/null; "
+            f"exec {' '.join(shlex.quote(a) for a in inner)}"
+        )
+        srt = _srt_binary() or "srt"
+        return [srt, "--settings", str(settings_path), "-c", shell]
 
     def _bwrap_argv(self, inner: list[str], workdir: Path) -> list[str]:
         args: list[str] = [

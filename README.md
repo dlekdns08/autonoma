@@ -38,7 +38,7 @@ gestures driven by the agents' actual behavior.
 - **Deep work (opt-in)** — with `AUTONOMA_WORKER_BACKEND=agent_sdk`, a worker that picks up a task delegates the real building to a Claude Agent SDK session in the project workspace; its text and tool calls stream to the stage, and the files it writes become project artifacts.
 - **Native tool-use agent protocol** — each action is a strict tool; the Director plans on Sonnet 5.5 while workers decide on Haiku 5.5, with append-only histories, prompt caching, and spectator hints delivered as operator-channel system messages.
 - **Optional TTS** — self-hosted OmniVoice zero-shot cloning (MPS/CUDA/CPU) with per-agent voice assignment and budget caps.
-- **Sandboxed execution** — agents run code they write inside a bubblewrap sandbox with CPU / wall-time / memory limits.
+- **Sandboxed execution** — agents run code they write under Anthropic's sandbox runtime (`srt`: seatbelt / bubblewrap + proxy network filtering, no container) when installed, else sandbox-exec / bubblewrap, with CPU / wall-time / memory limits. Deep-work sessions run their bash under Claude Code's OS sandbox with a domain allow-list.
 
 ### 2026-05 feature pack
 
@@ -159,6 +159,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | Thinking depth per tier (`low`…`max`) | `high` / `low` |
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (native tool use; JSON on vLLM), `tool_use`, or `json` | `auto` |
 | `AUTONOMA_WORKER_BACKEND` | `native` (one file per round), `agent_sdk` (Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`), or `managed_agents` (Anthropic-hosted outcome-driven session with a per-character memory store) | `native` |
+| `AUTONOMA_SANDBOX_BACKEND` | run_code isolation: `auto` prefers Anthropic's sandbox runtime (`srt`), else sandbox-exec / bwrap / rlimit | `auto` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |

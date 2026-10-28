@@ -28,6 +28,14 @@ captures work in flight.
   folded into the user turn on models without that feature.
 - Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
   `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- Lightweight sandboxing: `run_code` prefers Anthropic's sandbox runtime
+  (`srt`) when installed — no network, writes confined to the scratch
+  dir, credential/dotfile reads denied, memory and process caps via
+  `ulimit` inside the sandbox (memory enforced on Linux; macOS ignores
+  RLIMIT_AS, the wall-clock timeout is the backstop) —
+  falling back to sandbox-exec / bwrap / rlimit (`AUTONOMA_SANDBOX_BACKEND`).
+  Deep-work sessions now run bash under Claude Code's OS sandbox with a
+  domain allow-list and `acceptEdits` instead of `bypassPermissions`.
 - Managed Agents (`autonoma.managed`, opt-in): `worker_backend=managed_agents`
   runs each task as an outcome-driven hosted session (rubric drafted from
   the task, per-character memory store attached, outputs copied back);

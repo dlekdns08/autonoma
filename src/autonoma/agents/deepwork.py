@@ -165,9 +165,11 @@ class DeepWorkSession:
             cwd=str(self.project_dir),
             allowed_tools=list(settings.deep_work_allowed_tools),
             disallowed_tools=list(settings.deep_work_disallowed_tools),
-            # The workspace is the sandbox: every edit/command inside it is
-            # pre-approved so the session never blocks on a permission prompt.
-            permission_mode="bypassPermissions",
+            # Without the OS sandbox the workspace directory is the only
+            # boundary, so every edit/command is pre-approved; with it on
+            # (below) edits are auto-accepted and bash is auto-approved
+            # only when it actually runs sandboxed.
+            permission_mode="acceptEdits" if settings.deep_work_sandbox else "bypassPermissions",
             # Don't pick up the operator's own ~/.claude or repo settings.
             setting_sources=[],
             max_turns=self.max_turns,
@@ -179,6 +181,19 @@ class DeepWorkSession:
             kwargs["max_budget_usd"] = self.max_budget_usd
         if self.effort:
             kwargs["effort"] = self.effort
+        if settings.deep_work_sandbox:
+            kwargs["sandbox"] = {
+                "enabled": True,
+                "autoAllowBashIfSandboxed": True,
+                # A command that cannot be sandboxed is denied, never
+                # escalated — this is an unattended run.
+                "allowUnsandboxedCommands": False,
+                "excludedCommands": [],
+                "network": {
+                    "allowedDomains": list(settings.deep_work_sandbox_allowed_domains),
+                    "allowLocalBinding": True,
+                },
+            }
         if settings.deep_work_checkpointing:
             # Snapshots file edits so a failed session can be rewound.
             kwargs["enable_file_checkpointing"] = True

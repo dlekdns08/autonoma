@@ -38,7 +38,7 @@ HUD 픽셀 맵, 또는 3D VTuber 캐릭터(립싱크·무드·제스처가 실�
 - **딥 워크 (옵트인)** — `AUTONOMA_WORKER_BACKEND=agent_sdk`를 켜면 태스크를 맡은 워커가 실제 구현을 프로젝트 워크스페이스의 Claude Agent SDK 세션에 위임합니다. 세션의 발화와 툴 호출이 무대로 스트리밍되고, 생성된 파일은 프로젝트 산출물이 됩니다.
 - **네이티브 tool-use 에이전트 프로토콜** — 모든 액션이 strict 툴입니다. Director는 Sonnet 5.5로 계획하고 워커는 Haiku 5.5로 결정하며, append-only 히스토리와 프롬프트 캐싱, 관전자 힌트의 운영자 채널(system 메시지) 전달을 지원합니다.
 - **선택적 TTS** — 자체 호스팅 OmniVoice zero-shot 클로닝 (MPS/CUDA/CPU), 에이전트별 음성 배정 + 예산 상한.
-- **샌드박스 코드 실행** — 에이전트가 작성한 코드를 bubblewrap 샌드박스에서 CPU/실행시간/메모리 제한하에 실행.
+- **샌드박스 실행** — 에이전트가 쓴 코드는 Anthropic 샌드박스 런타임(`srt`: seatbelt / bubblewrap + 프록시 네트워크 필터, 컨테이너 없음)이 있으면 그 안에서, 없으면 sandbox-exec / bubblewrap 안에서 CPU·시간·메모리 제한과 함께 실행됩니다. 딥 워크 세션의 bash는 Claude Code의 OS 샌드박스와 도메인 허용 목록 아래 돕니다.
 - **MCP 서버** — 공식 `mcp` SDK 기반. 표준 streamable-HTTP 전송을 `/mcp`에서 제공하고(레거시 `POST /mcp/jsonrpc`도 유지) `list_sessions`, `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events`를 MCP 툴로 노출해 Claude Code / Cursor가 Autonoma를 직접 조종할 수 있습니다. 클라이언트는 `http://<host>:8000/mcp`에 `X-MCP-Token` 헤더(`AUTONOMA_COORDINATOR_TOKEN` 값)를 붙여 접속합니다. 기본 꺼짐; `AUTONOMA_MCP_SERVER_ENABLED`로 활성화.
 
 ## 빠른 시작
@@ -134,6 +134,7 @@ web/src/
 | `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | 티어별 사고 깊이 (`low`…`max`) | `high` / `low` |
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (네이티브 tool use, vLLM은 JSON), `tool_use`, `json` | `auto` |
 | `AUTONOMA_WORKER_BACKEND` | `native`(라운드당 파일 하나), `agent_sdk`(`output/<project>/`의 Claude Code 세션), `managed_agents`(캐릭터별 메모리 스토어가 붙는 Anthropic 호스티드 outcome 세션) | `native` |
+| `AUTONOMA_SANDBOX_BACKEND` | run_code 격리: `auto`는 Anthropic 샌드박스 런타임(`srt`)을 우선, 없으면 sandbox-exec / bwrap / rlimit | `auto` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor 툴: 워커가 턴 중간에 상의하는 상위 모델 (비우면 끔) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | 정체 시 Director가 계획 모델에 지시 하나를 요청 | `true` |

@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     # regenerated on next use.
     gesture_retire_net_votes: int = -3
 
+    # ── Code sandbox backend (run_code) ──
+    # ``auto`` prefers Anthropic's sandbox runtime (``srt``: seatbelt /
+    # bubblewrap + proxy network filtering, no container, no root) when
+    # it is on PATH, then the OS-native primitives. Install with
+    # ``npm i -g @anthropic-ai/sandbox-runtime``.
+    sandbox_backend: Literal["auto", "srt", "seatbelt", "bwrap", "rlimit"] = "auto"
+    srt_binary: str = ""  # explicit path to ``srt``; empty → PATH lookup
+
     # ── Advisor tool ──
     # Pairs the cheap worker executor with a stronger advisor consulted
     # mid-turn (server-side ``advisor_20260301``). Empty → off. Valid
@@ -156,6 +164,17 @@ class Settings(BaseSettings):
     # token budget the session paces itself against (0 → off; ≥ 20 000
     # when set), and a predefined ``tester`` sub-agent the session may
     # delegate test runs to.
+    # OS-level sandbox for the session's bash commands (Claude Code's
+    # seatbelt / bubblewrap sandbox): writes confined to the workspace,
+    # network limited to ``deep_work_sandbox_allowed_domains``. With it
+    # on, the session runs under ``acceptEdits`` (bash auto-approved only
+    # when sandboxed) instead of ``bypassPermissions``. macOS/Linux only.
+    deep_work_sandbox: bool = True
+    deep_work_sandbox_allowed_domains: list[str] = [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+    ]
     deep_work_checkpointing: bool = True
     deep_work_task_budget_tokens: int = 0
     deep_work_subagents: bool = True
