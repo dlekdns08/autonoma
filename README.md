@@ -34,6 +34,7 @@ gestures driven by the agents' actual behavior.
 - **Live VTuber performance** — mood-driven blendshapes, 5-vowel lip-sync, contrapposto weight shift, beat gestures during speech, cross-faded state transitions.
 - **Multi-viewer rooms** — host starts a swarm, others join via a short code and watch in sync.
 - **Pluggable LLM backend** — Anthropic, OpenAI, or any OpenAI-compatible endpoint (vLLM).
+- **Native tool-use agent protocol** — each action is a strict tool; the Director plans on Sonnet 5.5 while workers decide on Haiku 5.5, with append-only histories, prompt caching, and spectator hints delivered as operator-channel system messages.
 - **Optional TTS** — self-hosted OmniVoice zero-shot cloning (MPS/CUDA/CPU) with per-agent voice assignment and budget caps.
 - **Sandboxed execution** — agents run code they write inside a bubblewrap sandbox with CPU / wall-time / memory limits.
 

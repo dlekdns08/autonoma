@@ -34,6 +34,7 @@ HUD 픽셀 맵, 또는 3D VTuber 캐릭터(립싱크·무드·제스처가 실�
 - **라이브 VTuber 퍼포먼스** — 무드 기반 블렌드쉐입, 5모음 립싱크, contrapposto 체중 이동, 발화 중 비트 제스처, 크로스페이드 상태 전환.
 - **멀티뷰어 룸** — 호스트가 세션을 시작하고, 짧은 코드로 다른 사람이 참여해 동기화된 화면을 함께 시청.
 - **LLM 백엔드 플러그** — Anthropic, OpenAI, 또는 OpenAI 호환 엔드포인트(vLLM).
+- **네이티브 tool-use 에이전트 프로토콜** — 모든 액션이 strict 툴입니다. Director는 Sonnet 5.5로 계획하고 워커는 Haiku 5.5로 결정하며, append-only 히스토리와 프롬프트 캐싱, 관전자 힌트의 운영자 채널(system 메시지) 전달을 지원합니다.
 - **선택적 TTS** — 자체 호스팅 OmniVoice zero-shot 클로닝 (MPS/CUDA/CPU), 에이전트별 음성 배정 + 예산 상한.
 - **샌드박스 코드 실행** — 에이전트가 작성한 코드를 bubblewrap 샌드박스에서 CPU/실행시간/메모리 제한하에 실행.
 
