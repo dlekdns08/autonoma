@@ -14,6 +14,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, RoomState } from "@/lib/types";
+import type { ChatMoodControl } from "@/hooks/useChatSentiment";
+import ChatMoodToggle from "@/components/ChatMoodToggle";
 
 // Channel definitions — "All" shows every message regardless of channel.
 // Other tabs filter to messages that carry that channel tag.
@@ -38,6 +40,8 @@ interface Props {
   onSend: (text: string) => void;
   onSetName: (name: string) => void;
   onJoinRoom: (code: string) => void;
+  /** Opt-in on-device chat sentiment toggle (see useChatSentiment). */
+  chatMood?: ChatMoodControl;
 }
 
 export default function ChatPanel({
@@ -46,6 +50,7 @@ export default function ChatPanel({
   onSend,
   onSetName,
   onJoinRoom,
+  chatMood,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [name, setName] = useState("");
@@ -91,8 +96,11 @@ export default function ChatPanel({
             <span className="text-white/40">no room yet</span>
           )}
         </div>
-        <div className="text-white/60">
-          {room.viewerCount} viewer{room.viewerCount === 1 ? "" : "s"}
+        <div className="flex items-center gap-2 text-white/60">
+          {chatMood && <ChatMoodToggle control={chatMood} />}
+          <span>
+            {room.viewerCount} viewer{room.viewerCount === 1 ? "" : "s"}
+          </span>
         </div>
       </div>
 

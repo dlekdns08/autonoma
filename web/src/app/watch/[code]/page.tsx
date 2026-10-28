@@ -27,6 +27,7 @@ import { useParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
 import VTuberStage from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
+import ChatMoodToggle from "@/components/ChatMoodToggle";
 import DirectorHintComposer from "@/components/DirectorHintComposer";
 import Stage from "@/components/Stage";
 import ViewerOverlay from "@/components/ViewerOverlay";
@@ -57,10 +58,10 @@ const TRANSLATE_DEBOUNCE_MS = 800;
 
 export default function WatchPage() {
   const params = useParams<{ code: string }>();
-  const code = useMemo(
-    () => (params?.code ? decodeURIComponent(params.code).toUpperCase() : ""),
-    [params?.code],
-  );
+  // Plain derivation — a string compare is cheaper than a memo, and the
+  // compiler lint can't preserve a memo keyed on an optional-chained dep.
+  const rawCode = params?.code;
+  const code = rawCode ? decodeURIComponent(rawCode).toUpperCase() : "";
 
   const {
     state,
@@ -71,6 +72,7 @@ export default function WatchPage() {
     speakingAgents,
     audioBlocked,
     unlockAudio,
+    chatMood,
     room,
     wsRef,
     sessionId,
@@ -101,10 +103,20 @@ export default function WatchPage() {
   // ── Viewer-overlay (cursors + stickers) ──────────────────────────
   // ``useSwarm`` now exposes ``wsRef`` so we can attach the overlay's
   // listener directly to the live socket. ``connected`` flips on the
-  // first re-render after open, so reading ``wsRef.current`` here is
-  // correct: stale-closure noise is impossible because the hook
-  // re-subscribes on every render anyway.
-  const overlayWs: WebSocket | null = connected ? wsRef.current : null;
+  // first re-render after open; we snapshot the socket into state from
+  // an effect (reading a ref during render is disallowed) so the
+  // overlay hook re-subscribes exactly when the socket changes.
+  const [overlayWs, setOverlayWs] = useState<WebSocket | null>(null);
+  useEffect(() => {
+    const ws = connected ? wsRef.current : null;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setOverlayWs((prev) => (prev === ws ? prev : ws));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, wsRef]);
   const { state: overlayState } = useViewerOverlay(overlayWs);
   const sendOverlayCommand = useCallback(
     (cmd: object) => {
@@ -168,9 +180,17 @@ export default function WatchPage() {
     if (highest > lastBettingEventIdRef.current) {
       lastBettingEventIdRef.current = highest;
     }
-    if (next) {
-      setLiveBettingResolution(next);
-    }
+    if (!next) return;
+    // Publish one microtask later so the setState isn't synchronous in
+    // the effect body (lands before paint either way).
+    const resolved = next;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setLiveBettingResolution(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [state.events]);
 
   const idle = state.agents.length === 0;
@@ -204,11 +224,14 @@ export default function WatchPage() {
     return null;
   }, [speakingAgents]);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
-  useEffect(() => {
-    if (firstSpeaker && firstSpeaker !== lastSpeaker) {
-      setLastSpeaker(firstSpeaker);
-    }
-  }, [firstSpeaker, lastSpeaker]);
+  // Prev-value pattern (derived during render): remember the last
+  // non-null first speaker so the subtitle target holds while nobody
+  // is talking.
+  const [prevFirstSpeaker, setPrevFirstSpeaker] = useState(firstSpeaker);
+  if (firstSpeaker !== prevFirstSpeaker) {
+    setPrevFirstSpeaker(firstSpeaker);
+    if (firstSpeaker && firstSpeaker !== lastSpeaker) setLastSpeaker(firstSpeaker);
+  }
   const spotlightName = lastSpeaker ?? state.agents[0]?.name ?? null;
   const spotlightAgent = useMemo(
     () => state.agents.find((a) => a.name === spotlightName) ?? null,
@@ -312,6 +335,9 @@ export default function WatchPage() {
             );
           })}
         </div>
+        {/* Opt-in on-device viewer-chat sentiment — the addressed agent
+            reacts to positive/negative lines via the emote path. */}
+        <ChatMoodToggle control={chatMood} />
         {/* Channel-points wallet + spend UI. Both share the ``points``
             hook so the chip always reflects the spend immediately.
             The Fantasy Draft trigger lives next to them so spectators

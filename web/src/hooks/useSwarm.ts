@@ -19,6 +19,11 @@ import type { ToastItem } from "@/components/Toast";
 import { createToastId } from "@/components/Toast";
 import { useAgentVoice } from "@/hooks/useAgentVoice";
 import { useSfx } from "@/hooks/useSfx";
+import {
+  CHAT_MOOD_EMOTE,
+  resolveAddressedAgent,
+  useChatSentiment,
+} from "@/hooks/useChatSentiment";
 
 const SESSION_KEY = "autonoma_auth";
 
@@ -287,6 +292,26 @@ export function useSwarm() {
   // Route through a ref so handlers keep a stable identity.
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  // Opt-in viewer-chat sentiment ("chat mood"). The model only loads
+  // once the viewer enables it; the handler below reads through a ref
+  // so ``handleMessage`` keeps its identity.
+  const chatMood = useChatSentiment();
+  const chatMoodRef = useRef(chatMood);
+  useEffect(() => {
+    chatMoodRef.current = chatMood;
+  });
+  // Latest agent roster + most recent speaker, for resolving which agent
+  // a chat line addresses (both refs are maintained by effects below).
+  const agentsRef = useRef<AgentData[]>([]);
+  const lastSpeakerRef = useRef<string | null>(null);
+  const prevSpeakingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = voice.speakingAgents;
+    for (const name of current) {
+      if (!prevSpeakingRef.current.has(name)) lastSpeakerRef.current = name;
+    }
+    prevSpeakingRef.current = current;
+  }, [voice.speakingAgents]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
@@ -585,6 +610,14 @@ export function useSwarm() {
         if (event === "viewer.chat") {
           const id = ++chatSeqRef.current;
           const rawText = (data.text as string) ?? "";
+          // Prefer the server-side flag (authoritative — it tracks
+          // exactly what the chat-command bridge interpreted) but
+          // fall back to a local prefix check so older backends
+          // that don't send the field still render the pill.
+          const isCommand =
+            typeof data.is_command === "boolean"
+              ? (data.is_command as boolean)
+              : rawText.startsWith("!");
           setChat((prev) =>
             [
               ...prev.slice(-200),
@@ -594,17 +627,31 @@ export function useSwarm() {
                 text: rawText,
                 isOwner: !!(data.is_owner),
                 timestamp: Date.now(),
-                // Prefer the server-side flag (authoritative — it tracks
-                // exactly what the chat-command bridge interpreted) but
-                // fall back to a local prefix check so older backends
-                // that don't send the field still render the pill.
-                isCommand:
-                  typeof data.is_command === "boolean"
-                    ? (data.is_command as boolean)
-                    : rawText.startsWith("!"),
+                isCommand,
               },
             ],
           );
+          // Chat mood (opt-in): classify the line in the browser and
+          // let the addressed agent react through the emote path —
+          // same plumbing as agent.refusal → "✋". ``classify`` resolves
+          // null while the toggle is off, so this is a no-op by default.
+          const mood = chatMoodRef.current;
+          if (mood.enabled && !isCommand && rawText.trim().length >= 2) {
+            void mood.classify(rawText).then((sentiment) => {
+              if (!sentiment) return;
+              const target = resolveAddressedAgent(
+                rawText,
+                agentsRef.current.map((a) => a.name),
+                lastSpeakerRef.current,
+              );
+              if (!target) return;
+              const seq = ++emoteSeqRef.current;
+              setEmotes((prev) => ({
+                ...prev,
+                [target]: { icon: CHAT_MOOD_EMOTE[sentiment], expiresAt: Date.now() + 2500, seq },
+              }));
+            });
+          }
           return;
         }
 
@@ -1614,6 +1661,7 @@ export function useSwarm() {
   // across long sessions.
   const knownAgentNamesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    agentsRef.current = state.agents;
     const current = new Set(state.agents.map((a) => a.name));
     for (const name of knownAgentNamesRef.current) {
       if (!current.has(name)) voiceRef.current.cleanupAgent(name);
@@ -1661,6 +1709,14 @@ export function useSwarm() {
     // Autoplay-policy state for the "click to enable audio" chip.
     audioBlocked: voice.audioBlocked,
     unlockAudio: voice.unlockAudio,
+    // Viewer-chat sentiment toggle state (model loads only when enabled).
+    chatMood: {
+      enabled: chatMood.enabled,
+      setEnabled: chatMood.setEnabled,
+      status: chatMood.status,
+      progress: chatMood.progress,
+      error: chatMood.error,
+    },
     // Barge-in entry point for the dashboard's push-to-talk button —
     // pauses every speaking agent on press without tearing down the
     // analyser graph.
