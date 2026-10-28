@@ -16,6 +16,7 @@ from autonoma.agents.base import (
     get_tasks_lock,
 )
 from autonoma.agents.harness import DIRECTOR_HARNESS, get_harness
+from autonoma.config import settings
 from autonoma.event_bus import bus
 from autonoma.harness import (
     stall_strategies as _stall_strategies,  # noqa: F401 — triggers @register
@@ -118,6 +119,18 @@ class DirectorAgent(AutonomousAgent):
         )
         self._stall_counter = 0
         self._viewer_hints: deque[tuple[str, str]] = deque(maxlen=self._VIEWER_HINT_BUFFER_SIZE)
+
+    # The Director plans and synthesises on the planning-tier model with
+    # the planning-tier effort; workers inherit the cheaper worker tier.
+    @property
+    def _model(self) -> str:
+        return self._llm_config.model if self._llm_config else settings.model
+
+    @property
+    def _effort(self) -> str | None:
+        if self._llm_config is not None:
+            return self._llm_config.effort or None
+        return settings.director_effort or None
 
     def add_viewer_hint(self, viewer_name: str, text: str) -> None:
         """Queue a viewer suggestion for the next situation report.
@@ -260,13 +273,13 @@ Rules:
                 phase="decompose_goal",
                 model=self._model,
                 max_tokens=self._max_tokens,
-                temperature=0.2,
+                effort=self._effort,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
             self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
             data = _extract_json(
-                response.content[0].text,
+                response.text,
                 strategy=self.policy.action.json_extraction,
             )
             logger.info(
@@ -466,12 +479,12 @@ Rules:
                 phase="final_answer",
                 model=self._model,
                 max_tokens=self._max_tokens,
-                temperature=0.3,
+                effort=self._effort,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
             self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
-            text = response.content[0].text.strip() if response.content else ""
+            text = (response.text or "").strip()
             if text:
                 return text
         except Exception as e:

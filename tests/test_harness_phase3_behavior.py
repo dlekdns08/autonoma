@@ -91,7 +91,6 @@ async def test_anthropic_cache_disabled_sends_plain_system_string(monkeypatch):
     await client.create(
         model="claude-sonnet-4-6",
         max_tokens=100,
-        temperature=0.5,
         system="STABLE PREAMBLE",
         messages=[{"role": "user", "content": "hi"}],
         cache_system_prompt=False,
@@ -122,7 +121,6 @@ async def test_anthropic_cache_enabled_wraps_system_in_cache_control(monkeypatch
     await client.create(
         model="claude-sonnet-4-6",
         max_tokens=100,
-        temperature=0.5,
         system="STABLE PREAMBLE",
         messages=[{"role": "user", "content": "hi"}],
         cache_system_prompt=True,

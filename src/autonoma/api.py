@@ -436,6 +436,10 @@ def _build_admin_llm_config() -> LLMConfig | None:
             model=settings.model,
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            worker_model=settings.resolved_worker_model(),
+            effort=settings.director_effort or None,
+            worker_effort=settings.worker_effort or None,
+            decision_protocol=settings.decision_protocol,
         )
     if provider == "openai":
         if not settings.openai_api_key:
@@ -446,6 +450,10 @@ def _build_admin_llm_config() -> LLMConfig | None:
             model=settings.model,
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            worker_model=settings.resolved_worker_model(),
+            effort=settings.director_effort or None,
+            worker_effort=settings.worker_effort or None,
+            decision_protocol=settings.decision_protocol,
         )
     if provider == "vllm":
         if not settings.vllm_base_url:
@@ -457,6 +465,10 @@ def _build_admin_llm_config() -> LLMConfig | None:
             base_url=settings.vllm_base_url,
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            worker_model=settings.resolved_worker_model(),
+            effort=settings.director_effort or None,
+            worker_effort=settings.worker_effort or None,
+            decision_protocol=settings.decision_protocol,
         )
     return None
 
@@ -2482,6 +2494,17 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             base_url=effective_base_url,
                             max_tokens=settings.max_tokens,
                             temperature=settings.temperature,
+                            # User-supplied keys: workers use the cheap tier
+                            # only on Anthropic (the configured worker model
+                            # is a Claude id); other providers reuse ``model``.
+                            worker_model=(
+                                settings.resolved_worker_model()
+                                if provider == "anthropic"
+                                else model
+                            ),
+                            effort=settings.director_effort or None,
+                            worker_effort=settings.worker_effort or None,
+                            decision_protocol=settings.decision_protocol,
                         )
                         session.llm_config = llm_cfg
                         logger.info(

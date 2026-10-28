@@ -257,8 +257,8 @@ async def _call_llm(context: str, focus: str | None) -> str:
 
     response = await client.create(
         model=config.model,
-        max_tokens=1024,
-        temperature=0.4,
+        max_tokens=2048,
+        effort="medium",
         system=_INSPIRE_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )

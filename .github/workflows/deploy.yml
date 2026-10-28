@@ -39,7 +39,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AUTONOMA_PROVIDER: ${{ secrets.AUTONOMA_PROVIDER || 'anthropic' }}
-          AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-4-6' }}
+          AUTONOMA_MODEL: ${{ secrets.AUTONOMA_MODEL || 'claude-sonnet-5-5' }}
           AUTONOMA_VLLM_BASE_URL: ${{ secrets.AUTONOMA_VLLM_BASE_URL }}
           AUTONOMA_VLLM_API_KEY: ${{ secrets.AUTONOMA_VLLM_API_KEY }}
           # Now safe to read from secrets: ``config.py`` enforces

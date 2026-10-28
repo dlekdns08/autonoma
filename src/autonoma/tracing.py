@@ -242,9 +242,10 @@ async def traced_messages_create(
     phase: str,
     model: str,
     max_tokens: int,
-    temperature: float,
     system: str,
     messages: list[dict[str, Any]],
+    temperature: float | None = None,
+    effort: str | None = None,
 ) -> "LLMResponse":
     """Call ``client.create(...)`` and record the interaction.
 
@@ -261,6 +262,7 @@ async def traced_messages_create(
         "model": model,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "effort": effort,
         "system": system,
         "messages": [
             {"role": m.get("role", ""), "content": _flatten_content(m.get("content", ""))}
@@ -272,9 +274,10 @@ async def traced_messages_create(
         response = await client.create(
             model=model,
             max_tokens=max_tokens,
-            temperature=temperature,
             system=system,
             messages=messages,
+            temperature=temperature,
+            effort=effort,
         )
     except Exception as exc:
         duration = round(time.perf_counter() - started, 3)

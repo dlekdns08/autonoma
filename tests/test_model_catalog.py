@@ -87,9 +87,9 @@ def test_list_anthropic_parses_models(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_anthropic_missing_key_falls_back() -> None:
     items, is_live = model_catalog.list_models("anthropic", api_key="")
     assert is_live is False
-    # Fallback list is the curated catalog — must include opus 4.7.
+    # Fallback list is the curated catalog — must include opus 5.5.
     values = [m["value"] for m in items]
-    assert "claude-opus-4-7" in values
+    assert "claude-opus-5-5" in values
 
 
 def test_anthropic_network_failure_falls_back(

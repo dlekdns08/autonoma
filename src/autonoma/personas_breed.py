@@ -181,12 +181,12 @@ async def _blend_prompt_style_llm(style_a: str, style_b: str, llm_client: Any) -
     )
     user_msg = f"Parent A voice:\n{a}\n\nParent B voice:\n{b}\n\nWrite the blended child's voice."
     try:
-        # ``BaseLLMClient.create`` expects model/max_tokens/temperature.
+        # ``BaseLLMClient.create`` expects model/max_tokens/system/messages.
         # Sensible small defaults — this is a one-off blending call.
         response = await llm_client.create(
-            model=getattr(llm_client, "model", "claude-haiku-4-5"),
-            max_tokens=200,
-            temperature=0.7,
+            model=getattr(llm_client, "model", "claude-haiku-5-5"),
+            max_tokens=1024,
+            effort="low",
             system=system,
             messages=[{"role": "user", "content": user_msg}],
         )

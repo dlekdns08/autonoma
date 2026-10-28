@@ -42,7 +42,7 @@ const MIN_PASSWORD_LEN = 8;
 // "fill in API key, hit enter" path works without forcing the visitor to
 // know the exact model id.
 const GUEST_DEFAULT_MODEL: Record<GuestProvider, string> = {
-  anthropic: "claude-sonnet-4-6",
+  anthropic: "claude-sonnet-5-5",
   openai: "gpt-4o-mini",
   vllm: "",
 };

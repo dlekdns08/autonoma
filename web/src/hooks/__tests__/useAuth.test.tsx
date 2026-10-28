@@ -196,7 +196,7 @@ describe("useAuth.guestLogin (client-side validation)", () => {
       await result.current.guestLogin({
         provider: "anthropic",
         apiKey: "sk-test-123",
-        model: "claude-opus-4-7",
+        model: "claude-opus-5-5",
       });
     });
 
@@ -206,7 +206,7 @@ describe("useAuth.guestLogin (client-side validation)", () => {
     expect(parsed.type).toBe("user");
     expect(parsed.provider).toBe("anthropic");
     expect(parsed.api_key).toBe("sk-test-123");
-    expect(parsed.model).toBe("claude-opus-4-7");
+    expect(parsed.model).toBe("claude-opus-5-5");
   });
 });
 

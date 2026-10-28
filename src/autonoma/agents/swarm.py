@@ -903,6 +903,17 @@ class AgentSwarm:
         if add is None:
             return False
         add(viewer_name, text)
+        # The Director's own round loop is rule-based (no LLM call), so
+        # the hint only reaches a model through the workers: queue it on
+        # every worker as an operator note, delivered as a mid-conversation
+        # ``role: system`` message on their next decision.
+        note = f"{viewer_name or 'viewer'}: {text}"
+        for name, agent in self.agents.items():
+            if name == "Director":
+                continue
+            receive = getattr(agent, "receive_operator_note", None)
+            if receive is not None:
+                receive(note)
         return True
 
     async def inject_human_message(

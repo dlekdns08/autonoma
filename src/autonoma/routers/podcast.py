@@ -226,8 +226,8 @@ Generate the next {spec.chunk_size} dialogue turns. Output ONLY this JSON:
     try:
         resp = await client.create(
             model=settings.model,
-            max_tokens=1024,
-            temperature=0.8,
+            max_tokens=2048,
+            effort="low",
             system=system,
             messages=[{"role": "user", "content": user_msg}],
         )

@@ -187,8 +187,8 @@ async def _decide_reaction(
         # Capped output — this is a yes/no + 2-sentence message.
         response = await client.create(
             model=cfg.model,
-            max_tokens=256,
-            temperature=0.2,
+            max_tokens=1024,
+            effort="low",
             system=_VISION_SYSTEM,
             messages=messages,
         )

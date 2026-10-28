@@ -109,7 +109,7 @@ async def _translate_via_llm(text: str, from_lang: str, to_lang: str) -> str:
     response = await client.create(
         model=config.model,
         max_tokens=512,
-        temperature=0.0,
+        effort="low",
         system=_TRANSLATE_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )

@@ -58,9 +58,35 @@ class Settings(BaseSettings):
 
     # ── Default provider/model used when admin authenticates ──
     provider: Literal["anthropic", "openai", "vllm"] = "anthropic"
-    model: str = "claude-sonnet-4-6"
-    max_tokens: int = 8192
-    temperature: float = 0.1
+    # Director model: goal decomposition, final synthesis.
+    model: str = "claude-sonnet-5-5"
+    # Worker agents' model. Empty → ``claude-haiku-5-5`` on Anthropic
+    # (≈30× cheaper than the Director tier for the per-round decide
+    # loop), same as ``model`` on other providers. Set explicitly to
+    # pin a different tier.
+    worker_model: str = ""
+    # Output cap per request. Thinking tokens count toward this on the
+    # 5.x generation (thinking is always on), so it must leave room for
+    # reasoning *and* the reply.
+    max_tokens: int = 16384
+    # Thinking depth per tier (``output_config.effort`` on Anthropic,
+    # ``reasoning_effort`` on OpenAI reasoning models). Empty → provider
+    # default. The 5.x generation has no ``temperature``; effort is the
+    # only cost/quality knob.
+    director_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "high"
+    worker_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "low"
+    # Sampling temperature — OpenAI/vLLM only. The Claude API removed it
+    # in ``anthropic-version: 2026-10-21``; ``None`` → provider default.
+    temperature: float | None = None
+    # How agents express their per-round action: native tool use
+    # (``tool_use``), JSON-in-text (``json``), or ``auto`` (tool use on
+    # Anthropic/OpenAI, JSON on vLLM).
+    decision_protocol: Literal["auto", "tool_use", "json"] = "auto"
+    # Rounds of append-only conversation an agent keeps before its
+    # history is reset (the situation report always carries the full
+    # project state, so a reset only loses the model's own reasoning
+    # trail). Keeps the cached prefix bounded.
+    agent_history_rounds: int = 12
 
     # ── Workspace ──
     output_dir: Path = Path("./output")
@@ -320,6 +346,14 @@ class Settings(BaseSettings):
     # #4 Viewer betting — channel-points style. Disabled by default
     # because it interacts with chat moderation policy in some regions.
     viewer_betting_enabled: bool = False
+
+    def resolved_worker_model(self) -> str:
+        """Model for worker agents (see ``worker_model``)."""
+        if self.worker_model:
+            return self.worker_model
+        if self.provider == "anthropic":
+            return "claude-haiku-5-5"
+        return self.model
 
     def model_post_init(self, __context: object) -> None:
         """Accept bare ANTHROPIC_API_KEY / OPENAI_API_KEY without the AUTONOMA_ prefix."""

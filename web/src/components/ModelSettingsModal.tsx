@@ -14,9 +14,9 @@ interface Props {
 type ModelOpt = { value: string; label: string };
 
 const CLAUDE_MODELS: ModelOpt[] = [
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (권장)" },
-  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (빠름)" },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
+  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (권장)" },
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 (빠름)" },
 ];
 
 const OPENAI_MODELS: ModelOpt[] = [

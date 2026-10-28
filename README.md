@@ -151,7 +151,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Provider credentials (bare names accepted) | — |
 | `AUTONOMA_PROVIDER` | `anthropic` / `openai` / `vllm` | `anthropic` |
-| `AUTONOMA_MODEL` | Model id | `claude-sonnet-4-6` |
+| `AUTONOMA_MODEL` | Model id | `claude-sonnet-5-5` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | For self-hosted OpenAI-compatible servers | — |
 | `AUTONOMA_ADMIN_PASSWORD` | If set, enables server-key admin login in the web UI | — |
 | `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | Toggle + backend: `omnivoice` / `none` | `false` / `none` |
