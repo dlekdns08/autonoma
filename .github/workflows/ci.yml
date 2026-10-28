@@ -13,7 +13,15 @@ concurrency:
 jobs:
   test:
     name: Test & Build
-    runs-on: self-hosted
+    # Configurable runner with a GitHub-hosted fallback: set the
+    # repository/org variable ``CI_RUNNER`` (e.g. ``self-hosted``) to
+    # pin a runner; when it is unset the expression evaluates to the
+    # empty string and ``||`` falls through to ``ubuntu-latest``.
+    # ``vars`` is one of the contexts available to ``runs-on``.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Hard ceiling so a hung model download / stuck test can't pin a
+    # runner for the default 360 minutes.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -37,10 +45,10 @@ jobs:
 
       - name: Type check (pyright)
         # Non-blocking for now: pyright in basic mode still catches
-        # high-signal issues, but the legacy 4000-line modules carry
-        # a backlog. Failing here would block every PR until that
-        # backlog is paid down. Tighten to a hard gate once
-        # ``typeCheckingMode`` graduates to ``standard``.
+        # high-signal issues, but ~70 errors remain spread across the
+        # tree (``draft.py``, ``tui/renderer.py``, ``mocap/validator.py``,
+        # a tail of tests, ...). Drop the ``|| true`` once ``uv run
+        # pyright`` is clean — the output is still surfaced in the log.
         run: uv run pyright || true
 
       - name: README sync check
