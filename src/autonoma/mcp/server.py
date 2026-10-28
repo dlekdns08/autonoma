@@ -1,8 +1,7 @@
-"""MCP (Model Context Protocol) HTTP transport — feature #8.
+"""MCP (Model Context Protocol) server — feature #8.
 
-Implements a simplified subset of the MCP JSON-RPC 2.0 wire format over
-a single ``POST /mcp/jsonrpc`` endpoint so MCP clients can drive
-Autonoma. Five tools are exposed:
+Built on the official ``mcp`` SDK (2.x, ``mcp.server.mcpserver.MCPServer``
+— the class formerly known as ``FastMCP``). Five tools are exposed:
 
     list_sessions        — enumerate active sessions from ``autonoma.api``
     start_swarm_headless — spawn a backend-only swarm run
@@ -10,14 +9,27 @@ Autonoma. Five tools are exposed:
     fetch_diary          — page an agent's ``agent_journal`` entries
     fetch_world_events   — page rows from ``world_event_log``
 
+Two transports share the same tool handlers:
+
+* ``/mcp`` — the standard **streamable HTTP** transport from the SDK
+  (stateless, JSON responses). Any MCP client can point at it, e.g.
+  ``Client("http://host:8000/mcp")`` from the ``mcp`` package.
+* ``POST /mcp/jsonrpc`` — the legacy hand-rolled JSON-RPC subset kept
+  for backward compatibility. It dispatches ``tools/list`` and
+  ``tools/call`` through the same ``MCPServer`` instance so the two
+  transports can never disagree about what a tool does.
+
 Auth: requests must carry ``X-MCP-Token: <settings.coordinator_token>``.
 We re-use ``coordinator_token`` here so operators don't have to manage a
 fourth secret; a dedicated ``mcp_token`` setting can be added later
-without changing the wire format.
+without changing the wire format. The check is a constant-time compare
+on both transports.
 
-The handler returns the standard MCP envelope; tool results are
-JSON-stringified inside a single ``{type: "text", text: ...}`` content
-block, matching the convention used by the upstream ``mcp`` SDK.
+Tool results are JSON-stringified inside a single ``{type: "text",
+text: ...}`` content block. The SDK would otherwise fan a ``list``
+return value out into one block per row (and an empty list into zero
+blocks), which breaks clients that expect to ``json.loads`` the first
+block — so every tool returns the serialised string itself.
 """
 
 from __future__ import annotations
@@ -25,11 +37,20 @@ from __future__ import annotations
 import hmac
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field
 from sqlalchemy import desc, select
+from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
 from autonoma.config import settings
 
@@ -43,8 +64,18 @@ _METHOD_NOT_FOUND = -32601
 _INVALID_PARAMS = -32602
 _INTERNAL_ERROR = -32603
 
+MCP_PATH = "/mcp"
+"""Mount point of the streamable-HTTP transport on the FastAPI app."""
+
+_SERVER_NAME = "autonoma-mcp"
+_SERVER_VERSION = "0.1.0"
+
 
 # ── Tool handlers ────────────────────────────────────────────────────
+# These take the raw ``arguments`` dict so the legacy wire format and
+# the typed SDK tools below share one implementation. Validation
+# failures raise ``ValueError`` which both transports translate into
+# an "invalid params" style error.
 
 
 async def _tool_list_sessions(_params: dict[str, Any]) -> Any:
@@ -204,179 +235,130 @@ def _row_to_jsonable(mapping: Any) -> dict[str, Any]:
     return out
 
 
-# ── Tool registry ────────────────────────────────────────────────────
-
+# ── MCPServer + typed tools ──────────────────────────────────────────
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
+TOOL_NAMES: tuple[str, ...] = (
+    "list_sessions",
+    "start_swarm_headless",
+    "fetch_run_summary",
+    "fetch_diary",
+    "fetch_world_events",
+)
 
-_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "list_sessions",
-        "description": "List active swarm sessions (session_id, owner, room, status).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
-        "handler": _tool_list_sessions,
-    },
-    {
-        "name": "start_swarm_headless",
-        "description": (
-            "Start a backend-only swarm run. Returns the synthetic "
-            "session_id (negative integer) that the run is scoped to."
+
+def _build_mcp_server() -> MCPServer[Any]:
+    # ``MCPServer()`` calls ``logging.basicConfig`` with a RichHandler as
+    # a convenience for stand-alone servers. Inside the API that would
+    # silently re-route the root logger at import time, so snapshot and
+    # restore the root logger's handlers/level around construction.
+    root = logging.getLogger()
+    prev_handlers, prev_level = list(root.handlers), root.level
+    server: MCPServer[Any] = MCPServer(
+        name=_SERVER_NAME,
+        version=_SERVER_VERSION,
+        instructions=(
+            "Drive an Autonoma swarm: list live sessions, start headless runs "
+            "and read run summaries, agent diaries and world events. Every "
+            "tool returns a JSON document in a single text block."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "goal": {"type": "string", "description": "What the swarm should accomplish."},
-                # ``owner_user_id`` was removed in the C2 fix — the
-                # MCP token isn't a user token, so accepting this
-                # field would let any caller impersonate an arbitrary
-                # user_id. Server attributes the run to a fixed
-                # ``"mcp"`` placeholder instead.
-                "preset_id": {"type": "string", "description": "Optional harness preset id."},
-                "max_rounds": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "default": 30,
-                    "description": "Hard ceiling on rounds.",
-                },
-            },
-            "required": ["goal"],
-            "additionalProperties": False,
-        },
-        "handler": _tool_start_swarm_headless,
-    },
-    {
-        "name": "fetch_run_summary",
-        "description": "Return run_summary rows for a given session_id (newest first).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "session_id": {"type": "integer", "description": "Session id to look up."},
-            },
-            "required": ["session_id"],
-            "additionalProperties": False,
-        },
-        "handler": _tool_fetch_run_summary,
-    },
-    {
-        "name": "fetch_diary",
-        "description": "Recent agent_journal entries for a single character (newest first).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "character_uuid": {"type": "string", "description": "Character UUID."},
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 500,
-                    "default": 50,
-                },
-            },
-            "required": ["character_uuid"],
-            "additionalProperties": False,
-        },
-        "handler": _tool_fetch_diary,
-    },
-    {
-        "name": "fetch_world_events",
-        "description": "Recent world_event_log rows (newest first).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "integer",
-                    "description": "Optional session filter (ignored if the table has no such column).",
-                },
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 500,
-                    "default": 100,
-                },
-            },
-            "additionalProperties": False,
-        },
-        "handler": _tool_fetch_world_events,
-    },
-]
+    )
+    if root.handlers != prev_handlers or root.level != prev_level:
+        root.handlers[:] = prev_handlers
+        root.setLevel(prev_level)
+    return server
 
 
-def _public_tool(t: dict[str, Any]) -> dict[str, Any]:
-    """Tool dict with the handler stripped (handler is server-private)."""
-    return {k: v for k, v in t.items() if k != "handler"}
+mcp_server: MCPServer[Any] = _build_mcp_server()
 
 
-def _find_tool(name: str) -> dict[str, Any] | None:
-    for t in _TOOLS:
-        if t["name"] == name:
-            return t
-    return None
+async def _run_tool(handler: ToolHandler, params: dict[str, Any]) -> str:
+    """Run a raw handler and serialise its result the legacy way.
+
+    ``ValueError`` is the handlers' "bad arguments" signal; surface it
+    as a ``ToolError`` so the SDK reports it as an ``isError`` result
+    carrying the message instead of a redacted crash.
+    """
+    try:
+        result = await handler(params)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return json.dumps(result, ensure_ascii=False)
 
 
-# ── JSON-RPC method dispatcher ──────────────────────────────────────
+@mcp_server.tool(
+    name="list_sessions",
+    description="List active swarm sessions (session_id, owner, room, status).",
+    structured_output=False,
+)
+async def list_sessions() -> str:
+    return await _run_tool(_tool_list_sessions, {})
 
 
-_PROTOCOL_VERSION = "2025-03-26"
-_SERVER_INFO = {"name": "autonoma-mcp", "version": "0.1.0"}
-_CAPABILITIES = {
-    "tools": {"listChanged": False},
-    "prompts": {"listChanged": False},
-    "resources": {"listChanged": False},
-}
+@mcp_server.tool(
+    name="start_swarm_headless",
+    description=(
+        "Start a backend-only swarm run. Returns the synthetic "
+        "session_id (negative integer) that the run is scoped to."
+    ),
+    structured_output=False,
+)
+async def start_swarm_headless(
+    goal: Annotated[str, Field(description="What the swarm should accomplish.")],
+    preset_id: Annotated[str, Field(description="Optional harness preset id.")] = "",
+    max_rounds: Annotated[int, Field(ge=1, description="Hard ceiling on rounds.")] = 30,
+) -> str:
+    # ``owner_user_id`` is deliberately not accepted — see the C2 note
+    # on ``_tool_start_swarm_headless``.
+    return await _run_tool(
+        _tool_start_swarm_headless,
+        {"goal": goal, "preset_id": preset_id, "max_rounds": max_rounds},
+    )
 
 
-async def _dispatch(method: str, params: dict[str, Any]) -> Any:
-    if method == "initialize":
-        return {
-            "protocolVersion": _PROTOCOL_VERSION,
-            "capabilities": _CAPABILITIES,
-            "serverInfo": _SERVER_INFO,
-        }
-    if method == "tools/list":
-        return {"tools": [_public_tool(t) for t in _TOOLS]}
-    if method == "prompts/list":
-        return {"prompts": []}
-    if method == "resources/list":
-        return {"resources": []}
-    if method == "tools/call":
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            raise _RpcError(_INVALID_PARAMS, "arguments must be an object")
-        tool = _find_tool(name)
-        if tool is None:
-            raise _RpcError(_METHOD_NOT_FOUND, f"unknown tool: {name}")
-        try:
-            result = await tool["handler"](arguments)
-        except ValueError as exc:
-            raise _RpcError(_INVALID_PARAMS, str(exc))
-        except _RpcError:
-            raise
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.exception("[mcp] tool %s crashed", name)
-            raise _RpcError(_INTERNAL_ERROR, f"tool error: {exc}")
-        return {
-            "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
-            "isError": False,
-        }
-    raise _RpcError(_METHOD_NOT_FOUND, f"unknown method: {method}")
+@mcp_server.tool(
+    name="fetch_run_summary",
+    description="Return run_summary rows for a given session_id (newest first).",
+    structured_output=False,
+)
+async def fetch_run_summary(
+    session_id: Annotated[int, Field(description="Session id to look up.")],
+) -> str:
+    return await _run_tool(_tool_fetch_run_summary, {"session_id": session_id})
 
 
-class _RpcError(Exception):
-    def __init__(self, code: int, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
+@mcp_server.tool(
+    name="fetch_diary",
+    description="Recent agent_journal entries for a single character (newest first).",
+    structured_output=False,
+)
+async def fetch_diary(
+    character_uuid: Annotated[str, Field(description="Character UUID.")],
+    limit: Annotated[int, Field(ge=1, le=500)] = 50,
+) -> str:
+    return await _run_tool(_tool_fetch_diary, {"character_uuid": character_uuid, "limit": limit})
 
 
-# ── HTTP transport ───────────────────────────────────────────────────
+@mcp_server.tool(
+    name="fetch_world_events",
+    description="Recent world_event_log rows (newest first).",
+    structured_output=False,
+)
+async def fetch_world_events(
+    session_id: Annotated[
+        int | None,
+        Field(description="Optional session filter (ignored if the table has no such column)."),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+) -> str:
+    params: dict[str, Any] = {"limit": limit}
+    if session_id is not None:
+        params["session_id"] = session_id
+    return await _run_tool(_tool_fetch_world_events, params)
 
 
-router = APIRouter(prefix="/mcp", tags=["mcp"])
+# ── Auth ─────────────────────────────────────────────────────────────
 
 
 def _envelope_error(req_id: Any, code: int, message: str, http_status: int = 200) -> JSONResponse:
@@ -407,6 +389,169 @@ def _check_token(supplied: str | None) -> JSONResponse | None:
             http_status=401,
         )
     return None
+
+
+# ── Streamable HTTP transport (``/mcp``) ─────────────────────────────
+#
+# The SDK's ``streamable_http_app()`` returns a Starlette app whose
+# *lifespan* starts the session manager. Sub-app lifespans don't run
+# when mounted inside FastAPI, and a ``StreamableHTTPSessionManager``
+# can only be ``run()`` once, so instead we build a fresh manager per
+# server lifespan (``lifespan()`` below) and route ``/mcp`` to a thin
+# ASGI endpoint that checks the token and hands the request to
+# whichever manager is live.
+
+_active_manager: StreamableHTTPSessionManager | None = None
+
+
+def _build_session_manager() -> StreamableHTTPSessionManager:
+    # ``streamable_http_app()`` is the public way to get a manager
+    # bound to this server; the Starlette app it returns is discarded.
+    # DNS-rebinding protection is off: the API already serves on
+    # arbitrary hosts (Docker, reverse proxies) and the endpoint is
+    # gated by the shared token.
+    mcp_server.streamable_http_app(
+        streamable_http_path=MCP_PATH,
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    return mcp_server.session_manager
+
+
+@asynccontextmanager
+async def lifespan() -> AsyncIterator[None]:
+    """Run the streamable-HTTP session manager for the app's lifetime.
+
+    Enter this from the FastAPI lifespan (``api.py`` does so when
+    ``settings.mcp_server_enabled``). The legacy ``/mcp/jsonrpc``
+    endpoint does not need it.
+    """
+    global _active_manager
+    manager = _build_session_manager()
+    async with manager.run():
+        _active_manager = manager
+        try:
+            yield
+        finally:
+            if _active_manager is manager:
+                _active_manager = None
+
+
+class _StreamableHTTPEndpoint:
+    """Raw ASGI endpoint: token gate → SDK streamable-HTTP handler."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
+        }
+        auth_failure = _check_token(headers.get("x-mcp-token"))
+        if auth_failure is not None:
+            await auth_failure(scope, receive, send)
+            return
+        manager = _active_manager
+        if manager is None:
+            response = _envelope_error(
+                None,
+                _INTERNAL_ERROR,
+                "MCP streamable-HTTP transport is not running (server lifespan not started).",
+                http_status=503,
+            )
+            await response(scope, receive, send)
+            return
+        await manager.handle_request(scope, receive, send)
+
+
+streamable_http_asgi = _StreamableHTTPEndpoint()
+
+
+def mount(app: FastAPI) -> None:
+    """Attach both MCP transports to ``app``.
+
+    * ``/mcp`` (GET/POST/DELETE) — streamable HTTP.
+    * ``POST /mcp/jsonrpc`` — legacy JSON-RPC subset.
+
+    The caller is responsible for entering :func:`lifespan` so the
+    streamable transport has a running session manager.
+    """
+    app.include_router(router)
+    # ``Route`` with a non-function endpoint uses it as a raw ASGI app
+    # (``app.add_route`` would wrap it as a request→response handler).
+    app.router.routes.append(
+        Route(
+            MCP_PATH,
+            endpoint=streamable_http_asgi,
+            methods=["GET", "POST", "DELETE"],
+            name="mcp_streamable_http",
+            include_in_schema=False,
+        )
+    )
+
+
+# ── Legacy JSON-RPC transport (``POST /mcp/jsonrpc``) ────────────────
+
+
+_PROTOCOL_VERSION = "2025-03-26"
+_SERVER_INFO = {"name": _SERVER_NAME, "version": _SERVER_VERSION}
+_CAPABILITIES = {
+    "tools": {"listChanged": False},
+    "prompts": {"listChanged": False},
+    "resources": {"listChanged": False},
+}
+
+
+class _RpcError(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _strip_tool_prefix(name: str, message: str) -> str:
+    """``Error executing tool X: msg`` → ``msg`` (legacy wire fidelity)."""
+    prefix = f"Error executing tool {name}: "
+    return message[len(prefix) :] if message.startswith(prefix) else message
+
+
+async def _dispatch(method: str, params: dict[str, Any]) -> Any:
+    if method == "initialize":
+        return {
+            "protocolVersion": _PROTOCOL_VERSION,
+            "capabilities": _CAPABILITIES,
+            "serverInfo": _SERVER_INFO,
+        }
+    if method == "tools/list":
+        tools = await mcp_server.list_tools()
+        return {
+            "tools": [t.model_dump(by_alias=True, exclude_none=True, mode="json") for t in tools]
+        }
+    if method == "prompts/list":
+        return {"prompts": []}
+    if method == "resources/list":
+        return {"resources": []}
+    if method == "tools/call":
+        name = str(params.get("name") or "")
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise _RpcError(_INVALID_PARAMS, "arguments must be an object")
+        if name not in TOOL_NAMES:
+            raise _RpcError(_METHOD_NOT_FOUND, f"unknown tool: {name}")
+        try:
+            result = await mcp_server.call_tool(name, arguments)
+        except UnexpectedToolError as exc:
+            logger.exception("[mcp] tool %s crashed", name)
+            raise _RpcError(_INTERNAL_ERROR, f"tool error: {exc.__cause__ or exc}")
+        except ToolError as exc:
+            raise _RpcError(_INVALID_PARAMS, _strip_tool_prefix(name, str(exc)))
+        payload = result.model_dump(by_alias=True, exclude_none=True, mode="json")
+        return {
+            "content": payload.get("content", []),
+            "isError": bool(payload.get("isError", False)),
+        }
+    raise _RpcError(_METHOD_NOT_FOUND, f"unknown method: {method}")
+
+
+router = APIRouter(prefix=MCP_PATH, tags=["mcp"])
 
 
 @router.post("/jsonrpc")

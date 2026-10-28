@@ -21,6 +21,7 @@ dependencies = [
     "greenlet>=3.0",
     "bcrypt>=4.0.0",
     "itsdangerous>=2.2.0",
+    "mcp>=2.3.0,<3",
 ]
 
 # Optional heavy ML stack for OmniVoice zero-shot TTS.
