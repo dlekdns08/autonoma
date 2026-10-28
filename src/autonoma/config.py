@@ -127,7 +127,11 @@ class Settings(BaseSettings):
     # it is on PATH, then the OS-native primitives. Install with
     # ``npm i -g @anthropic-ai/sandbox-runtime``.
     sandbox_backend: Literal["auto", "srt", "seatbelt", "bwrap", "rlimit"] = "auto"
-    srt_binary: str = ""  # explicit path to ``srt``; empty → PATH lookup
+    srt_binary: str = ""  # explicit path to ``srt``; empty → PATH, then the local install
+    # On startup, install ``srt`` into ``data_dir/sandbox-runtime/`` when it
+    # is missing and ``npm`` is available (no global install, no root).
+    sandbox_auto_install: bool = True
+    srt_version: str = "0.0.81"
 
     # ── Advisor tool ──
     # Pairs the cheap worker executor with a stronger advisor consulted

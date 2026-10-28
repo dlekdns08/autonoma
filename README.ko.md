@@ -135,6 +135,7 @@ web/src/
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (네이티브 tool use, vLLM은 JSON), `tool_use`, `json` | `auto` |
 | `AUTONOMA_WORKER_BACKEND` | `native`(라운드당 파일 하나), `agent_sdk`(`output/<project>/`의 Claude Code 세션), `managed_agents`(캐릭터별 메모리 스토어가 붙는 Anthropic 호스티드 outcome 세션) | `native` |
 | `AUTONOMA_SANDBOX_BACKEND` | run_code 격리: `auto`는 Anthropic 샌드박스 런타임(`srt`)을 우선, 없으면 sandbox-exec / bwrap / rlimit | `auto` |
+| `AUTONOMA_SANDBOX_AUTO_INSTALL` | 기동 시 `srt`가 없으면 고정 버전을 `data/sandbox-runtime/`에 설치 (`npm` 필요) | `true` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor 툴: 워커가 턴 중간에 상의하는 상위 모델 (비우면 끔) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | 정체 시 Director가 계획 모델에 지시 하나를 요청 | `true` |

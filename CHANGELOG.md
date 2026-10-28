@@ -28,6 +28,10 @@ captures work in flight.
   folded into the user turn on models without that feature.
 - Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
   `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- `srt` auto-provisioning: the API lifespan and the CLI runner install the
+  pinned `@anthropic-ai/sandbox-runtime` into `data/sandbox-runtime/` when
+  it is missing (`AUTONOMA_SANDBOX_AUTO_INSTALL`); the Docker image installs
+  it globally with Node.js.
 - Lightweight sandboxing: `run_code` prefers Anthropic's sandbox runtime
   (`srt`) when installed — no network, writes confined to the scratch
   dir, credential/dotfile reads denied, memory and process caps via

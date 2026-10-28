@@ -160,6 +160,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (native tool use; JSON on vLLM), `tool_use`, or `json` | `auto` |
 | `AUTONOMA_WORKER_BACKEND` | `native` (one file per round), `agent_sdk` (Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`), or `managed_agents` (Anthropic-hosted outcome-driven session with a per-character memory store) | `native` |
 | `AUTONOMA_SANDBOX_BACKEND` | run_code isolation: `auto` prefers Anthropic's sandbox runtime (`srt`), else sandbox-exec / bwrap / rlimit | `auto` |
+| `AUTONOMA_SANDBOX_AUTO_INSTALL` | On startup, install the pinned `srt` into `data/sandbox-runtime/` when it is missing (needs `npm`) | `true` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |

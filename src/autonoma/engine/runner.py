@@ -58,6 +58,12 @@ class AutonomaEngine:
                 )
             )
 
+            # Make sure the code sandbox runtime is in place before agents
+            # can run code (installs once into data_dir; no-op afterwards).
+            from autonoma.sandbox_runtime import ensure_srt
+
+            await ensure_srt()
+
             await self.swarm.initialize(project)
 
             # Add spawned agents to project state

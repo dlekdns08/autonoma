@@ -239,16 +239,14 @@ def _macos_profile(workdir: Path) -> str:
 def _srt_binary() -> str | None:
     """Anthropic Sandbox Runtime (``srt``) — seatbelt on macOS, bubblewrap on
     Linux, plus proxy-based network filtering; no container, no root.
-    Install: ``npm i -g @anthropic-ai/sandbox-runtime``."""
+    Resolved by ``autonoma.sandbox_runtime`` (explicit path → PATH → the
+    auto-installed copy under ``data_dir/sandbox-runtime``)."""
     try:
-        from autonoma.config import settings
+        from autonoma.sandbox_runtime import find_srt
 
-        configured = getattr(settings, "srt_binary", "") or ""
+        return find_srt()
     except Exception:
-        configured = ""
-    if configured:
-        return configured if Path(configured).exists() else shutil.which(configured)
-    return shutil.which("srt")
+        return shutil.which("srt")
 
 
 def _configured_backend() -> str:

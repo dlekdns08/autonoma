@@ -5,7 +5,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint format fix typecheck test test-fast test-cov \
+.PHONY: help install sandbox-runtime lint format fix typecheck test test-fast test-cov \
         web-test web-lint web-typecheck ci precommit \
         commit amend hooks
 
@@ -15,6 +15,9 @@ help:  ## Show this help.
 install:  ## Install Python + web dev dependencies.
 	uv sync --dev
 	cd web && npm ci
+
+sandbox-runtime:  ## Install Anthropic's sandbox runtime (srt) into data/ for run_code isolation.
+	uv run python -c 'import asyncio; from autonoma.sandbox_runtime import ensure_srt, status; print(asyncio.run(ensure_srt()) or "not installed"); print(status())'
 
 # ── Python ────────────────────────────────────────────────────────────
 

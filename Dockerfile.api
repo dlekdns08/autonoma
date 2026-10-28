@@ -167,7 +167,7 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bubblewrap libseccomp2 ca-certificates libsndfile1 ffmpeg \
-      git curl gnupg \
+      git curl gnupg nodejs npm ripgrep \
  && chmod u+s /usr/bin/bwrap \
  && (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg) \
@@ -179,6 +179,14 @@ RUN apt-get update \
  && apt-get purge -y curl gnupg \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
+
+# Anthropic sandbox runtime (srt) for run_code: bubblewrap + seccomp +
+# proxy-based network filtering around agent-written code. Pinned to the
+# version autonoma.sandbox_runtime expects; the app finds it on PATH so
+# the in-app auto-install is a no-op inside the image.
+ARG SRT_VERSION=0.0.81
+RUN npm install -g --no-audit --no-fund "@anthropic-ai/sandbox-runtime@${SRT_VERSION}" \
+ && npm cache clean --force
 
 # Copy the virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv

@@ -1286,6 +1286,14 @@ async def lifespan(app: FastAPI):
     scheduler_runner.start()
     bus.on("schedule.fire_requested", _on_schedule_fire_requested)
 
+    # Sandbox runtime (srt) for run_code: install the pinned npm package
+    # into data_dir on first boot when it is missing. Background, best
+    # effort — the sandbox falls back to the OS-native backend until it
+    # lands (see autonoma.sandbox_runtime).
+    from autonoma.sandbox_runtime import schedule_ensure_srt
+
+    srt_task = schedule_ensure_srt()
+
     # 2026-05 feature pack lifespan hooks. Each is best-effort —
     # individual failures must never block the rest of the boot since
     # they only power optional surfaces (metrics scrape, OBS overlay,
@@ -1351,7 +1359,7 @@ async def lifespan(app: FastAPI):
         # ``return_exceptions=True`` so any single warmup failure
         # doesn't block the rest of the cleanup.
         pending_warmups = [
-            t for t in (warmup_task, asr_warmup_task) if t is not None and not t.done()
+            t for t in (warmup_task, asr_warmup_task, srt_task) if t is not None and not t.done()
         ]
         for t in pending_warmups:
             t.cancel()
