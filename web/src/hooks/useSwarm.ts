@@ -687,6 +687,57 @@ export function useSwarm() {
           return;
         }
 
+        // ── Deep work (Claude Agent SDK delegation) ─────────────────
+        if (event === "deepwork.started") {
+          const agent = (data.agent as string) || "Agent";
+          const title = (data.title as string) || "a task";
+          addToast("info", "Deep Work", `${agent} is building "${title}" for real...`, "🛠");
+          setState((prev) => ({
+            ...prev,
+            agents: prev.agents.map((a) =>
+              a.name === agent ? { ...a, state: "working" } : a,
+            ),
+          }));
+          return;
+        }
+
+        if (event === "deepwork.finished") {
+          const agent = (data.agent as string) || "Agent";
+          const ok = !!data.ok;
+          const files = (data.files as number) || 0;
+          const cost = typeof data.cost_usd === "number" ? data.cost_usd : 0;
+          const err = (data.error as string) || "";
+          const detail = `${files} file${files === 1 ? "" : "s"}${cost ? `, $${cost.toFixed(2)}` : ""}`;
+          if (ok) {
+            addToast("info", "Deep Work Done", `${agent}: ${detail}`, "✓");
+          } else {
+            addToast("info", "Deep Work Incomplete", `${agent}: ${err || "failed"} (${detail})`, "✖");
+          }
+          return;
+        }
+
+        if (event === "agent.tool_use") {
+          // One line per tool call is too chatty for toasts; the event
+          // log keeps it. Nudge the agent into the working pose only.
+          const agent = (data.agent as string) || "";
+          if (agent) {
+            setState((prev) => ({
+              ...prev,
+              agents: prev.agents.map((a) =>
+                a.name === agent && a.state !== "working" ? { ...a, state: "working" } : a,
+              ),
+            }));
+          }
+          return;
+        }
+
+        if (event === "agent.refusal") {
+          const agent = (data.agent as string) || "Agent";
+          const category = (data.category as string) || "policy";
+          addToast("info", "Declined", `${agent} declined that turn (${category})`, "🚫");
+          return;
+        }
+
         if (event === "swarm.ready") {
           setState((prev) => ({ ...prev, status: "running" }));
           return;

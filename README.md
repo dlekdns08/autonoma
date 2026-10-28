@@ -34,6 +34,7 @@ gestures driven by the agents' actual behavior.
 - **Live VTuber performance** — mood-driven blendshapes, 5-vowel lip-sync, contrapposto weight shift, beat gestures during speech, cross-faded state transitions.
 - **Multi-viewer rooms** — host starts a swarm, others join via a short code and watch in sync.
 - **Pluggable LLM backend** — Anthropic, OpenAI, or any OpenAI-compatible endpoint (vLLM).
+- **Deep work (opt-in)** — with `AUTONOMA_WORKER_BACKEND=agent_sdk`, a worker that picks up a task delegates the real building to a Claude Agent SDK session in the project workspace; its text and tool calls stream to the stage, and the files it writes become project artifacts.
 - **Native tool-use agent protocol** — each action is a strict tool; the Director plans on Sonnet 5.5 while workers decide on Haiku 5.5, with append-only histories, prompt caching, and spectator hints delivered as operator-channel system messages.
 - **Optional TTS** — self-hosted OmniVoice zero-shot cloning (MPS/CUDA/CPU) with per-agent voice assignment and budget caps.
 - **Sandboxed execution** — agents run code they write inside a bubblewrap sandbox with CPU / wall-time / memory limits.
@@ -156,6 +157,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_WORKER_MODEL` | Worker agents' model (empty → `claude-haiku-5-5` on Anthropic) | `claude-haiku-5-5` |
 | `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | Thinking depth per tier (`low`…`max`) | `high` / `low` |
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (native tool use; JSON on vLLM), `tool_use`, or `json` | `auto` |
+| `AUTONOMA_WORKER_BACKEND` | `native` (one file per round) or `agent_sdk` (delegate each task to a Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`) | `native` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | For self-hosted OpenAI-compatible servers | — |
 | `AUTONOMA_ADMIN_PASSWORD` | If set, enables server-key admin login in the web UI | — |
 | `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | Toggle + backend: `omnivoice` / `none` | `false` / `none` |

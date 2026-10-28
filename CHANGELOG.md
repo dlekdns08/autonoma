@@ -22,6 +22,11 @@ captures work in flight.
   folded into the user turn on models without that feature.
 - Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
   `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- Deep work: `AUTONOMA_WORKER_BACKEND=agent_sdk` delegates each task a
+  worker picks up to a Claude Agent SDK session in `output/<project>/`
+  (`agents/deepwork.py`, optional extra `agent-sdk`); streams
+  `agent.tool_use` / `deepwork.*` events, registers touched files as
+  artifacts, and completes the task with the session's summary.
 - `stop_reason: refusal` handling (`agent.refusal` event, idle turn) and
   server-side `fallbacks: "default"` on models that support it.
 - `pytest-cov` coverage reporting + CI summary.
