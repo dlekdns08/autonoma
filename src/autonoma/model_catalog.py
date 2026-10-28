@@ -42,11 +42,14 @@ _FALLBACK: dict[Provider, list[ModelInfo]] = {
         ModelInfo("claude-sonnet-5-5", "Claude Sonnet 5.5"),
         ModelInfo("claude-haiku-5-5", "Claude Haiku 5.5"),
     ],
+    # Fallback only — the live ``GET /v1/models`` list is authoritative.
+    # IDs below come from third-party reports dated Oct 2026 (gpt-4o / o1
+    # era models are scheduled for retirement on 2026-10-23); verify
+    # against the live list before relying on them.
     "openai": [
-        ModelInfo("gpt-4o", "GPT-4o"),
-        ModelInfo("gpt-4o-mini", "GPT-4o mini"),
-        ModelInfo("o1", "o1"),
-        ModelInfo("o1-mini", "o1-mini"),
+        ModelInfo("gpt-5.6", "GPT-5.6"),
+        ModelInfo("gpt-5.6-sol", "GPT-5.6 Sol"),
+        ModelInfo("gpt-5.5", "GPT-5.5"),
     ],
     "vllm": [],
 }
