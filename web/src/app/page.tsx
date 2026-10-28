@@ -181,6 +181,7 @@ function Dashboard() {
     emotes, getMouthAmplitude,
     room, chat, sendChat, setDisplayName, joinRoom,
     speakingAgents,
+    audioBlocked, unlockAudio,
     lastRunFieldPaths,
     sandboxMetrics,
     checkpoints,
@@ -660,6 +661,8 @@ function Dashboard() {
             forcePinnedAgent={vtPinned}
             emotes={emotes}
             mocapClipIdFor={mocapClipIdFor}
+            audioBlocked={audioBlocked}
+            onUnlockAudio={unlockAudio}
           />
         </div>
 

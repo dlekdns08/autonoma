@@ -217,8 +217,20 @@ const CACHE = new Map<string, CacheEntry>();
 /** Five minutes of idle before we throw a cold clip away. */
 const IDLE_TTL_MS = 5 * 60 * 1000;
 
+/** Generated (self-authored) gestures live under ``/api/gestures`` and are
+ *  referenced as ``gen:<id>``; everything else is a recorded mocap clip. */
+export const GENERATED_CLIP_PREFIX = "gen:";
+
+export function clipEndpoint(clipId: string): string {
+  if (clipId.startsWith(GENERATED_CLIP_PREFIX)) {
+    const id = clipId.slice(GENERATED_CLIP_PREFIX.length);
+    return `/api/gestures/${encodeURIComponent(id)}/clip`;
+  }
+  return `/api/mocap-clips/${encodeURIComponent(clipId)}`;
+}
+
 async function fetchClip(clipId: string): Promise<MocapClip> {
-  const res = await fetch(`/api/mocap-clips/${encodeURIComponent(clipId)}`, {
+  const res = await fetch(clipEndpoint(clipId), {
     credentials: "same-origin",
   });
   if (!res.ok) {

@@ -69,6 +69,8 @@ export default function WatchPage() {
     joinRoom,
     getMouthAmplitude,
     speakingAgents,
+    audioBlocked,
+    unlockAudio,
     room,
     wsRef,
     sessionId,
@@ -362,6 +364,8 @@ export default function WatchPage() {
                 speakingAgents={speakingAgents}
                 obsMode
                 backdrop="studio"
+                audioBlocked={audioBlocked}
+                onUnlockAudio={unlockAudio}
               />
               {/* Translation overlay — sits just below the VTuberStage
                   subtitle bar (which lives at bottom-0 in obsMode). On

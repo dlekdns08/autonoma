@@ -349,11 +349,40 @@ export function useSwarm() {
           if (!agentName || !partial) return;
           setState((prev) => ({
             ...prev,
-            agents: prev.agents.map((a) =>
-              a.name === agentName ? { ...a, speech: partial + (data.done ? "" : "…") } : a,
-            ),
+            agents: prev.agents.map((a) => {
+              if (a.name !== agentName) return a;
+              // A new utterance starts when the previous one wasn't
+              // still streaming (no trailing ellipsis). Only then bump
+              // ``speechSeq`` — the bubble keys on it, so per-token
+              // bumps would replay its entry animation on every token.
+              const starting = !a.speech || !a.speech.endsWith("…");
+              return {
+                ...a,
+                speech: partial + (data.done ? "" : "…"),
+                speechSeq: starting ? (a.speechSeq ?? 0) + 1 : a.speechSeq ?? 1,
+              };
+            }),
           }));
           return;
+        }
+
+        // Backend events with no icon of their own are mapped onto the
+        // emote slice so the VRM reacts through the same gesture path
+        // as mood icons (see EMOTE_GESTURE_MAP in VRMCharacter).
+        //   agent.refusal → ✋ (headshake + brief sad tint)
+        //   file.created  → 📄 (nod)  — falls through to the reducer
+        //                   below, which also records the file.
+        if (event === "agent.refusal" || event === "file.created") {
+          const agent = data.agent as string | undefined;
+          if (agent) {
+            const icon = event === "agent.refusal" ? "✋" : "📄";
+            const ttl = event === "agent.refusal" ? 2500 : 1500;
+            const seq = ++emoteSeqRef.current;
+            setEmotes((prev) => ({
+              ...prev,
+              [agent]: { icon, expiresAt: Date.now() + ttl, seq },
+            }));
+          }
         }
 
         // Reaction icons fire often (one per moody _say). They live
@@ -718,13 +747,24 @@ export function useSwarm() {
 
         if (event === "agent.tool_use") {
           // One line per tool call is too chatty for toasts; the event
-          // log keeps it. Nudge the agent into the working pose only.
+          // log keeps it. Nudge the agent into the working pose and
+          // record the call so the VTuber stage can show a 3s pill
+          // (``tool: detail``) and the VRM can pulse / hype on open_pr.
           const agent = (data.agent as string) || "";
           if (agent) {
+            const tool = (data.tool as string) || "tool";
+            const detail = (data.detail as string) || "";
+            const at = Date.now();
             setState((prev) => ({
               ...prev,
               agents: prev.agents.map((a) =>
-                a.name === agent && a.state !== "working" ? { ...a, state: "working" } : a,
+                a.name === agent
+                  ? {
+                      ...a,
+                      state: a.state !== "working" ? "working" : a.state,
+                      lastTool: { tool, detail, at },
+                    }
+                  : a,
               ),
             }));
           }
@@ -1079,9 +1119,19 @@ export function useSwarm() {
             case "agent.speech": {
               const agentName = data.agent as string | undefined;
               if (!agentName) break;
-              next.agents = prev.agents.map((a) =>
-                a.name === agentName ? { ...a, speech: data.text as string } : a,
-              );
+              const finalText = data.text as string;
+              next.agents = prev.agents.map((a) => {
+                if (a.name !== agentName) return a;
+                // The streamed tokens already delivered this exact line
+                // (done=true) — keep the seq so the bubble doesn't
+                // replay its entry animation on the duplicate.
+                const sameLine = a.speech === finalText;
+                return {
+                  ...a,
+                  speech: finalText,
+                  speechSeq: sameLine ? a.speechSeq ?? 1 : (a.speechSeq ?? 0) + 1,
+                };
+              });
               const speechText = data.text as string | undefined;
               if (agentName && speechText) {
                 // Unified path: marks the agent speaking for the UI
@@ -1606,6 +1656,9 @@ export function useSwarm() {
     emotes,
     getMouthAmplitude: voice.getMouthAmplitude,
     speakingAgents: voice.speakingAgents,
+    // Autoplay-policy state for the "click to enable audio" chip.
+    audioBlocked: voice.audioBlocked,
+    unlockAudio: voice.unlockAudio,
     // Barge-in entry point for the dashboard's push-to-talk button —
     // pauses every speaking agent on press without tearing down the
     // analyser graph.

@@ -22,6 +22,11 @@ captures work in flight.
   folded into the user turn on models without that feature.
 - Two-tier model/effort config: `AUTONOMA_WORKER_MODEL` (default
   `claude-haiku-5-5` on Anthropic), `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT`.
+- Self-authored gestures (`autonoma.gestures`): a motion-family DSL,
+  procedural expander, joint-limit/velocity validator, LLM choreographer
+  with procedural fallback, `generated_gestures` table (migration 019),
+  `/api/gestures` (list / clip / generate / vote) and `gesture.*` events.
+  `AUTONOMA_GESTURE_GEN_ENABLED` composes signature moves at spawn.
 - Deep work: `AUTONOMA_WORKER_BACKEND=agent_sdk` delegates each task a
   worker picks up to a Claude Agent SDK session in `output/<project>/`
   (`agents/deepwork.py`, optional extra `agent-sdk`); streams

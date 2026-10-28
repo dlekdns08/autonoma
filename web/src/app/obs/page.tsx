@@ -33,6 +33,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSwarm } from "@/hooks/useSwarm";
+import { getAgentVoiceRecordingStream } from "@/hooks/useAgentVoice";
 import VTuberStage, { type BackdropPreset } from "@/components/vtuber/VTuberStage";
 import ChatOverlay from "@/components/vtuber/ChatOverlay";
 import AuthModal from "@/components/AuthModal";
@@ -81,7 +82,18 @@ function ObsContent() {
     getMouthAmplitude,
     speakingAgents,
     chat,
+    audioBlocked,
+    unlockAudio,
   } = useSwarm();
+
+  // ``?dpr=2`` pins the canvas pixel ratio. OBS Browser Sources report
+  // devicePixelRatio 1, so without it a 1920×1080 source renders the
+  // character at 1× and the capture looks soft. Clamped to [0.5, 3].
+  const dprParam = Number(params.get("dpr"));
+  const dpr =
+    Number.isFinite(dprParam) && dprParam > 0
+      ? Math.min(3, Math.max(0.5, dprParam))
+      : undefined;
 
   const needsAuth = authState.status !== "authenticated";
   const showChat = params.get("chat") !== "0";
@@ -159,6 +171,9 @@ function ObsContent() {
           speakingAgents={speakingAgents}
           obsMode
           backdrop={backdrop}
+          audioBlocked={audioBlocked}
+          onUnlockAudio={unlockAudio}
+          dpr={dpr}
         />
       ) : (
         <div className="flex h-full items-center justify-center font-mono text-sm text-white/40">
@@ -206,14 +221,25 @@ function RecordButton() {
     // silently rather than surfacing an error.
     const canvas = document.querySelector("canvas");
     if (!canvas) return;
-    const stream = (canvas as HTMLCanvasElement).captureStream(30);
+    const videoStream = (canvas as HTMLCanvasElement).captureStream(30);
+    // Mux every agent's TTS into the clip. ``useAgentVoice`` tees each
+    // analyser into one shared MediaStreamAudioDestinationNode; this
+    // returns its stream (creating the AudioContext if no TTS has
+    // played yet, so the track exists even for a silent clip).
+    const audioStream = getAgentVoiceRecordingStream();
+    const stream = new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...(audioStream ? audioStream.getAudioTracks() : []),
+    ]);
 
     // Prefer vp9 where supported (much smaller files at identical
     // quality), fall back to the codec MediaRecorder picks by default
     // — Safari as of 17 still doesn't support vp9 in webm containers.
-    const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : "video/webm";
+    const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+      ? "video/webm;codecs=vp9,opus"
+      : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9"
+        : "video/webm";
     const rec = new MediaRecorder(stream, { mimeType: mime });
 
     chunksRef.current = [];

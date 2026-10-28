@@ -34,6 +34,7 @@ HUD 픽셀 맵, 또는 3D VTuber 캐릭터(립싱크·무드·제스처가 실�
 - **라이브 VTuber 퍼포먼스** — 무드 기반 블렌드쉐입, 5모음 립싱크, contrapposto 체중 이동, 발화 중 비트 제스처, 크로스페이드 상태 전환.
 - **멀티뷰어 룸** — 호스트가 세션을 시작하고, 짧은 코드로 다른 사람이 참여해 동기화된 화면을 함께 시청.
 - **LLM 백엔드 플러그** — Anthropic, OpenAI, 또는 OpenAI 호환 엔드포인트(vLLM).
+- **자가 생성 제스처 (옵트인)** — LLM 안무가가 절차적 모션 패밀리 DSL로 캐릭터별 시그니처 동작을 작곡합니다. 관절 한계와 속도 상한으로 검증한 뒤 모캡 클립으로 저장해 무대가 재생하고, 시청자가 투표합니다.
 - **딥 워크 (옵트인)** — `AUTONOMA_WORKER_BACKEND=agent_sdk`를 켜면 태스크를 맡은 워커가 실제 구현을 프로젝트 워크스페이스의 Claude Agent SDK 세션에 위임합니다. 세션의 발화와 툴 호출이 무대로 스트리밍되고, 생성된 파일은 프로젝트 산출물이 됩니다.
 - **네이티브 tool-use 에이전트 프로토콜** — 모든 액션이 strict 툴입니다. Director는 Sonnet 5.5로 계획하고 워커는 Haiku 5.5로 결정하며, append-only 히스토리와 프롬프트 캐싱, 관전자 힌트의 운영자 채널(system 메시지) 전달을 지원합니다.
 - **선택적 TTS** — 자체 호스팅 OmniVoice zero-shot 클로닝 (MPS/CUDA/CPU), 에이전트별 음성 배정 + 예산 상한.
@@ -132,6 +133,7 @@ web/src/
 | `AUTONOMA_DIRECTOR_EFFORT` / `AUTONOMA_WORKER_EFFORT` | 티어별 사고 깊이 (`low`…`max`) | `high` / `low` |
 | `AUTONOMA_DECISION_PROTOCOL` | `auto` (네이티브 tool use, vLLM은 JSON), `tool_use`, `json` | `auto` |
 | `AUTONOMA_WORKER_BACKEND` | `native`(라운드당 파일 하나) 또는 `agent_sdk`(태스크마다 `output/<project>/`에서 Claude Code 세션에 위임; `uv sync --extra agent-sdk`) | `native` |
+| `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_VLLM_BASE_URL` / `AUTONOMA_VLLM_API_KEY` | 자체 호스팅 OpenAI 호환 서버용 | — |
 | `AUTONOMA_ADMIN_PASSWORD` | 설정 시 웹 UI에서 서버 키 어드민 로그인 활성화 | — |
 | `AUTONOMA_TTS_ENABLED` / `AUTONOMA_TTS_PROVIDER` | 토글 + 백엔드: `omnivoice` / `none` | `false` / `none` |

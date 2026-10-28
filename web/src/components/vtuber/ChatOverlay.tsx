@@ -39,10 +39,14 @@ export default function ChatOverlay({
   // to reason about than one setTimeout per message; the UI doesn't
   // need sub-second precision for "is this message too old to show".
   const [now, setNow] = useState(() => Date.now());
+  // Only tick while there is something that can expire — an idle OBS
+  // overlay with no chat shouldn't re-render the page once a second.
+  const hasMessages = messages.length > 0;
   useEffect(() => {
+    if (!hasMessages) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [hasMessages]);
 
   const visible = messages
     .slice(-maxVisible)

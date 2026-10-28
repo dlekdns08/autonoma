@@ -77,18 +77,28 @@ interface Props {
    *  bones the clip covers (body idle keeps driving uncovered bones).
    *  ``undefined`` / ``null`` falls back to the procedural pose pipeline. */
   mocapClipIdFor?: (agent: AgentData, emote: AgentEmote | null) => string | null;
+  /** True while the browser's autoplay policy is muting TTS (from
+   *  ``useAgentVoice.audioBlocked``). Shows a "click to enable audio"
+   *  chip; ``onUnlockAudio`` is called when it is pressed. */
+  audioBlocked?: boolean;
+  onUnlockAudio?: () => void;
+  /** Explicit canvas pixel ratio (``/obs?dpr=2``); passed through to
+   *  the spotlight VRMCharacter. */
+  dpr?: number;
 }
 
-const MOOD_COLORS: Record<string, string> = {
-  happy: "from-emerald-500/20 to-transparent",
-  excited: "from-yellow-500/25 to-transparent",
-  proud: "from-fuchsia-500/25 to-transparent",
-  frustrated: "from-red-500/25 to-transparent",
-  worried: "from-orange-500/20 to-transparent",
-  relaxed: "from-cyan-500/20 to-transparent",
-  determined: "from-amber-500/25 to-transparent",
-  focused: "from-blue-500/20 to-transparent",
-};
+/** Spotlight backlight colour per mood. Reuses the gallery palette so
+ *  every backend mood has a tint (the old gradient-class map covered 8
+ *  of 13 and fell back to generic fuchsia for the rest). */
+function spotlightTint(mood: string | undefined): string {
+  const hex = mood ? GALLERY_MOOD_COLORS[mood] : undefined;
+  return hex ?? "#f472b6";
+}
+
+/** How long the ``tool: detail`` pill stays under the name tag. */
+const TOOL_PILL_MS = 3000;
+/** How long after the agent stops producing sound the bubble lingers. */
+const BUBBLE_LINGER_MS = 2500;
 
 export default function VTuberStage({
   agents,
@@ -101,6 +111,9 @@ export default function VTuberStage({
   forcePinnedAgent,
   emotes,
   mocapClipIdFor,
+  audioBlocked = false,
+  onUnlockAudio,
+  dpr,
 }: Props) {
   // Subtitles default: on in OBS (clip-friendly), off on the main
   // dashboard (the in-scene speech bubble is part of the aesthetic
@@ -108,6 +121,10 @@ export default function VTuberStage({
   const useSubtitles = subtitles ?? obsMode;
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
+  // Previous ``speakingAgents`` snapshot so we can tell who *started*
+  // speaking on this render. Starts empty so an already-speaking cast
+  // on first mount is picked up as "new".
+  const [prevSpeaking, setPrevSpeaking] = useState<Set<string>>(() => new Set());
   // Separated "target speaker" (spotlightName, what the rules say
   // should be on stage) from "currently displayed" (displaySpeaker)
   // so speaker changes can cross-fade instead of snap. While a
@@ -129,9 +146,18 @@ export default function VTuberStage({
   const [revealFlash, setRevealFlash] = useState(false);
   const [prevForced, setPrevForced] = useState<string | null | undefined>(undefined);
 
-  if (speakingAgents.size > 0) {
-    const next = Array.from(speakingAgents)[0];
-    if (next && next !== lastSpeaker) setLastSpeaker(next);
+  // Most RECENT speaker wins the spotlight. ``speakingAgents`` is a Set
+  // in insertion order, so ``Array.from(set)[0]`` (the old rule) was the
+  // agent who started speaking *first* — a second speaker never took
+  // the stage until the first went quiet. Diff against the previous
+  // snapshot instead and promote whoever just joined.
+  if (prevSpeaking !== speakingAgents) {
+    setPrevSpeaking(speakingAgents);
+    let newest: string | null = null;
+    for (const name of speakingAgents) {
+      if (!prevSpeaking.has(name)) newest = name;
+    }
+    if (newest && newest !== lastSpeaker) setLastSpeaker(newest);
   }
 
   useEffect(() => {
@@ -230,6 +256,62 @@ export default function VTuberStage({
     ? agents.find((a) => a.name === displaySpeaker)
     : null;
 
+  // ── Mood tint cross-fade ─────────────────────────────────────────
+  // Two fixed layers (A/B) alternate on every mood change: the newly
+  // active one fades to opacity 1, the other to 0. Because both are
+  // stable DOM nodes the CSS opacity transition actually runs —
+  // re-keying a single div (the old approach) remounted it at full
+  // opacity, so `transition-opacity` never had anything to animate.
+  const wantedTint = spotlightTint(spotlightAgent?.mood);
+  const [tint, setTint] = useState<{ colors: [string, string]; active: 0 | 1 }>(
+    () => ({ colors: [wantedTint, wantedTint], active: 0 }),
+  );
+  if (tint.colors[tint.active] !== wantedTint) {
+    const nextActive: 0 | 1 = tint.active === 0 ? 1 : 0;
+    const colors: [string, string] = [...tint.colors] as [string, string];
+    colors[nextActive] = wantedTint;
+    setTint({ colors, active: nextActive });
+  }
+
+  // ── Speech bubble lifetime ───────────────────────────────────────
+  // The bubble is keyed on ``speechSeq`` (one bump per utterance, not
+  // per streamed token) and hides BUBBLE_LINGER_MS after the agent
+  // stops producing sound. A line that is still streaming ("…") never
+  // starts the hide timer.
+  const spotlightName_ = spotlightAgent?.name ?? null;
+  const speechSeq = spotlightAgent?.speechSeq ?? 0;
+  const speechText = spotlightAgent?.speech ?? "";
+  const isSpeakingNow = spotlightName_ ? speakingAgents.has(spotlightName_) : false;
+  const streaming = speechText.endsWith("…");
+  const [hiddenSeq, setHiddenSeq] = useState<{ name: string | null; seq: number } | null>(null);
+  useEffect(() => {
+    if (!spotlightName_ || !speechText || isSpeakingNow || streaming) return;
+    const t = window.setTimeout(
+      () => setHiddenSeq({ name: spotlightName_, seq: speechSeq }),
+      BUBBLE_LINGER_MS,
+    );
+    return () => window.clearTimeout(t);
+  }, [spotlightName_, speechSeq, speechText, isSpeakingNow, streaming]);
+  const bubbleVisible =
+    !!speechText &&
+    !(hiddenSeq && hiddenSeq.name === spotlightName_ && hiddenSeq.seq === speechSeq);
+
+  // ── Tool-use pill ────────────────────────────────────────────────
+  // ``lastTool.at`` identifies the call; the pill shows until a timer
+  // records that timestamp as expired.
+  const lastToolAt = spotlightAgent?.lastTool?.at ?? 0;
+  const [expiredToolAt, setExpiredToolAt] = useState(0);
+  useEffect(() => {
+    if (!lastToolAt) return;
+    const remaining = Math.max(0, lastToolAt + TOOL_PILL_MS - Date.now());
+    const t = window.setTimeout(() => setExpiredToolAt(lastToolAt), remaining);
+    return () => window.clearTimeout(t);
+  }, [lastToolAt]);
+  const toolPill =
+    spotlightAgent?.lastTool && lastToolAt !== expiredToolAt
+      ? spotlightAgent.lastTool
+      : null;
+
   if (agents.length === 0) {
     return (
       <div className="flex h-full items-center justify-center rounded-xl border border-fuchsia-500/20 bg-slate-950/60">
@@ -237,10 +319,6 @@ export default function VTuberStage({
       </div>
     );
   }
-
-  const spotlightMood = spotlightAgent
-    ? MOOD_COLORS[spotlightAgent.mood] ?? "from-fuchsia-500/15 to-transparent"
-    : "from-fuchsia-500/10 to-transparent";
 
   return (
     <div className="flex h-full flex-col gap-2 overflow-hidden">
@@ -260,14 +338,35 @@ export default function VTuberStage({
 
         {/* Mood-tinted radial backlight — follows the spotlighted agent.
          *  Stays inline (not part of Backdrop) because it reacts to the
-         *  current agent's mood, not the chosen preset. */}
-        <div
-          key={`mood-${spotlightAgent?.name}-${spotlightAgent?.mood}`}
-          className={`pointer-events-none absolute inset-0 bg-gradient-radial-[at_center_40%] ${spotlightMood} transition-opacity duration-700`}
-          style={{
-            background: `radial-gradient(ellipse at center 55%, var(--tw-gradient-stops))`,
-          }}
-        />
+         *  current agent's mood, not the chosen preset. Suppressed for
+         *  `backdrop="none"`: on an OBS chroma/transparent feed the
+         *  semi-transparent tint sat over the key colour and ate the
+         *  character's edges. */}
+        {backdrop !== "none" &&
+          tint.colors.map((hex, i) => (
+            <div
+              key={i}
+              className="pointer-events-none absolute inset-0 transition-opacity duration-700"
+              style={{
+                opacity: tint.active === i ? 1 : 0,
+                background: `radial-gradient(ellipse at center 55%, color-mix(in srgb, ${hex} 24%, transparent) 0%, transparent 70%)`,
+              }}
+            />
+          ))}
+
+        {/* Autoplay-policy chip: TTS can't start until the page sees a
+         *  gesture. Any click/keypress unlocks it (useAgentVoice listens
+         *  globally); the button is the visible affordance. */}
+        {audioBlocked && (
+          <button
+            type="button"
+            onClick={onUnlockAudio}
+            className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-amber-400/60 bg-black/80 px-3 py-1 font-mono text-[11px] font-bold text-amber-200 backdrop-blur-sm hover:bg-amber-500/20"
+            aria-label="Enable audio playback"
+          >
+            🔇 click to enable audio
+          </button>
+        )}
 
         {/* Pixel → VTuber reveal flash overlay */}
         {revealFlash && (
@@ -304,6 +403,8 @@ export default function VTuberStage({
                       )
                     : null
                 }
+                lastTool={spotlightAgent.lastTool}
+                dpr={dpr}
                 onClick={
                   onSelectAgent
                     ? () => onSelectAgent(spotlightAgent.name)
@@ -313,21 +414,36 @@ export default function VTuberStage({
             </div>
 
             {/* Name tag — top-left */}
-            <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-2">
-              <div className="rounded-md border border-fuchsia-400/40 bg-black/70 px-2 py-0.5 backdrop-blur-sm">
-                <div className="font-mono text-sm font-bold text-fuchsia-100">
-                  {spotlightAgent.name}
+            <div className="pointer-events-none absolute top-3 left-3 flex flex-col items-start gap-1">
+              <div className="flex items-center gap-2">
+                <div className="rounded-md border border-fuchsia-400/40 bg-black/70 px-2 py-0.5 backdrop-blur-sm">
+                  <div className="font-mono text-sm font-bold text-fuchsia-100">
+                    {spotlightAgent.name}
+                  </div>
+                  <div className="font-mono text-[9px] text-white/50">
+                    Lv{spotlightAgent.level} · {spotlightAgent.role}
+                  </div>
                 </div>
-                <div className="font-mono text-[9px] text-white/50">
-                  Lv{spotlightAgent.level} · {spotlightAgent.role}
-                </div>
+                {speakingAgents.has(spotlightAgent.name) && (
+                  <div className="flex items-center gap-1 rounded-md border border-red-400/50 bg-red-500/20 px-1.5 py-0.5 backdrop-blur-sm">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.9)]" />
+                    <span className="font-mono text-[9px] font-bold text-red-200">
+                      LIVE
+                    </span>
+                  </div>
+                )}
               </div>
-              {speakingAgents.has(spotlightAgent.name) && (
-                <div className="flex items-center gap-1 rounded-md border border-red-400/50 bg-red-500/20 px-1.5 py-0.5 backdrop-blur-sm">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.9)]" />
-                  <span className="font-mono text-[9px] font-bold text-red-200">
-                    LIVE
-                  </span>
+              {/* Tool-use pill — ``tool: detail`` for TOOL_PILL_MS after
+               *  each ``agent.tool_use`` so viewers see what the agent is
+               *  doing with its hands. */}
+              {toolPill && (
+                <div
+                  key={toolPill.at}
+                  className="max-w-[260px] truncate rounded-md border border-cyan-400/40 bg-black/70 px-2 py-0.5 font-mono text-[10px] text-cyan-100 backdrop-blur-sm animate-[bubble-in_200ms_ease-out]"
+                  title={`${toolPill.tool} ${toolPill.detail}`.trim()}
+                >
+                  <span className="text-cyan-300">⌘ {toolPill.tool}</span>
+                  {toolPill.detail ? `: ${toolPill.detail}` : ""}
                 </div>
               )}
             </div>
@@ -341,6 +457,7 @@ export default function VTuberStage({
                   <button
                     type="button"
                     onClick={() => setPinned(null)}
+                    aria-label={`Unpin ${pinned} from the spotlight`}
                     className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] text-amber-300 backdrop-blur-sm hover:bg-amber-500/25"
                   >
                     pinned · unpin
@@ -350,6 +467,7 @@ export default function VTuberStage({
                   <button
                     type="button"
                     title="View agent details"
+                    aria-label={`View details for ${spotlightAgent.name}`}
                     onClick={() =>
                       onSelectAgent && onSelectAgent(spotlightAgent.name)
                     }
@@ -360,6 +478,7 @@ export default function VTuberStage({
                   <button
                     type="button"
                     title="Reset camera"
+                    aria-label="Reset camera to default framing"
                     onClick={() => setResetNonce((n) => n + 1)}
                     className="rounded px-1.5 font-mono text-[10px] text-white/60 hover:bg-white/10 hover:text-white"
                   >
@@ -374,7 +493,8 @@ export default function VTuberStage({
              *  Hidden in OBS mode. */}
             {!obsMode && (
               <div
-                className={`pointer-events-none absolute bottom-2 right-2 rounded bg-black/65 px-2 py-0.5 font-mono text-[9px] text-white/55 backdrop-blur-sm transition-opacity duration-700 ${
+                aria-hidden="true"
+                className={`pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-0.5 font-mono text-[10px] text-white/80 backdrop-blur-sm transition-opacity duration-700 ${
                   showHint ? "opacity-100" : "opacity-0"
                 }`}
               >
@@ -389,20 +509,29 @@ export default function VTuberStage({
              *           recorded clips/screenshots read like a caption
              *           track. We switch rather than stack so the two
              *           renderings never overlap. */}
-            {spotlightAgent.speech && !useSubtitles && (
-              <div className="pointer-events-none absolute inset-x-3 bottom-10 z-40 flex justify-center">
+            {/* Both are keyed on ``speechSeq`` (per utterance) so the
+             *  entry animation plays once per line, not once per
+             *  streamed token. ``aria-live`` announces each new line. */}
+            {bubbleVisible && !useSubtitles && (
+              <div
+                className="pointer-events-none absolute inset-x-3 bottom-10 z-40 flex justify-center"
+                aria-live="polite"
+              >
                 <div
-                  key={`speech-${spotlightAgent.speech}`}
+                  key={`speech-${speechSeq}`}
                   className="max-w-full rounded-xl border border-fuchsia-500/40 bg-black/80 px-3 py-2 text-center font-mono text-sm text-fuchsia-100 shadow-[0_4px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm animate-[bubble-in_280ms_ease-out]"
                 >
                   {spotlightAgent.speech}
                 </div>
               </div>
             )}
-            {spotlightAgent.speech && useSubtitles && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-6 pb-4">
+            {bubbleVisible && useSubtitles && (
+              <div
+                className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-6 pb-4"
+                aria-live="polite"
+              >
                 <div
-                  key={`subs-${spotlightAgent.speech}`}
+                  key={`subs-${speechSeq}`}
                   className="max-w-[min(720px,92%)] rounded-md bg-black/85 px-5 py-2.5 text-center font-mono text-[15px] leading-snug text-white shadow-[0_4px_24px_rgba(0,0,0,0.6)] backdrop-blur-sm animate-[bubble-in_240ms_ease-out]"
                   style={{
                     // Slight text outline so white captions stay legible
@@ -460,6 +589,8 @@ export default function VTuberStage({
               key={agent.name}
               type="button"
               onClick={() => setPinned(agent.name)}
+              aria-pressed={pinned === agent.name}
+              aria-label={`Pin ${agent.name} to the spotlight${isSpeaking ? " (speaking)" : ""}`}
               className={`group relative flex shrink-0 flex-col items-stretch overflow-hidden rounded-lg border transition-all ${
                 isFocus
                   ? "border-fuchsia-400/70 shadow-[0_0_12px_rgba(244,114,182,0.35)]"

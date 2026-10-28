@@ -787,6 +787,11 @@ export default function PodcastPage() {
                         spotlight={false}
                         state={isSpeaking ? "talking" : "idle"}
                         vrmFileOverride={p.vrm_file || undefined}
+                        // Several characters are on screen at once here;
+                        // the shared loader cache would hand two of them
+                        // the same scene object when they pick the same
+                        // .vrm, so each mount loads its own copy.
+                        isolated
                       />
                     </div>
                     <div className="border-t border-white/10 bg-slate-950/60 px-3 py-2">

@@ -16,6 +16,13 @@ export interface AgentData {
   traits?: string[];
   stats?: Record<string, number>;
   speech?: string;
+  /** Bumped once per utterance (not per streamed token) so the stage
+   *  can key its bubble/caption on the line rather than the text. */
+  speechSeq?: number;
+  /** Most recent ``agent.tool_use`` for this agent. ``at`` is a client
+   *  timestamp (ms) so the stage can expire the pill and the VRM can
+   *  fire a one-shot pulse per call. */
+  lastTool?: { tool: string; detail: string; at: number } | null;
 }
 
 export interface TaskData {

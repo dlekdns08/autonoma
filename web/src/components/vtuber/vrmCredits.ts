@@ -106,10 +106,9 @@ if (process.env.NODE_ENV !== "production") {
 /** Deterministic name → .vrm filename mapping.
  *
  *  Uses a cheap djb2 hash modulo the roster size so the same agent name
- *  always ends up with the same character across sessions. The frontend
- *  already does this for procedural faces (see `faceSeed.ts`); we keep
- *  the pattern consistent here so a given agent has a stable identity
- *  whether the procedural face or the VRM is rendered.
+ *  always ends up with the same character across sessions. Same djb2
+ *  family as the blink-phase hash in `VRMCharacter.tsx`, so a given
+ *  agent has one stable identity everywhere.
  */
 export function vrmFileForAgent(agentName: string): string {
   let h = 5381;
