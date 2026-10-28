@@ -26,55 +26,38 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hmac
-import io
 import itertools
 import json
 import logging
-import re
 import time
-import zipfile
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import (
-    Depends,
     FastAPI,
-    HTTPException,
-    Query,
-    Request,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi import (
-    Response as FastAPIResponse,
-)
-from fastapi import (
-    status as http_status,
-)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 
+from autonoma._api_persist import (  # noqa: F401 — re-exported
+    _insert_file_history,
+    _record_run_summary,
+    _upsert_checkpoint,
+)
 from autonoma.auth import (
     SESSION_COOKIE_NAME,
     hash_password,
     is_guest_user_id,
-    new_guest_user_id,
     read_session_token,
-    require_active_user,
-    require_admin,
-    verify_password,
 )
 from autonoma.config import settings
 from autonoma.context import current_session_id as _current_session_id
 from autonoma.db.users import (
-    User,
-    UserStatus,
     create_user,
     get_user_by_id,
     get_user_by_username,
-    list_users,
-    update_user_status,
 )
 from autonoma.event_bus import bus
 from autonoma.harness.policy import HarnessPolicyContent, default_policy_content
@@ -440,6 +423,7 @@ def _build_admin_llm_config() -> LLMConfig | None:
             effort=settings.director_effort or None,
             worker_effort=settings.worker_effort or None,
             decision_protocol=settings.decision_protocol,
+            advisor_model=settings.advisor_model,
         )
     if provider == "openai":
         if not settings.openai_api_key:
@@ -454,6 +438,7 @@ def _build_admin_llm_config() -> LLMConfig | None:
             effort=settings.director_effort or None,
             worker_effort=settings.worker_effort or None,
             decision_protocol=settings.decision_protocol,
+            advisor_model=settings.advisor_model,
         )
     if provider == "vllm":
         if not settings.vllm_base_url:
@@ -469,6 +454,7 @@ def _build_admin_llm_config() -> LLMConfig | None:
             effort=settings.director_effort or None,
             worker_effort=settings.worker_effort or None,
             decision_protocol=settings.decision_protocol,
+            advisor_model=settings.advisor_model,
         )
     return None
 
@@ -515,6 +501,10 @@ FORWARDED_EVENTS = [
     "deepwork.started",
     "deepwork.finished",
     "deepwork.cancelled",
+    "director.intervention",
+    "dream.started",
+    "dream.finished",
+    "managed.webhook",
     "gesture.generated",
     "gesture.retired",
     "agent.level_up",
@@ -1140,11 +1130,6 @@ def _get_snapshot(session_id: int | None) -> dict[str, Any]:
         return {"status": "idle"}
 
 
-# ── FastAPI App ───────────────────────────────────────────────────────────
-
-USERNAME_PATTERN = re.compile(r"^[a-z0-9_-]{3,32}$")
-
-
 async def _bootstrap_admin_user() -> None:
     """Create the default admin user on startup if conditions are met.
 
@@ -1330,9 +1315,21 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("[startup] VMC bridge boot failed; disabling")
 
+    # MCP streamable-HTTP transport needs a running session manager for
+    # the app's lifetime; the legacy JSON-RPC endpoint does not.
+    mcp_stack = AsyncExitStack()
+    if settings.mcp_server_enabled:
+        try:
+            from autonoma.mcp import server as _mcp_server
+
+            await mcp_stack.enter_async_context(_mcp_server.lifespan())
+        except Exception:
+            logger.exception("[startup] MCP transport boot failed; /mcp will answer 503")
+
     try:
         yield
     finally:
+        await mcp_stack.aclose()
         bus.off("schedule.fire_requested", _on_schedule_fire_requested)
         await scheduler_runner.stop()
         if _highlight_recorder is not None:
@@ -1376,6 +1373,44 @@ from autonoma._api_cookies import (  # noqa: E402, F401 — re-exported
     _set_session_cookie,
 )
 
+# ── Extracted route groups ───────────────────────────────────────────
+# Auth, harness, workspace, runs, health, models and mocap routes live
+# in ``autonoma.routers.*`` (one APIRouter each). They are included here,
+# at the point where they used to be declared, so registration order —
+# and therefore FastAPI's first-match behaviour — is unchanged. Each
+# router lazy-imports the live registries from this module.
+from autonoma.routers import auth as _auth_router
+from autonoma.routers import harness as _harness_router
+from autonoma.routers import health as _health_router
+from autonoma.routers import mocap as _mocap_router
+from autonoma.routers import models as _models_router
+from autonoma.routers import runs as _runs_router
+from autonoma.routers import workspace as _workspace_router
+
+# Names that moved with their routers but are still imported from
+# ``autonoma.api`` by tests and other modules.
+from autonoma.routers.auth import USERNAME_PATTERN  # noqa: F401 — re-exported
+from autonoma.routers.mocap import (  # noqa: F401 — re-exported
+    _MOCAP_QUOTA_BYTES,
+    _MOCAP_QUOTA_CLIPS,
+    _check_mocap_upload_rate,
+    _mocap_upload_history,
+)
+from autonoma.routers.workspace import (  # noqa: F401 — re-exported
+    _require_session,
+    _require_session_owner,
+    _session_project,
+)
+
+app.include_router(_auth_router.router)
+app.include_router(_harness_router.router)
+app.include_router(_workspace_router.router)
+app.include_router(_runs_router.router)
+app.include_router(_health_router.router)
+app.include_router(_models_router.router)
+app.include_router(_mocap_router.router)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_resolve_cors_origins(),
@@ -1383,778 +1418,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ── /api/auth/* ───────────────────────────────────────────────────────
-
-
-@app.post("/api/auth/signup", status_code=http_status.HTTP_201_CREATED)
-async def auth_signup(payload: dict[str, Any]) -> dict[str, Any]:
-    """Public signup. New users start as ``pending`` until an admin
-    approves them. Returns 201 on success, 409 if taken, 400 if the
-    input doesn't match the username/password rules."""
-    username = str(payload.get("username") or "").strip().lower()
-    password = str(payload.get("password") or "")
-    if not USERNAME_PATTERN.match(username):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="invalid_username",
-        )
-    if len(password) < 6:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="invalid_password",
-        )
-    if await get_user_by_username(username) is not None:
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT,
-            detail="username_taken",
-        )
-    try:
-        password_hash = hash_password(password)
-    except ValueError:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="invalid_password",
-        )
-    await create_user(
-        username=username,
-        password_hash=password_hash,
-        role="user",
-        status="pending",
-    )
-    return {"status": "pending"}
-
-
-@app.post("/api/auth/login")
-async def auth_login(payload: dict[str, Any], response: FastAPIResponse) -> dict[str, Any]:
-    """Username/password login. 200 + cookie on success."""
-    username = str(payload.get("username") or "").strip().lower()
-    password = str(payload.get("password") or "")
-    if not username or not password:
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="bad_credentials",
-        )
-    user = await get_user_by_username(username)
-    if user is None or not verify_password(password, user.password_hash):
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="bad_credentials",
-        )
-    if user.status != "active":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="not_active",
-        )
-    _set_session_cookie(response, user.id)
-    return {"user": user.public_dict()}
-
-
-@app.post("/api/auth/logout", status_code=http_status.HTTP_204_NO_CONTENT)
-async def auth_logout(response: FastAPIResponse) -> FastAPIResponse:
-    """Unconditionally clear the session cookie. 204 even if no cookie
-    was present (idempotent logout)."""
-    _clear_session_cookie(response)
-    response.status_code = http_status.HTTP_204_NO_CONTENT
-    return response
-
-
-async def _validate_guest_credentials(
-    *,
-    provider: str,
-    api_key: str,
-    base_url: str,
-) -> tuple[bool, str | None]:
-    """Ping the provider's ``/v1/models`` endpoint to verify the key works.
-
-    We hit the cheapest authoritative endpoint each provider exposes:
-
-    - **anthropic**: ``GET https://api.anthropic.com/v1/models`` with
-      ``x-api-key`` header. Free, no token cost.
-    - **openai**: ``GET https://api.openai.com/v1/models`` with
-      ``Authorization: Bearer``. Free.
-    - **vllm**: ``GET <base_url>/v1/models``. Validates that the
-      self-hosted server is reachable; api_key is sent only if provided.
-
-    We deliberately do NOT validate the model id against the listing —
-    Anthropic in particular doesn't always surface every available model
-    via ``/v1/models``, and an unknown model surfaces a clear error at
-    swarm-start time anyway. Validating *just* the key keeps this from
-    being a UX trap of its own.
-
-    Returns ``(True, None)`` on success, ``(False, message)`` on failure
-    where ``message`` is a Korean string suitable for the modal.
-    """
-    import httpx
-
-    timeout = httpx.Timeout(10.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as ac:
-            if provider == "anthropic":
-                r = await ac.get(
-                    "https://api.anthropic.com/v1/models",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                    },
-                )
-            elif provider == "openai":
-                r = await ac.get(
-                    "https://api.openai.com/v1/models",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-            elif provider == "vllm":
-                if not base_url:
-                    return False, "vLLM 서버 URL이 필요합니다."
-                headers: dict[str, str] = {}
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-                r = await ac.get(
-                    f"{base_url.rstrip('/')}/v1/models",
-                    headers=headers,
-                )
-            else:
-                return False, f"지원하지 않는 프로바이더입니다: {provider}"
-    except httpx.TimeoutException:
-        return False, "프로바이더 응답 시간 초과 (10초). 네트워크를 확인해주세요."
-    except httpx.HTTPError as exc:
-        # Don't leak the underlying message verbatim — it can include
-        # the URL with a leading "Bearer ..." in some httpx variants.
-        logger.warning("[guest] credential validation network error: %s", type(exc).__name__)
-        return False, "프로바이더에 연결할 수 없습니다."
-
-    if r.status_code == 200:
-        return True, None
-    if r.status_code in (401, 403):
-        return False, "API 키가 올바르지 않거나 권한이 없습니다."
-    if r.status_code == 404 and provider == "vllm":
-        return False, "vLLM 서버에서 /v1/models 경로를 찾을 수 없습니다. URL을 확인해주세요."
-    return False, f"인증 확인에 실패했습니다 (HTTP {r.status_code})."
-
-
-@app.post("/api/auth/guest")
-async def auth_guest(
-    payload: dict[str, Any],
-    response: FastAPIResponse,
-) -> dict[str, Any]:
-    """Issue a guest session — no signup, no admin approval.
-
-    Validates the user-supplied LLM credentials against the provider
-    BEFORE issuing the cookie, so a bad key fails loudly here instead of
-    silently turning into a confusing WebSocket error after the user has
-    already entered the dashboard.
-
-    On success, the cookie carries a synthetic ``user_id`` of the form
-    ``guest:<uuid>`` that ``require_active_user`` recognises and inflates
-    into an in-memory ``User`` (``role="user"``, ``status="active"``).
-    Guests still authenticate the WebSocket separately via the existing
-    ``type=user`` ``authenticate`` command — this endpoint never hands
-    out the server's API key.
-    """
-    from datetime import UTC, datetime
-
-    provider = str(payload.get("provider") or "").strip()
-    api_key = str(payload.get("api_key") or "").strip()
-    model = str(payload.get("model") or "").strip()
-    base_url = str(payload.get("base_url") or "").strip()
-
-    # Mirror the WS ``type=user`` validation rules so behaviour is
-    # symmetric across the two entry points.
-    if provider not in ("anthropic", "openai", "vllm"):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail={
-                "reason": "invalid_input",
-                "message": f"지원하지 않는 프로바이더입니다: {provider or '(없음)'}",
-            },
-        )
-    if not model:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail={"reason": "invalid_input", "message": "모델명을 입력해주세요."},
-        )
-    if provider != "vllm" and not api_key:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail={"reason": "invalid_input", "message": "API 키를 입력해주세요."},
-        )
-    if provider == "vllm" and not base_url:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail={"reason": "invalid_input", "message": "vLLM 서버 URL을 입력해주세요."},
-        )
-
-    ok, err_msg = await _validate_guest_credentials(
-        provider=provider, api_key=api_key, base_url=base_url
-    )
-    if not ok:
-        # 401 — bad credentials. The detail body carries a Korean message
-        # that the frontend surfaces as-is, plus a stable ``reason`` slug
-        # for any future programmatic handling.
-        logger.info(
-            "[guest] credential validation failed (provider=%s, model=%s, key_len=%d): %s",
-            provider,
-            model,
-            len(api_key),
-            err_msg,
-        )
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail={"reason": "invalid_credentials", "message": err_msg or "인증 실패"},
-        )
-
-    user_id = new_guest_user_id()
-    _set_session_cookie(response, user_id)
-    short = user_id.removeprefix("guest:").split("-", 1)[0]
-    now = datetime.now(UTC).isoformat()
-    logger.info(
-        "[guest] session issued (user_id=%s, provider=%s, model=%s)",
-        user_id,
-        provider,
-        model,
-    )
-    return {
-        "user": {
-            "id": user_id,
-            "username": f"guest-{short}",
-            "role": "user",
-            "status": "active",
-            "created_at": now,
-            "updated_at": now,
-            "is_guest": True,
-        }
-    }
-
-
-@app.get("/api/auth/me")
-async def auth_me(
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Return the current active user or 401/403."""
-    return {"user": user.public_dict()}
-
-
-@app.get("/api/debug/auth")
-async def debug_auth(request: Request) -> dict[str, Any]:
-    """Dev-only sanity check for auth wiring.
-
-    Returns 404 when ``session_secret`` is set — the presence of a durable
-    secret is our "this is a real deployment" signal, and a probe endpoint
-    that enumerates bootstrap state has no business on a prod server.
-    """
-    if settings.session_secret:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND)
-    admin_row = await get_user_by_username("admin")
-    return {
-        "admin_password_configured": bool(settings.admin_password),
-        "session_secret_configured": False,
-        "admin_user_exists": admin_row is not None,
-        "admin_user_active": (admin_row is not None and admin_row.status == "active"),
-        "cookie_received": SESSION_COOKIE_NAME in request.cookies,
-        "cookie_samesite": _cookie_samesite(),
-        "cookie_secure": _cookie_is_secure(),
-    }
-
-
-# ── /api/admin/users/* ────────────────────────────────────────────────
-
-
-@app.get("/api/admin/users")
-async def admin_list_users(
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    users = await list_users()
-    return {"users": [u.public_dict() for u in users]}
-
-
-async def _transition_user(
-    user_id: str,
-    *,
-    required_status: set[str] | None,
-    new_status: UserStatus,
-) -> None:
-    """Apply a status transition, 404 if missing, 409 if current status
-    isn't in ``required_status`` (when specified)."""
-    user = await get_user_by_id(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="user_not_found",
-        )
-    if required_status is not None and user.status not in required_status:
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT,
-            detail="invalid_state_transition",
-        )
-    await update_user_status(user_id, new_status)
-
-
-@app.post(
-    "/api/admin/users/{user_id}/approve",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def admin_approve_user(
-    user_id: str,
-    _admin: User = Depends(require_admin),
-) -> FastAPIResponse:
-    await _transition_user(user_id, required_status={"pending"}, new_status="active")
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.post(
-    "/api/admin/users/{user_id}/deny",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def admin_deny_user(
-    user_id: str,
-    _admin: User = Depends(require_admin),
-) -> FastAPIResponse:
-    await _transition_user(user_id, required_status={"pending"}, new_status="disabled")
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.post(
-    "/api/admin/users/{user_id}/disable",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def admin_disable_user(
-    user_id: str,
-    _admin: User = Depends(require_admin),
-) -> FastAPIResponse:
-    await _transition_user(user_id, required_status={"active"}, new_status="disabled")
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.post(
-    "/api/admin/users/{user_id}/reactivate",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def admin_reactivate_user(
-    user_id: str,
-    _admin: User = Depends(require_admin),
-) -> FastAPIResponse:
-    await _transition_user(user_id, required_status={"disabled"}, new_status="active")
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-# ── /api/harness/presets/* ────────────────────────────────────────────
-
-_HARNESS_NAME_MIN = 1
-_HARNESS_NAME_MAX = 64
-
-
-def _pydantic_errors_to_fastapi(exc: Any) -> list[dict[str, Any]]:
-    """Convert a pydantic ValidationError to FastAPI's native error shape.
-
-    FastAPI renders ``RequestValidationError`` as
-    ``{"detail": [{"loc": [...], "msg": "...", "type": "..."}, ...]}`` —
-    we mirror that shape when rejecting ``HarnessPolicyContent(**body)``
-    so the frontend can reuse the same rendering path for both.
-    """
-    items: list[dict[str, Any]] = []
-    for err in exc.errors():
-        items.append(
-            {
-                "loc": list(err.get("loc", [])),
-                "msg": err.get("msg", ""),
-                "type": err.get("type", ""),
-            }
-        )
-    return items
-
-
-def _reject_invalid_harness_content(content: HarnessPolicyContent, *, is_admin: bool) -> None:
-    """Raise HTTPException when semantic validation rejects ``content``.
-
-    Admin-only violations surface as 403 (the caller lacks the role),
-    dangerous-combo violations as 422 (the content is illegal for
-    everyone). Field-level ``path`` ("safety.code_execution") is exposed
-    via ``loc`` so the frontend can highlight the offending control.
-    """
-    from autonoma.harness.validation import check_content
-
-    issues = check_content(content, is_admin=is_admin)
-    if not issues:
-        return
-    admin_only = [i for i in issues if i.admin_only]
-    if admin_only:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail=[
-                {
-                    "loc": ["body", "content", *i.path.split(".")],
-                    "msg": i.message,
-                    "type": "admin_only",
-                }
-                for i in admin_only
-            ],
-        )
-    raise HTTPException(
-        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail=[
-            {
-                "loc": ["body", "content"],
-                "msg": i.message,
-                "type": "dangerous_combo",
-            }
-            for i in issues
-        ],
-    )
-
-
-def _harness_policy_to_dict(policy: Any) -> dict[str, Any]:
-    return policy.model_dump(mode="json")
-
-
-@app.get("/api/harness/pipeline")
-async def get_harness_pipeline(
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Pipeline-view layout: 16 nodes grouped into A/B/C plus intra-group edges.
-
-    Read-only; the actual editing flow still goes through the existing
-    preset / override endpoints. This endpoint exists so the UI can lay
-    the harness out as a visual flow without embedding the grouping
-    decisions into frontend code.
-    """
-    from autonoma.harness.pipeline import pipeline_payload
-
-    return pipeline_payload()
-
-
-@app.get("/api/harness/schema")
-async def get_harness_schema(
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Field-by-field schema so the frontend can build a form without
-    mirroring the Pydantic model. Returns a flattened shape:
-
-    ``{"sections": {"<section>": {"<field>": {type, default, options?,
-    min?, max?}}}}``
-
-    The frontend builds a drop-down for ``type == "enum"`` and a number
-    input with ``min``/``max`` for ``type == "int"`` / ``"float"``.
-    Stays in lockstep with ``HarnessPolicyContent`` automatically — when
-    a Literal gains a value or a Field changes bounds, this endpoint
-    reflects it on the next request without a code change here.
-    """
-    from typing import Literal, get_args, get_origin
-
-    content_cls = HarnessPolicyContent
-    sections: dict[str, dict[str, Any]] = {}
-    default_content = default_policy_content().model_dump(mode="json")
-
-    for section_name, section_field in content_cls.model_fields.items():
-        sub_model = section_field.annotation
-        fields: dict[str, Any] = {}
-        for field_name, field_info in sub_model.model_fields.items():
-            annot = field_info.annotation
-            default = default_content[section_name].get(field_name)
-            spec: dict[str, Any] = {"default": default}
-            if get_origin(annot) is Literal:
-                spec["type"] = "enum"
-                spec["options"] = list(get_args(annot))
-            elif annot is bool:
-                spec["type"] = "bool"
-            elif annot is int:
-                spec["type"] = "int"
-            elif annot is float:
-                spec["type"] = "float"
-            else:
-                spec["type"] = "unknown"
-            # Pydantic stores ge/le on constraint metadata.
-            for meta in field_info.metadata:
-                if hasattr(meta, "ge"):
-                    spec["min"] = meta.ge
-                if hasattr(meta, "le"):
-                    spec["max"] = meta.le
-            fields[field_name] = spec
-        sections[section_name] = fields
-    return {"sections": sections}
-
-
-@app.get("/api/harness/presets")
-async def list_harness_presets(
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """List the caller's presets plus the system default preset."""
-    from autonoma.db.harness_policies import (
-        get_default_policy,
-        list_policies_for_user,
-    )
-
-    owned = await list_policies_for_user(user.id)
-    seen_ids = {p.id for p in owned}
-    # list_policies_for_user already includes the default when it exists,
-    # but we re-fetch and merge defensively in case the default was
-    # created after the user's rows (ordering quirks).
-    default = await get_default_policy()
-    presets = list(owned)
-    if default is not None and default.id not in seen_ids:
-        presets.append(default)
-    return {"presets": [_harness_policy_to_dict(p) for p in presets]}
-
-
-@app.get("/api/harness/presets/{preset_id}")
-async def get_harness_preset(
-    preset_id: str,
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    from autonoma.db.harness_policies import get_policy_by_id
-
-    preset = await get_policy_by_id(preset_id)
-    if preset is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="preset_not_found",
-        )
-    if not preset.is_default and preset.owner_user_id != user.id:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-    return _harness_policy_to_dict(preset)
-
-
-@app.post(
-    "/api/harness/presets",
-    status_code=http_status.HTTP_201_CREATED,
-)
-async def create_harness_preset(
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    from pydantic import ValidationError
-
-    from autonoma.db.harness_policies import create_policy
-
-    name = str(payload.get("name") or "").strip()
-    if not (_HARNESS_NAME_MIN <= len(name) <= _HARNESS_NAME_MAX):
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=[
-                {
-                    "loc": ["body", "name"],
-                    "msg": (f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"),
-                    "type": "value_error",
-                }
-            ],
-        )
-    content_raw = payload.get("content")
-    if not isinstance(content_raw, dict):
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=[
-                {
-                    "loc": ["body", "content"],
-                    "msg": "content must be an object",
-                    "type": "type_error",
-                }
-            ],
-        )
-    try:
-        content = HarnessPolicyContent(**content_raw)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=_pydantic_errors_to_fastapi(exc),
-        )
-    _reject_invalid_harness_content(content, is_admin=(user.role == "admin"))
-    created = await create_policy(
-        owner_user_id=user.id,
-        name=name,
-        content=content,
-    )
-    return _harness_policy_to_dict(created)
-
-
-@app.put("/api/harness/presets/{preset_id}")
-async def update_harness_preset(
-    preset_id: str,
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    from pydantic import ValidationError
-
-    from autonoma.db.harness_policies import (
-        get_policy_by_id,
-        update_policy,
-    )
-
-    existing = await get_policy_by_id(preset_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="preset_not_found",
-        )
-    # Default preset is read-only; surface as 403 rather than letting the
-    # helper's ValueError escape as 500.
-    if existing.is_default:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-    if existing.owner_user_id != user.id:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-
-    new_name: str | None = None
-    if "name" in payload and payload["name"] is not None:
-        new_name = str(payload["name"]).strip()
-        if not (_HARNESS_NAME_MIN <= len(new_name) <= _HARNESS_NAME_MAX):
-            raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=[
-                    {
-                        "loc": ["body", "name"],
-                        "msg": (f"name must be {_HARNESS_NAME_MIN}..{_HARNESS_NAME_MAX} chars"),
-                        "type": "value_error",
-                    }
-                ],
-            )
-
-    new_content: HarnessPolicyContent | None = None
-    if "content" in payload and payload["content"] is not None:
-        content_raw = payload["content"]
-        if not isinstance(content_raw, dict):
-            raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=[
-                    {
-                        "loc": ["body", "content"],
-                        "msg": "content must be an object",
-                        "type": "type_error",
-                    }
-                ],
-            )
-        try:
-            new_content = HarnessPolicyContent(**content_raw)
-        except ValidationError as exc:
-            raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=_pydantic_errors_to_fastapi(exc),
-            )
-        _reject_invalid_harness_content(new_content, is_admin=(user.role == "admin"))
-
-    try:
-        updated = await update_policy(preset_id, name=new_name, content=new_content)
-    except ValueError:
-        # Defense in depth: the explicit is_default check above should
-        # have caught this, but keep the translation in case the helper
-        # adds other ValueError paths.
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-    if updated is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="preset_not_found",
-        )
-    return _harness_policy_to_dict(updated)
-
-
-@app.delete(
-    "/api/harness/presets/{preset_id}",
-    status_code=http_status.HTTP_204_NO_CONTENT,
-)
-async def delete_harness_preset(
-    preset_id: str,
-    user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    from autonoma.db.harness_policies import delete_policy, get_policy_by_id
-
-    existing = await get_policy_by_id(preset_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="preset_not_found",
-        )
-    if existing.is_default or existing.owner_user_id != user.id:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-    try:
-        await delete_policy(preset_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="preset_forbidden",
-        )
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.get("/api/harness/metrics")
-async def get_harness_metrics(
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Global strategy-pick counters across every run on this process.
-
-    Keys are ``"section.field=value"`` (e.g. ``"routing.strategy=priority"``);
-    values are pick counts since server start. Admin-only since the
-    signal is effectively a usage heat-map — not sensitive per se, but
-    not something we want public either.
-    """
-    from autonoma.harness.observability import get_global_counters
-
-    return {"counters": get_global_counters()}
-
-
-@app.get("/api/harness/metrics/summary")
-async def get_harness_metrics_summary(
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Aggregated harness metrics for the current (or most recently completed)
-    run. Admin-only.
-
-    Returns preset usage breakdown, LLM parse success rate, average stalls
-    per run, top blocked actions, and LLM error categories.
-    """
-    from autonoma.harness.observability import get_metrics_summary
-
-    num_runs = max(1, len(_sessions))
-    return get_metrics_summary(num_runs=num_runs)
-
-
-@app.get("/api/session/{session_id}/metadata")
-async def get_session_harness_metadata(
-    session_id: int,
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Per-run metadata: preset id, overridden sections, effective
-    policy, timestamps, and per-run picks. Callers that own a live
-    session can fetch mid-run; the ``ended_at`` field flips from null to
-    a timestamp when the run finishes.
-
-    Scoped to the caller's own sessions — admins can fetch any session
-    since the signal is useful for post-mortem debugging."""
-    from autonoma.harness.observability import (
-        get_session_metadata,
-        metadata_to_dict,
-    )
-
-    meta = get_session_metadata(session_id)
-    if meta is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="session_not_found",
-        )
-    # Non-admins can only see metadata for sessions they opened on this
-    # connection. ``_sessions`` is keyed by session_id and currently has
-    # no user_id link, so fall back to a "any active user sees their
-    # own session" check via the live SessionState (ws owner).
-    if user.role != "admin":
-        sess = _sessions.get(session_id)
-        if sess is None:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail="session_not_found",
-            )
-    return metadata_to_dict(meta)
 
 
 def _cleanup_session(session_id: int) -> None:
@@ -2185,13 +1448,6 @@ async def _cancel_session_task(session: SessionState) -> None:
         except (asyncio.CancelledError, Exception):
             pass
     session.task = None
-
-
-def _session_project(session_id: int | None) -> Any | None:
-    if session_id is None:
-        return None
-    session = _sessions.get(session_id)
-    return session.project if session else None
 
 
 def _generate_short_code() -> str:
@@ -2514,6 +1770,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             effort=settings.director_effort or None,
                             worker_effort=settings.worker_effort or None,
                             decision_protocol=settings.decision_protocol,
+                            advisor_model=settings.advisor_model,
                         )
                         session.llm_config = llm_cfg
                         logger.info(
@@ -2687,6 +1944,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                             },
                         )
                     else:
+                        # ``target_room`` was looked up by this id, so it
+                        # is a real room id here (narrows ``int | None``).
+                        assert target_room_id is not None
                         # Successful join — reset the counter so a user
                         # who joins a room legitimately isn't penalised
                         # for typos earlier in the session.
@@ -3066,1457 +2326,74 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             await _notify_room_membership(room_id)
 
 
-def _require_session(session_id: int | None) -> SessionState:
-    if session_id is None:
-        raise HTTPException(status_code=400, detail="session query parameter is required")
-    session = _sessions.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    return session
-
-
-async def _require_session_owner(session_id: int | None, request: Request) -> SessionState:
-    """Like ``_require_session`` but rejects cross-user access.
-
-    If the session was created by a logged-in user (``owner_user_id`` is
-    set), the caller's cookie must identify that same user — or an
-    admin. Anonymous sessions (legacy admin-password or BYO-key paths)
-    retain the old "session id is itself the capability" contract since
-    there is no user to bind them to.
-    """
-    session = _require_session(session_id)
-    if session.owner_user_id is None:
-        return session
-
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    cookie_user_id = read_session_token(cookie_token or "")
-    cookie_user = await get_user_by_id(cookie_user_id) if cookie_user_id else None
-    if cookie_user is None or cookie_user.status != "active":
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required for this session's artifacts",
-        )
-    if cookie_user.id != session.owner_user_id and cookie_user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="This session belongs to another user",
-        )
-    return session
-
-
-@app.get("/api/files")
-async def list_files(
-    request: Request,
-    session: int | None = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-) -> dict[str, Any]:
-    # Gate on ownership so a viewer can't enumerate logged-in users'
-    # sessions by probing sequential ids. See ``_require_session_owner``
-    # for the anonymous-session passthrough rule.
-    sess = await _require_session_owner(session, request)
-    project = sess.project
-    if project is None:
-        return {
-            "project": None,
-            "total": 0,
-            "limit": limit,
-            "offset": offset,
-            "files": [],
-        }
-    # Slice BEFORE serializing — a long-running swarm with 10k+
-    # artifacts would otherwise burn O(N) memory and serialization
-    # time on every poll.
-    page = project.files[offset : offset + limit]
-    return {
-        "project": project.name,
-        "total": len(project.files),
-        "limit": limit,
-        "offset": offset,
-        "files": [
-            {
-                "path": f.path,
-                "size": len(f.content),
-                "description": f.description,
-                "created_by": f.created_by,
-            }
-            for f in page
-        ],
-    }
-
-
-@app.get("/api/files/download")
-async def download_file(
-    request: Request,
-    path: str,
-    session: int | None = Query(default=None),
-) -> Response:
-    sess = await _require_session_owner(session, request)
-    project = sess.project
-    if project is None:
-        raise HTTPException(status_code=404, detail="No active project for session")
-    artifact = next((f for f in project.files if f.path == path), None)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    filename = path.rsplit("/", 1)[-1] or "file"
-    return Response(
-        content=artifact.content.encode("utf-8"),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@app.get("/api/files/zip")
-async def download_zip(
-    request: Request,
-    session: int | None = Query(default=None),
-) -> Response:
-    sess = await _require_session_owner(session, request)
-    project = sess.project
-    if project is None or not project.files:
-        raise HTTPException(status_code=404, detail="No files to download")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for artifact in project.files:
-            safe_path = "/".join(seg for seg in artifact.path.split("/") if seg and seg != "..")
-            if not safe_path:
-                continue
-            zf.writestr(safe_path, artifact.content)
-    project_name = project.name or "autonoma-project"
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{project_name}.zip"'},
-    )
-
-
-@app.get("/api/templates")
-async def list_templates(
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Return all scaffold templates (name, description, file count).
-
-    Auth-gated so the template list isn't leaked to anonymous probes —
-    pairs with ``apply_template`` below which writes into a running
-    session and therefore *must* be authenticated.
-    """
-    from autonoma.templates import SCAFFOLD_TEMPLATES
-
-    return {
-        "templates": [
-            {
-                "id": tid,
-                "name": tmpl["name"],
-                "description": tmpl["description"],
-                "file_count": len(tmpl["files"]),
-            }
-            for tid, tmpl in SCAFFOLD_TEMPLATES.items()
-        ]
-    }
-
-
-@app.post("/api/templates/{template_id}/apply")
-async def apply_template(
-    template_id: str,
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Apply a scaffold template to a running session.
-
-    Queues placeholder file tasks for Coder agents to fill in.
-    ``payload`` must include ``session_id`` of the running session.
-
-    Authorisation: the caller must own the target session
-    (``session.owner_user_id == user.id``) — without this gate, any
-    authenticated user could inject placeholder files into an admin's
-    swarm, which Coder agents would then execute. Admins can target any
-    session (matches the pattern used by ``/api/workspace/export``).
-    """
-    from autonoma.templates import SCAFFOLD_TEMPLATES
-
-    tmpl = SCAFFOLD_TEMPLATES.get(template_id)
-    if tmpl is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail=f"Template '{template_id}' not found",
-        )
-
-    session_id = payload.get("session_id")
-    session = _sessions.get(session_id) if isinstance(session_id, int) else None
-    # Ownership check — refuse cross-tenant template injection. We
-    # 404 (not 403) so a probing client can't enumerate which session
-    # ids exist by watching for the auth-vs-not-found split.
-    if session is not None and user.role != "admin":
-        if session.owner_user_id is not None and session.owner_user_id != user.id:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail="Session not found",
-            )
-
-    created: list[str] = []
-    if session is not None and session.project is not None:
-        from autonoma.models import FileArtifact
-
-        for file_spec in tmpl["files"]:
-            path = file_spec["path"]
-            description = file_spec["description"]
-            # Only add if not already present
-            if not any(f.path == path for f in session.project.files):
-                artifact = FileArtifact(
-                    path=path,
-                    content=f"# {description}\n# TODO: implement\n",
-                    created_by="scaffold",
-                    description=description,
-                )
-                session.project.files.append(artifact)
-                created.append(path)
-                await bus.emit(
-                    "file.created",
-                    path=path,
-                    size=len(artifact.content),
-                    description=description,
-                    agent="scaffold",
-                )
-
-    return {
-        "template_id": template_id,
-        "name": tmpl["name"],
-        "files_created": created,
-        "total_files": len(tmpl["files"]),
-    }
-
-
-# ── /api/files/history — Feature 9: File Version History ──────────────────
-
-
-async def _insert_file_history(session_id: int, path: str, content: str, created_by: str) -> None:
-    """Insert a new version row into ``file_history``.
-
-    The ``version_number`` is computed as ``max(existing) + 1`` for the
-    (session_id, path) pair, defaulting to 1 for the first version. Runs
-    inside the existing async engine so no new connections are needed.
-    """
-    from sqlalchemy import func, insert, select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import file_history
-
-    engine = get_engine()
-    try:
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                select(func.max(file_history.c.version_number)).where(
-                    file_history.c.session_id == session_id,
-                    file_history.c.path == path,
-                )
-            )
-            row = result.first()
-            next_version = (row[0] or 0) + 1
-            await conn.execute(
-                insert(file_history).values(
-                    session_id=session_id,
-                    path=path,
-                    content=content,
-                    created_by=created_by,
-                    version_number=next_version,
-                )
-            )
-    except Exception as exc:
-        logger.warning("[file_history] insert failed: %s", exc)
-
-
-@app.get("/api/files/history")
-async def get_file_history(
-    path: str,
-    session: int | None = Query(default=None),
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Return the version list for a file path within a session.
-
-    Accessible to authenticated users (not admin-only). Content is omitted
-    from the list — use ``GET /api/files/history/{version_id}`` for that.
-    """
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import file_history as fh_table
-
-    if session is None:
-        raise HTTPException(status_code=400, detail="session query parameter required")
-
-    # Cross-user history reads are an admin-only capability. If the
-    # session is still live and owned by this user that's fine; if it's
-    # anonymous we fall back to "admin only" rather than leaving history
-    # reads open to anyone who guesses a session id.
-    live = _sessions.get(session)
-    if live is not None and live.owner_user_id is not None:
-        if live.owner_user_id != user.id and user.role != "admin":
-            raise HTTPException(
-                status_code=http_status.HTTP_403_FORBIDDEN,
-                detail="This session belongs to another user",
-            )
-    elif user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Only admins can read history for anonymous or ended sessions",
-        )
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            select(
-                fh_table.c.id,
-                fh_table.c.path,
-                fh_table.c.created_by,
-                fh_table.c.created_at,
-                fh_table.c.version_number,
-                fh_table.c.content,
-            )
-            .where(
-                fh_table.c.session_id == session,
-                fh_table.c.path == path,
-            )
-            .order_by(fh_table.c.version_number)
-        )
-        rows = result.fetchall()
-
-    versions = [
-        {
-            "version_id": r.id,
-            "version_number": r.version_number,
-            "created_by": r.created_by,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "size": len(r.content),
-        }
-        for r in rows
-    ]
-    return {"path": path, "session_id": session, "versions": versions}
-
-
-@app.get("/api/files/history/{version_id}")
-async def get_file_version_content(
-    version_id: int,
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Return the full content of a specific file version by ``version_id``."""
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import file_history as fh_table
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(select(fh_table).where(fh_table.c.id == version_id))
-        row = result.first()
-
-    if row is None:
-        raise HTTPException(status_code=404, detail="version_not_found")
-
-    # Same ownership gate as the list endpoint: either the session is
-    # live and owned by this user, or the caller is an admin. Version
-    # ids are sequential so we can't rely on them being unguessable.
-    live = _sessions.get(row.session_id)
-    if live is not None and live.owner_user_id is not None:
-        if live.owner_user_id != user.id and user.role != "admin":
-            raise HTTPException(
-                status_code=http_status.HTTP_403_FORBIDDEN,
-                detail="This version belongs to another user's session",
-            )
-    elif user.role != "admin":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Only admins can read versions from anonymous or ended sessions",
-        )
-
-    return {
-        "version_id": row.id,
-        "session_id": row.session_id,
-        "path": row.path,
-        "content": row.content,
-        "created_by": row.created_by,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "version_number": row.version_number,
-    }
-
-
-# ── /api/agents/{name}/memory — Feature 11: Agent Memory Inspector ─────────
-
-
-@app.get("/api/agents/{agent_name}/memory")
-async def get_agent_memory(
-    agent_name: str,
-    session: int | None = Query(default=None),
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Return the live AgentMemory state for ``agent_name``. Admin-only.
-
-    Requires a running swarm (returns 404 if none is active for the given
-    session). The ``session`` query param identifies which session's swarm
-    to inspect; when omitted, the first session with a live swarm is used.
-    """
-    target_session: SessionState | None = None
-    if session is not None:
-        target_session = _sessions.get(session)
-    else:
-        for s in _sessions.values():
-            if s.swarm is not None:
-                target_session = s
-                break
-
-    if target_session is None or target_session.swarm is None:
-        raise HTTPException(status_code=404, detail="no_active_swarm")
-
-    swarm = target_session.swarm
-    agent = swarm.agents.get(agent_name)
-    if agent is None:
-        raise HTTPException(status_code=404, detail=f"agent_not_found: {agent_name}")
-
-    memory = getattr(agent, "memory", None)
-    if memory is None:
-        raise HTTPException(status_code=404, detail="agent_has_no_memory")
-
-    mem_dict = memory.to_dict()
-    experiences = [
-        {
-            "content": e["text"],
-            "category": e["type"],
-            "round": e["round"],
-        }
-        for e in mem_dict.get("private", [])
-    ]
-    hindsight_notes = [f"{n['title']}: {n['lesson']}" for n in mem_dict.get("hindsight", [])]
-
-    # Relationship opinions: trust values for each peer this agent has
-    # interacted with. Pulled from the swarm's relationship graph.
-    relationship_opinions: dict[str, float] = {}
-    rel_graph = getattr(swarm, "relationships", None)
-    if rel_graph is not None:
-        for (frm, to), rel in rel_graph._graph.items():
-            if frm == agent_name:
-                relationship_opinions[to] = round(rel.trust, 3)
-
-    return {
-        "agent": agent_name,
-        "experiences": experiences,
-        "hindsight_notes": hindsight_notes,
-        "relationship_opinions": relationship_opinions,
-    }
-
-
-# ── /api/workspace/export — Feature 21: Workspace Export ───────────────────
-
-
-@app.get("/api/workspace/export")
-async def export_workspace(
-    session: int | None = Query(default=None),
-    format: str = Query(default="zip"),
-    user: User = Depends(require_active_user),
-) -> Response:
-    """Download the full workspace as a zip archive.
-
-    Includes all generated files, a README_AUTONOMA.txt with run metadata,
-    a tasks.json summary, and a chat_log.txt with all agent messages.
-    Accessible to authenticated users.
-    """
-    if format != "zip":
-        raise HTTPException(status_code=400, detail="only format=zip is supported")
-
-    project = _session_project(session)
-    if project is None:
-        raise HTTPException(status_code=404, detail="No active project for session")
-
-    sess = _sessions.get(session) if session is not None else None
-    swarm = sess.swarm if sess is not None else None
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # ── Project files ──
-        for artifact in project.files:
-            safe_path = "/".join(seg for seg in artifact.path.split("/") if seg and seg != "..")
-            if not safe_path:
-                continue
-            zf.writestr(safe_path, artifact.content)
-
-        # ── README_AUTONOMA.txt ──
-        agent_names = [a.name for a in project.agents]
-        round_count = swarm._round if swarm is not None else 0
-        task_summary_lines = [
-            f"  [{t.status.value.upper()}] {t.title} (assigned: {t.assigned_to or 'unassigned'})"
-            for t in project.tasks
-        ]
-        readme_lines = [
-            "AUTONOMA WORKSPACE EXPORT",
-            "=" * 40,
-            f"Project : {project.name}",
-            f"Goal    : {project.description}",
-            f"Agents  : {', '.join(agent_names)}",
-            f"Rounds  : {round_count}",
-            f"Files   : {len(project.files)}",
-            f"Tasks   : {len(project.tasks)}",
-            "",
-            "TASK SUMMARY",
-            "-" * 20,
-        ] + task_summary_lines
-        zf.writestr("README_AUTONOMA.txt", "\n".join(readme_lines))
-
-        # ── tasks.json ──
-        import json as _json
-
-        tasks_data = [
-            {
-                "id": t.id,
-                "title": t.title,
-                "description": t.description,
-                "status": t.status.value,
-                "priority": t.priority.value,
-                "assigned_to": t.assigned_to,
-                "created_by": t.created_by,
-                "output": t.output,
-                "artifacts": t.artifacts,
-                "created_at": t.created_at.isoformat(),
-                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-            }
-            for t in project.tasks
-        ]
-        zf.writestr("tasks.json", _json.dumps(tasks_data, indent=2))
-
-        # ── chat_log.txt ──
-        chat_lines = []
-        for msg in sorted(project.messages, key=lambda m: m.timestamp):
-            ts = msg.timestamp.strftime("%H:%M:%S")
-            chat_lines.append(f"[{ts}] {msg.sender} -> {msg.recipient}: {msg.content}")
-        zf.writestr("chat_log.txt", "\n".join(chat_lines))
-
-    session_tag = str(session)[:8] if session is not None else "unknown"
-    filename = f"autonoma_workspace_{session_tag}.zip"
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-# ── /api/runs — Feature 12: Multi-Run Comparison ────────────────────────────
-
-
-async def _record_run_summary(
-    *,
-    session_id: int,
-    goal: str,
-    agent_count: int,
-    task_count: int,
-    tasks_done: int,
-    tasks_failed: int,
-    total_rounds: int,
-    llm_calls: int,
-    preset_id: str,
-    policy_hash: str,
-) -> int | None:
-    """Insert a row into ``run_summary`` and return the new row id."""
-    from datetime import datetime as _dt
-
-    from sqlalchemy import insert
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import run_summary
-
-    engine = get_engine()
-    try:
-        async with engine.begin() as conn:
-            result = await conn.execute(
-                insert(run_summary).values(
-                    session_id=session_id,
-                    goal=goal,
-                    completed_at=_dt.utcnow(),
-                    agent_count=agent_count,
-                    task_count=task_count,
-                    tasks_done=tasks_done,
-                    tasks_failed=tasks_failed,
-                    total_rounds=total_rounds,
-                    llm_calls=llm_calls,
-                    preset_id=preset_id,
-                    policy_hash=policy_hash,
-                )
-            )
-            return result.lastrowid
-    except Exception as exc:
-        logger.warning("[run_summary] insert failed: %s", exc)
-        return None
-
-
-@app.get("/api/runs")
-async def list_runs(
-    limit: int = Query(default=20, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Paginated list of run summaries. Admin-only."""
-    from sqlalchemy import func, select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import run_summary
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        total_result = await conn.execute(select(func.count()).select_from(run_summary))
-        total = total_result.scalar() or 0
-
-        rows_result = await conn.execute(
-            select(run_summary).order_by(run_summary.c.id.desc()).limit(limit).offset(offset)
-        )
-        rows = rows_result.fetchall()
-
-    items = [
-        {
-            "id": r.id,
-            "session_id": r.session_id,
-            "goal": r.goal,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-            "agent_count": r.agent_count,
-            "task_count": r.task_count,
-            "tasks_done": r.tasks_done,
-            "tasks_failed": r.tasks_failed,
-            "total_rounds": r.total_rounds,
-            "llm_calls": r.llm_calls,
-            "preset_id": r.preset_id,
-            "policy_hash": r.policy_hash,
-        }
-        for r in rows
-    ]
-    return {"total": total, "limit": limit, "offset": offset, "runs": items}
-
-
-def _run_row_to_dict(row: Any) -> dict[str, Any]:
-    return {
-        "id": row.id,
-        "session_id": row.session_id,
-        "goal": row.goal,
-        "started_at": row.started_at.isoformat() if row.started_at else None,
-        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-        "agent_count": row.agent_count,
-        "task_count": row.task_count,
-        "tasks_done": row.tasks_done,
-        "tasks_failed": row.tasks_failed,
-        "total_rounds": row.total_rounds,
-        "llm_calls": row.llm_calls,
-        "preset_id": row.preset_id,
-        "policy_hash": row.policy_hash,
-    }
-
-
-@app.get("/api/runs/{run_id}/compare")
-async def compare_runs(
-    run_id: int,
-    with_: int = Query(alias="with"),
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Return a side-by-side comparison of two runs with numeric deltas.
-    Admin-only.
-    """
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import run_summary
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result_a = await conn.execute(select(run_summary).where(run_summary.c.id == run_id))
-        result_b = await conn.execute(select(run_summary).where(run_summary.c.id == with_))
-        row_a = result_a.first()
-        row_b = result_b.first()
-
-    if row_a is None:
-        raise HTTPException(status_code=404, detail=f"run_not_found: {run_id}")
-    if row_b is None:
-        raise HTTPException(status_code=404, detail=f"run_not_found: {with_}")
-
-    dict_a = _run_row_to_dict(row_a)
-    dict_b = _run_row_to_dict(row_b)
-
-    _numeric_keys = (
-        "agent_count",
-        "task_count",
-        "tasks_done",
-        "tasks_failed",
-        "total_rounds",
-        "llm_calls",
-    )
-    delta = {
-        k: dict_b[k] - dict_a[k]
-        for k in _numeric_keys
-        if isinstance(dict_a.get(k), int) and isinstance(dict_b.get(k), int)
-    }
-
-    return {"run_a": dict_a, "run_b": dict_b, "delta": delta}
-
-
-# ── /api/session/{id}/checkpoint — Feature 30: Session Resume Foundation ────
-
-
-async def _upsert_checkpoint(session_id: int, round_number: int, state_json: str) -> None:
-    """Insert or replace a checkpoint row for (session_id, round_number).
-
-    Uses a DELETE + INSERT pattern which is portable across SQLite versions
-    (SQLite's ``ON CONFLICT DO UPDATE`` requires SQLAlchemy dialect awareness).
-    """
-    from sqlalchemy import delete, insert
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import session_checkpoint
-
-    engine = get_engine()
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                delete(session_checkpoint).where(
-                    session_checkpoint.c.session_id == session_id,
-                    session_checkpoint.c.round_number == round_number,
-                )
-            )
-            await conn.execute(
-                insert(session_checkpoint).values(
-                    session_id=session_id,
-                    round_number=round_number,
-                    state_json=state_json,
-                )
-            )
-    except Exception as exc:
-        logger.warning("[checkpoint] upsert failed: %s", exc)
-
-
-@app.get("/api/session/{session_id}/checkpoint")
-async def get_session_checkpoint(
-    session_id: int,
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Return the latest checkpoint metadata for a session. Admin-only.
-
-    Does NOT return ``state_json`` in the response to avoid transmitting
-    potentially large blobs. Use the POST resume endpoint to load the state.
-    """
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import session_checkpoint
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            select(
-                session_checkpoint.c.id,
-                session_checkpoint.c.session_id,
-                session_checkpoint.c.round_number,
-                session_checkpoint.c.created_at,
-            )
-            .where(session_checkpoint.c.session_id == session_id)
-            .order_by(session_checkpoint.c.round_number.desc())
-            .limit(1)
-        )
-        row = result.first()
-
-    if row is None:
-        raise HTTPException(status_code=404, detail="no_checkpoint_for_session")
-
-    return {
-        "checkpoint_id": row.id,
-        "session_id": row.session_id,
-        "round_number": row.round_number,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
-
-
-@app.post("/api/session/{session_id}/resume")
-async def resume_session(
-    session_id: int,
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Load the latest checkpoint for ``session_id`` and return its state.
-
-    Full swarm resumption from a checkpoint is not yet implemented
-    (``AgentSwarm`` does not expose ``start_from_checkpoint()``). This
-    endpoint returns the deserialized checkpoint data so the frontend can
-    display it and prompt the user. Resumption itself requires a future
-    ``AgentSwarm.start_from_checkpoint()`` hook — tracked separately.
-    """
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import session_checkpoint
-    from autonoma.models import ProjectState
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            select(session_checkpoint)
-            .where(session_checkpoint.c.session_id == session_id)
-            .order_by(session_checkpoint.c.round_number.desc())
-            .limit(1)
-        )
-        row = result.first()
-
-    if row is None:
-        raise HTTPException(status_code=404, detail="no_checkpoint_for_session")
-
-    try:
-        state = ProjectState.from_json(row.state_json)
-    except (ValueError, Exception) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"checkpoint_corrupt: {exc}",
-        )
-
-    return {
-        "checkpoint_id": row.id,
-        "session_id": row.session_id,
-        "round_number": row.round_number,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "state": state.model_dump(mode="json"),
-        "resume_supported": False,
-        "resume_note": (
-            "Full resume not yet implemented — "
-            "AgentSwarm.start_from_checkpoint() is pending. "
-            "Use this payload to inspect or re-display the checkpoint state."
-        ),
-    }
-
-
-@app.get("/api/session/{session_id}/replay")
-async def replay_session(
-    session_id: int,
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Phase 1-#1 — return every per-round checkpoint for a session.
-
-    The frontend ``ReplayPlayer`` UI walks this payload as a timeline:
-    each entry is a self-contained ``ProjectState`` snapshot at the end
-    of a round, so scrubbing back to round N is a single state swap.
-
-    Heavy by design — scaling concerns are deliberately punted: the
-    average run produces ~tens of checkpoints, each ~tens of KB. If a
-    run grows past that, paginate by ``round_number`` rather than
-    streaming partial states.
-    """
-    from sqlalchemy import select
-
-    from autonoma.db.engine import get_engine
-    from autonoma.db.schema import session_checkpoint
-    from autonoma.models import ProjectState
-
-    engine = get_engine()
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            select(session_checkpoint)
-            .where(session_checkpoint.c.session_id == session_id)
-            .order_by(session_checkpoint.c.round_number.asc())
-        )
-        rows = result.fetchall()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="no_checkpoints_for_session")
-
-    frames: list[dict[str, Any]] = []
-    for row in rows:
-        try:
-            state = ProjectState.from_json(row.state_json)
-            frames.append(
-                {
-                    "round_number": row.round_number,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "state": state.model_dump(mode="json"),
-                }
-            )
-        except Exception as exc:
-            # Skip a corrupt checkpoint rather than failing the whole
-            # replay — a single broken row shouldn't blackhole an
-            # otherwise viewable run.
-            logger.warning(
-                "[replay] dropped corrupt checkpoint round=%s: %s",
-                row.round_number,
-                exc,
-            )
-
-    if not frames:
-        raise HTTPException(status_code=422, detail="all_checkpoints_corrupt")
-
-    return {
-        "session_id": session_id,
-        "frame_count": len(frames),
-        "first_round": frames[0]["round_number"],
-        "last_round": frames[-1]["round_number"],
-        "frames": frames,
-    }
-
-
-@app.get("/api/health")
-async def health(request: Request):
-    """Liveness probe.
-
-    Always returns ``200 {"status": "ok"}`` so Docker's HEALTHCHECK
-    and external uptime monitors don't need to authenticate. Internal
-    detail (active swarms, TTS provider, sessions count) is exposed
-    only to logged-in users — anonymous callers couldn't use that
-    info for anything except recon.
-    """
-    # Probe the cookie inline rather than requiring auth, so Docker
-    # HEALTHCHECK + curl probes still get a 200. We just shed the
-    # detail payload for unauthenticated callers.
-    cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
-    user_id = read_session_token(cookie_token or "")
-    user = await get_user_by_id(user_id) if user_id else None
-    if user is None or user.status != "active":
-        return {"status": "ok"}
-
-    active_swarms = sum(1 for s in _sessions.values() if s.task is not None and not s.task.done())
-    # TTS status so the /voice page can distinguish "model still warming"
-    # from "synthesis really failed". Cheap — no model load triggered.
-    tts_info: dict[str, object] = {
-        "provider": settings.tts_provider,
-        "ready": settings.tts_provider
-        not in (
-            "omnivoice",
-            "omnivoice-mlx",
-            "vibevoice",
-        ),
-        "device": "",
-        "dtype": "",
-    }
-    if settings.tts_provider == "omnivoice":
-        try:
-            from autonoma.tts_omnivoice import shared_client_status
-
-            status_snap = shared_client_status()
-            tts_info["ready"] = bool(status_snap["loaded"])
-            tts_info["device"] = status_snap["device"]
-            tts_info["dtype"] = status_snap["dtype"]
-        except ImportError:
-            tts_info["ready"] = False
-    elif settings.tts_provider == "omnivoice-mlx":
-        try:
-            from autonoma.tts_omnivoice_mlx import shared_client_status as mlx_status
-
-            status_snap = mlx_status()
-            tts_info["ready"] = bool(status_snap["loaded"])
-            tts_info["device"] = status_snap["device"]
-            tts_info["dtype"] = status_snap["dtype"]
-        except ImportError:
-            tts_info["ready"] = False
-    elif settings.tts_provider == "vibevoice":
-        try:
-            from autonoma.tts_vibevoice import shared_client_status as vv_status
-
-            status_snap = vv_status()
-            tts_info["ready"] = bool(status_snap["loaded"])
-            tts_info["device"] = status_snap["device"]
-            tts_info["dtype"] = status_snap["dtype"]
-        except ImportError:
-            tts_info["ready"] = False
-    return {
-        "status": "ok",
-        "connections": len(manager.connections),
-        "sessions": len(_sessions),
-        "active_swarms": active_swarms,
-        "tts": tts_info,
-    }
-
-
-# ── Model discovery ───────────────────────────────────────────────────────
-
-
-@app.get("/api/models/{provider}")
-async def list_models_server(
-    provider: str,
-    _admin: User = Depends(require_admin),
-):
-    """Return models available via the server-configured admin key.
-
-    Used by the Admin tab to show what the server-side key can actually
-    reach. Admin-gated: even though we never return the key bytes, the
-    presence/absence of model IDs leaks whether a credential is
-    configured at all — useful info for an attacker probing the server.
-    """
-    from autonoma.model_catalog import list_models
-
-    if provider not in ("anthropic", "openai", "vllm"):
-        raise HTTPException(status_code=400, detail="unknown provider")
-
-    api_key = ""
-    base_url = ""
-    if provider == "anthropic":
-        api_key = settings.anthropic_api_key
-    elif provider == "openai":
-        api_key = settings.openai_api_key
-    elif provider == "vllm":
-        api_key = settings.vllm_api_key
-        base_url = settings.vllm_base_url
-
-    models, is_live = await asyncio.to_thread(list_models, provider, api_key, base_url)
-    return {"provider": provider, "is_live": is_live, "models": models}
-
-
-@app.post("/api/models")
-async def list_models_with_key(
-    payload: dict[str, Any],
-    _user: User = Depends(require_active_user),
-):
-    """Return models for a user-supplied key (used by the 'User API key' tab).
-
-    Request body:
-        {"provider": "anthropic"|"openai"|"vllm", "api_key": "...", "base_url": "..."}
-
-    Auth-gated: anonymous callers shouldn't be able to mint requests
-    against arbitrary OpenAI/Anthropic keys via this endpoint (it's a
-    free SSRF-into-paid-API surface otherwise).
-    """
-    from autonoma.model_catalog import list_models
-
-    provider = (payload.get("provider") or "").strip()
-    api_key = (payload.get("api_key") or "").strip()
-    base_url = (payload.get("base_url") or "").strip()
-
-    if provider not in ("anthropic", "openai", "vllm"):
-        raise HTTPException(status_code=400, detail="unknown provider")
-
-    models, is_live = await asyncio.to_thread(list_models, provider, api_key, base_url)
-    return {"provider": provider, "is_live": is_live, "models": models}
-
-
-# ── /api/mocap/* ──────────────────────────────────────────────────────
-#
-# Motion-capture clip library + global trigger→clip bindings for the
-# VTuber character playback path. The ``/mocap`` page records webcam
-# motion via MediaPipe, uploads gzipped JSON clips, and wires them to
-# (vrm_file, kind, value) triggers. Any agent rendered with that VRM
-# plays the bound clip site-wide.
-#
-# Binding mutations emit ``mocap.bindings.updated`` on the shared bus.
-# Because these handlers run in HTTP context (no ``_current_session_id``)
-# the bus→WS bridge falls through to ``manager.broadcast``, fanning the
-# update out to every connected viewer.
-
-import collections as _collections  # noqa: E402
-
-from autonoma.mocap import (  # noqa: E402  — grouped at feature boundary
-    ALLOWED_TRIGGER_KINDS,
-    MocapValidationError,
-    is_known_vrm,
-    validate_payload,
-    validate_trigger,
-)
-from autonoma.mocap import store as mocap_store  # noqa: E402
-from autonoma.mocap.triggers import trigger_catalog  # noqa: E402
-
-# ── Mocap upload abuse-prevention ─────────────────────────────────────
-#
-# In-process rate limiter (deque of monotonic timestamps per user) and
-# per-user storage quota. Deliberately no external dependency — the
-# instance is small enough that a process-local limiter is accurate
-# enough, and adding slowapi/fastapi-limiter for this alone is not
-# worth the surface area.
-#
-# Policy (fixed):
-#   - 5 uploads / 60s per user
-#   - 20 uploads / 3600s per user
-#   - 100 clips OR 500 MB total storage per user
-#   - admins (user.role == "admin") bypass every check
-#
-# ``time.monotonic`` is used for timestamps because it's immune to
-# wall-clock adjustments (ntp, DST) that would otherwise let a user
-# burst past the window.
-_mocap_upload_history: dict[str, _collections.deque[float]] = {}
-_MOCAP_RATE_MINUTE = 5
-_MOCAP_RATE_HOUR = 20
-_MOCAP_QUOTA_CLIPS = 100
-_MOCAP_QUOTA_BYTES = 500 * 1024 * 1024
-
-
-def _check_mocap_upload_rate(user_id: str) -> str | None:
-    """Record an upload attempt and return a rate-limit code or ``None``.
-
-    Returns ``"rate_limited_minute"`` if the user has ≥5 uploads in the
-    last 60 seconds, ``"rate_limited_hour"`` if ≥20 in the last 3600
-    seconds, otherwise ``None`` (and records the timestamp so the next
-    call sees this attempt). Entries older than 3600 seconds are
-    trimmed on every call so the deque stays O(rate_hour).
-    """
-    now = time.monotonic()
-    history = _mocap_upload_history.setdefault(user_id, _collections.deque())
-
-    # Trim anything older than the hour window — keeps the deque
-    # bounded and makes the count queries below cheap.
-    hour_cutoff = now - 3600.0
-    while history and history[0] < hour_cutoff:
-        history.popleft()
-
-    # Count entries in the hour window (== len(history) after trim) and
-    # in the minute window. We check the minute rule first because it's
-    # the tighter limit; either violation short-circuits.
-    minute_cutoff = now - 60.0
-    minute_count = sum(1 for ts in history if ts >= minute_cutoff)
-    if minute_count >= _MOCAP_RATE_MINUTE:
-        return "rate_limited_minute"
-    if len(history) >= _MOCAP_RATE_HOUR:
-        return "rate_limited_hour"
-
-    history.append(now)
-    return None
-
-
-@app.get("/api/mocap/triggers")
-async def mocap_triggers(
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Static whitelist of allowed trigger values for the UI."""
-    return trigger_catalog()
-
-
-@app.get("/api/mocap-clips")
-async def mocap_list_clips(
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    clips = await mocap_store.list_clips_for_user(user.id)
-    return {"clips": [c.to_dict() for c in clips]}
-
-
-@app.post("/api/mocap-clips", status_code=http_status.HTTP_201_CREATED)
-async def mocap_create_clip(
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    # Policy gate: rate limiter first (cheapest), then quota (one DB
-    # round-trip), then the usual shape/content validation. Admins
-    # bypass both the rate limit and the quota — they manage the
-    # library for every user and can't be throttled by their own work.
-    if user.role != "admin":
-        rate_err = _check_mocap_upload_rate(user.id)
-        if rate_err is not None:
-            raise HTTPException(
-                status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=rate_err,
-            )
-
-    name = str(payload.get("name") or "").strip()
-    source_vrm = str(payload.get("source_vrm") or "").strip()
-    payload_gz_b64 = str(payload.get("payload_gz_b64") or "")
-    expected_size = payload.get("expected_size_bytes")
-
-    if user.role != "admin":
-        # Pessimistic projection: if the client supplied an
-        # expected_size_bytes use it directly; otherwise fall back to
-        # the base64 length. Base64 over-estimates the decoded size by
-        # ~33% which is fine — it only biases us toward rejecting at
-        # the quota boundary, never toward accepting past it.
-        if isinstance(expected_size, (int, float)) and expected_size >= 0:
-            projected_size = int(expected_size)
-        else:
-            projected_size = len(payload_gz_b64)
-
-        count, total_bytes = await mocap_store.get_user_storage_usage(user.id)
-        if count >= _MOCAP_QUOTA_CLIPS:
-            raise HTTPException(
-                status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="quota_clip_count",
-            )
-        if total_bytes + projected_size > _MOCAP_QUOTA_BYTES:
-            raise HTTPException(
-                status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="quota_bytes",
-            )
-
-    if not is_known_vrm(source_vrm):
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail="unknown_source_vrm",
-        )
-
-    try:
-        validated = validate_payload(
-            payload_gz_b64,
-            name=name,
-            source_vrm=source_vrm,
-            expected_size_bytes=(
-                int(expected_size) if isinstance(expected_size, (int, float)) else None
-            ),
-        )
-    except MocapValidationError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=exc.code,
-        )
-
-    clip = await mocap_store.create_clip(owner_user_id=user.id, validated=validated)
-    await bus.emit("mocap.clips.updated", clip_id=clip.id, action="created")
-    return {"clip": clip.to_dict()}
-
-
-@app.get("/api/mocap-clips/orphans")
-async def mocap_list_orphans(
-    days: int = Query(90, ge=1, le=3650),
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    """Admin-only report of clips with no binding that haven't been
-    accessed in ``days`` days. Never deletes — the policy contract
-    requires a human to decide what gets purged.
-
-    Must be registered BEFORE the ``/{clip_id}`` route; FastAPI matches
-    routes in declaration order and "orphans" would otherwise match the
-    path parameter and 404 as an unknown clip.
-
-    Returns:
-        ``{"orphans": [...], "count": N, "total_bytes": M}`` where
-        each element is a ``ClipSummary.to_dict()``.
-    """
-    clips, total_bytes = await mocap_store.list_orphan_clips(older_than_days=days)
-    return {
-        "orphans": [c.to_dict() for c in clips],
-        "count": len(clips),
-        "total_bytes": total_bytes,
-    }
-
-
-@app.get("/api/mocap-clips/{clip_id}")
-async def mocap_get_clip(
-    clip_id: str,
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    """Return clip metadata + the gzipped base64 payload for playback.
-
-    Any active user can fetch any clip — bindings are global so a
-    viewer may need a clip owned by someone else to render a character.
-    """
-    result = await mocap_store.get_clip_payload(clip_id)
-    if result is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
-    summary, payload_b64 = result
-    return {"clip": summary.to_dict(), "payload_gz_b64": payload_b64}
-
-
-@app.patch("/api/mocap-clips/{clip_id}")
-async def mocap_rename_clip(
-    clip_id: str,
-    payload: dict[str, Any],
-    user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    summary = await mocap_store.get_clip_summary(clip_id)
-    if summary is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
-    if summary.owner_user_id != user.id and user.role != "admin":
-        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner")
-    new_name = str(payload.get("name") or "").strip()
-    if not (1 <= len(new_name) <= 128):
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_name")
-    updated = await mocap_store.rename_clip(clip_id, new_name)
-    if updated is None:
-        # The summary lookup above already proved the clip exists, so a
-        # None here means the row vanished mid-request (concurrent delete)
-        # rather than a 404 we should return cleanly.
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="rename_failed",
-        )
-    await bus.emit("mocap.clips.updated", clip_id=clip_id, action="renamed")
-    return {"clip": updated.to_dict()}
-
-
-@app.delete("/api/mocap-clips/{clip_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-async def mocap_delete_clip(
-    clip_id: str,
-    user: User = Depends(require_active_user),
-) -> FastAPIResponse:
-    summary = await mocap_store.get_clip_summary(clip_id)
-    if summary is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
-    if summary.owner_user_id != user.id and user.role != "admin":
-        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="not_owner")
-    if await mocap_store.clip_is_bound(clip_id):
-        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use")
-    try:
-        ok = await mocap_store.delete_clip(clip_id)
-    except mocap_store.IntegrityError:
-        # Race: a binding was inserted between the ``clip_is_bound`` check
-        # above and this delete. FK is ON DELETE RESTRICT so the DB
-        # rejects the delete — surface the same 409 the pre-check would.
-        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail="clip_in_use")
-    if not ok:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
-    await bus.emit("mocap.clips.updated", clip_id=clip_id, action="deleted")
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.get("/api/mocap-bindings")
-async def mocap_list_bindings(
-    _user: User = Depends(require_active_user),
-) -> dict[str, Any]:
-    bindings = await mocap_store.list_bindings()
-    return {"bindings": [b.to_dict() for b in bindings]}
-
-
-@app.put("/api/mocap-bindings")
-async def mocap_upsert_binding(
-    payload: dict[str, Any],
-    user: User = Depends(require_admin),
-) -> dict[str, Any]:
-    vrm_file = str(payload.get("vrm_file") or "").strip()
-    kind = str(payload.get("trigger_kind") or "").strip()
-    value = str(payload.get("trigger_value") or "").strip()
-    clip_id = str(payload.get("clip_id") or "").strip()
-
-    if not is_known_vrm(vrm_file):
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm")
-    if kind not in ALLOWED_TRIGGER_KINDS:
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="invalid_kind")
-    trig_err = validate_trigger(kind, value)
-    if trig_err:
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err)
-    clip = await mocap_store.get_clip_summary(clip_id)
-    if clip is None:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="clip_not_found")
-
-    binding = await mocap_store.upsert_binding(
-        vrm_file=vrm_file,
-        trigger_kind=kind,
-        trigger_value=value,
-        clip_id=clip_id,
-        updated_by=user.id,
-    )
-
-    await bus.emit(
-        "mocap.bindings.updated",
-        vrm_file=vrm_file,
-        trigger_kind=kind,
-        trigger_value=value,
-        clip_id=clip_id,
-        removed=False,
-    )
-    return {"binding": binding.to_dict()}
-
-
-@app.delete("/api/mocap-bindings", status_code=http_status.HTTP_204_NO_CONTENT)
-async def mocap_delete_binding(
-    vrm_file: str = Query(...),
-    trigger_kind: str = Query(...),
-    trigger_value: str = Query(...),
-    _admin: User = Depends(require_admin),
-) -> FastAPIResponse:
-    if not is_known_vrm(vrm_file):
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="unknown_vrm")
-    trig_err = validate_trigger(trigger_kind, trigger_value)
-    if trig_err:
-        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=trig_err)
-    ok = await mocap_store.delete_binding(
-        vrm_file=vrm_file,
-        trigger_kind=trigger_kind,
-        trigger_value=trigger_value,
-    )
-    if not ok:
-        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="binding_not_found")
-    await bus.emit(
-        "mocap.bindings.updated",
-        vrm_file=vrm_file,
-        trigger_kind=trigger_kind,
-        trigger_value=trigger_value,
-        clip_id=None,
-        removed=True,
-    )
-    return FastAPIResponse(status_code=http_status.HTTP_204_NO_CONTENT)
-
-
-@app.post("/api/mocap-triggers/fire")
-async def mocap_fire_trigger(
-    payload: dict[str, Any],
-    _admin: User = Depends(require_admin),
-) -> dict[str, Any]:
-    vrm_file = str(payload.get("vrm_file") or "").strip()
-    slug = str(payload.get("value") or "").strip()
-
-    if not is_known_vrm(vrm_file):
-        raise HTTPException(status_code=400, detail="unknown_vrm")
-    if validate_trigger("manual", slug) is not None:
-        raise HTTPException(status_code=400, detail="invalid_manual_slug")
-
-    binding = await mocap_store.get_binding(vrm_file, "manual", slug)
-    if binding is None:
-        raise HTTPException(status_code=404, detail="binding_not_found")
-
-    await bus.emit(
-        "mocap.trigger.fired",
-        vrm_file=vrm_file,
-        trigger_kind="manual",
-        trigger_value=slug,
-        clip_id=binding.clip_id,
-    )
-    return {"ok": True, "clip_id": binding.clip_id}
-
-
 # ── /api/voice/* — moved to autonoma.routers.voice ───────────────────
 # Voice endpoints + helpers live in ``src/autonoma/routers/voice.py``
 # and are mounted on ``app`` via ``include_router``. Kept this breadcrumb
 # so grepping for ``voice`` in this file still points the right way.
 
-from autonoma.routers import voice as _voice_router  # noqa: E402
-
-app.include_router(_voice_router.router)
-
-# New feature routers (2026 feature pack — streaming, vision, bridges,
-# agent profiles, personas, battle, playback, standup, sign language)
-from autonoma.routers import (  # noqa: E402
-    agents as _agents_router,
-)
-from autonoma.routers import (
-    bridges as _bridges_router,
-)
-from autonoma.routers import (
-    live as _live_router,
-)
-from autonoma.routers import (
-    personas as _personas_router,
-)
-from autonoma.routers import (
-    playback as _playback_router,
-)
-from autonoma.routers import (
-    podcast as _podcast_router,
-)
-from autonoma.routers import (
-    sign as _sign_router,
-)
-from autonoma.routers import (
-    standup as _standup_router,
-)
-from autonoma.routers import (
-    swarm_battle as _battle_router,
-)
-from autonoma.routers import (
-    vision as _vision_router,
-)
-
-app.include_router(_agents_router.router)
-app.include_router(_bridges_router.router)
-from autonoma.routers import cutscenes as _cutscenes_router  # noqa: E402
-
-app.include_router(_cutscenes_router.router)
-from autonoma.routers import scheduler as _scheduler_router  # noqa: E402
-
-app.include_router(_scheduler_router.router)
-from autonoma.routers import gestures as _gestures_router  # noqa: E402
-from autonoma.routers import translate as _translate_router  # noqa: E402
-
-app.include_router(_gestures_router.router)
-
-app.include_router(_translate_router.router)
-
+# ── Feature routers ──────────────────────────────────────────────────
+# Every other route group is an ``APIRouter`` under ``autonoma.routers``
+# (voice, streaming/vision/bridges, personas, battle, playback, standup,
+# sign language, the 2026-05 feature pack, ...). All are additive and
+# live under distinct prefixes; each lazy-imports what it needs from this
+# module so importing a router is cheap and cycle-free.
+import autonoma.routers.ab_compare as _ab_compare_router
+import autonoma.routers.achievements as _achievements_router
+import autonoma.routers.agents as _agents_router
+import autonoma.routers.anomalies as _anomalies_router
+import autonoma.routers.bridges as _bridges_router
+import autonoma.routers.clips as _clips_router
+import autonoma.routers.coordinator as _coordinator_router
+import autonoma.routers.custom_achievements as _custom_achievements_router
+import autonoma.routers.cutscenes as _cutscenes_router
+import autonoma.routers.draft as _draft_router
+import autonoma.routers.fingerspell as _fingerspell_router
+import autonoma.routers.gestures as _gestures_router
+import autonoma.routers.highlights as _highlights_router
+import autonoma.routers.inspire as _inspire_router
+import autonoma.routers.leaderboard as _leaderboard_router
+import autonoma.routers.live as _live_router
+import autonoma.routers.live_share as _live_share_router
+import autonoma.routers.metrics as _metrics_router
+import autonoma.routers.mocap_live as _mocap_live_router
+import autonoma.routers.persona_breed as _persona_breed_router
+import autonoma.routers.personas as _personas_router
+import autonoma.routers.playback as _playback_router
+import autonoma.routers.podcast as _podcast_router
+import autonoma.routers.points as _points_router
+import autonoma.routers.quest_templates as _quest_templates_router
+import autonoma.routers.quests as _quests_router
+import autonoma.routers.scheduler as _scheduler_router
+import autonoma.routers.sign as _sign_router
+import autonoma.routers.standup as _standup_router
+import autonoma.routers.swarm_battle as _battle_router
+import autonoma.routers.translate as _translate_router
+import autonoma.routers.viewer_betting as _viewer_betting_router
+import autonoma.routers.vision as _vision_router
+import autonoma.routers.voice_consent as _voice_consent_router
 
 # ── Headless swarm launcher (extracted) ──────────────────────────────
 # Re-export so call sites (``mcp/server.py``, scheduler bus handlers,
 # tests that patch ``api_module._on_schedule_fire_requested``) keep
 # working unchanged.
-from autonoma._api_headless import (  # noqa: E402, F401 — re-exported
+from autonoma._api_headless import (  # noqa: F401 — re-exported
     _HeadlessWebSocket,
     _next_headless_session_id,
     _on_schedule_fire_requested,
     _run_swarm_headless,
 )
+from autonoma.routers import voice as _voice_router  # noqa: E402
 
+app.include_router(_voice_router.router)
+app.include_router(_agents_router.router)
+app.include_router(_bridges_router.router)
+app.include_router(_cutscenes_router.router)
+app.include_router(_scheduler_router.router)
+app.include_router(_gestures_router.router)
+import autonoma.routers.managed as _managed_router  # noqa: E402
+
+app.include_router(_managed_router.router)
+app.include_router(_translate_router.router)
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
 app.include_router(_playback_router.router)
@@ -4525,73 +2402,6 @@ app.include_router(_standup_router.router)
 app.include_router(_battle_router.router)
 app.include_router(_podcast_router.router)
 app.include_router(_vision_router.router)
-
-# ── 2026-05 feature pack routers ─────────────────────────────────────
-# All twelve are additive — none mutate or shadow earlier routes. Order
-# matters only for FastAPI's first-match rule and these all live under
-# fresh prefixes. Each lazy-imports settings on demand so importing the
-# router is cheap.
-from autonoma.routers import (  # noqa: E402
-    ab_compare as _ab_compare_router,
-)
-from autonoma.routers import (
-    achievements as _achievements_router,
-)
-from autonoma.routers import (
-    anomalies as _anomalies_router,
-)
-from autonoma.routers import (
-    clips as _clips_router,
-)
-from autonoma.routers import (
-    coordinator as _coordinator_router,
-)
-from autonoma.routers import (
-    custom_achievements as _custom_achievements_router,
-)
-from autonoma.routers import (
-    draft as _draft_router,
-)
-from autonoma.routers import (
-    fingerspell as _fingerspell_router,
-)
-from autonoma.routers import (
-    highlights as _highlights_router,
-)
-from autonoma.routers import (
-    inspire as _inspire_router,
-)
-from autonoma.routers import (
-    leaderboard as _leaderboard_router,
-)
-from autonoma.routers import (
-    live_share as _live_share_router,
-)
-from autonoma.routers import (
-    metrics as _metrics_router,
-)
-from autonoma.routers import (
-    mocap_live as _mocap_live_router,
-)
-from autonoma.routers import (
-    persona_breed as _persona_breed_router,
-)
-from autonoma.routers import (
-    points as _points_router,
-)
-from autonoma.routers import (
-    quest_templates as _quest_templates_router,
-)
-from autonoma.routers import (
-    quests as _quests_router,
-)
-from autonoma.routers import (
-    viewer_betting as _viewer_betting_router,
-)
-from autonoma.routers import (
-    voice_consent as _voice_consent_router,
-)
-
 app.include_router(_coordinator_router.router)
 app.include_router(_highlights_router.router)
 app.include_router(_inspire_router.router)
@@ -4611,13 +2421,13 @@ app.include_router(_mocap_live_router.router)
 app.include_router(_live_share_router.router)
 app.include_router(_leaderboard_router.router)
 app.include_router(_clips_router.router)
-# Viewer Fantasy Draft MVP — per-session 3-agent roster picks +
-# live scoreboard for spectators on /watch/<code>.
 app.include_router(_draft_router.router)
 
 # MCP server is feature-flagged because it changes the security surface
 # (different auth header, JSON-RPC envelope). Off by default.
 if settings.mcp_server_enabled:
-    from autonoma.mcp import server as _mcp_server  # noqa: E402
+    from autonoma.mcp import server as _mcp_server
 
-    app.include_router(_mcp_server.router)
+    # Streamable HTTP at ``/mcp`` + legacy ``POST /mcp/jsonrpc``. The
+    # streamable transport's session manager is started in ``lifespan``.
+    _mcp_server.mount(app)
