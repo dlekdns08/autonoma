@@ -43,7 +43,7 @@ const MIN_PASSWORD_LEN = 8;
 // know the exact model id.
 const GUEST_DEFAULT_MODEL: Record<GuestProvider, string> = {
   anthropic: "claude-sonnet-5-5",
-  openai: "gpt-4o-mini",
+  openai: "gpt-5.6",
   vllm: "",
 };
 

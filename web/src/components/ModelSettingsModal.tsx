@@ -19,12 +19,12 @@ const CLAUDE_MODELS: ModelOpt[] = [
   { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 (빠름)" },
 ];
 
+// Fallback list only — the live /api/models list from the provider is
+// authoritative. gpt-4o / o1-era ids are scheduled for retirement.
 const OPENAI_MODELS: ModelOpt[] = [
-  { value: "gpt-4o", label: "GPT-4o (권장)" },
-  { value: "gpt-4o-mini", label: "GPT-4o mini (빠름)" },
-  { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-  { value: "o1", label: "o1 (추론)" },
-  { value: "o1-mini", label: "o1-mini" },
+  { value: "gpt-5.6", label: "GPT-5.6 (권장)" },
+  { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  { value: "gpt-5.5", label: "GPT-5.5" },
 ];
 
 // Dev default for self-hosted vLLM (OpenAI-compatible). Operators can
