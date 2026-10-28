@@ -143,11 +143,14 @@ async def test_nudge_and_approve_and_spawn(fake_bus: FakeBus) -> None:
             ("nudge_agent", {"agent": "Ghost", "message": "x", "reason": "r"}),
         ]
     )
-    assert (await d._consult_on_stall(project, available_agents=[]))["action"] == "nudge_agent"
+    first = await d._consult_on_stall(project, available_agents=[])
+    assert first is not None and first["action"] == "nudge_agent"
     assert "[DIRECTOR] ship the schema" in project.messages[-1].content
-    assert (await d._consult_on_stall(project, available_agents=[]))["action"] == "approve_review"
+    second = await d._consult_on_stall(project, available_agents=[])
+    assert second is not None and second["action"] == "approve_review"
     assert t2.status == TaskStatus.DONE
-    assert (await d._consult_on_stall(project, available_agents=[]))["action"] == "spawn_agent"
+    third = await d._consult_on_stall(project, available_agents=[])
+    assert third is not None and third["action"] == "spawn_agent"
     spawn = [x for n, x in fake_bus.events if n == "agent.spawn_requested"]
     assert spawn and spawn[0]["name"] == "Cy" and spawn[0]["role"] == "writer"
     # Unknown agent → not applied, no exception.
@@ -196,12 +199,7 @@ def test_anthropic_request_adds_advisor_tool_and_beta(monkeypatch: pytest.Monkey
 
     from autonoma import llm as llm_module
 
-    monkeypatch.setattr(
-        llm_module.settings if hasattr(llm_module, "settings") else director_mod.settings,
-        "advisor_max_uses",
-        3,
-        raising=False,
-    )
+    monkeypatch.setattr(director_mod.settings, "advisor_max_uses", 3)
     client = llm_module.AnthropicLLMClient.__new__(llm_module.AnthropicLLMClient)
     client._client = MagicMock()
     ns, kw = client._build_request(

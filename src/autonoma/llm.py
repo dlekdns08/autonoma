@@ -275,6 +275,8 @@ class LLMConfig:
     effort: Effort | None = "high"
     worker_effort: Effort | None = "low"
     decision_protocol: DecisionProtocol = "auto"
+    # Advisor tool model for worker turns (empty → off; Anthropic only).
+    advisor_model: str = ""
 
     def resolved_worker_model(self) -> str:
         return self.worker_model or self.model
@@ -306,6 +308,7 @@ class BaseLLMClient(ABC):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,
     ) -> LLMResponse:
         """Send a completion request and return a normalized response.
 
@@ -361,6 +364,7 @@ class BaseLLMClient(ABC):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Yield :class:`StreamEvent` objects; the last one is ``final``.
 
@@ -378,6 +382,7 @@ class BaseLLMClient(ABC):
             effort=effort,
             tools=tools,
             single_tool_call=single_tool_call,
+            advisor_model=advisor_model,
         )
         if response.text:
             yield StreamEvent("text", text=response.text)
@@ -441,6 +446,15 @@ _FALLBACK_MODEL_PREFIXES = (
     "claude-sonnet-5-5",
 )
 _SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_ADVISOR_TOOL_TYPE = "advisor_20260301"
+_ADVISOR_BETA = "advisor-tool-2026-03-01"
+
+
+def _advisor_max_uses() -> int:
+    from autonoma.config import settings
+
+    return max(1, int(getattr(settings, "advisor_max_uses", 2) or 2))
+
 
 # Error text the API returns when a model doesn't take ``role: system``
 # inside ``messages`` (Claude Sonnet 5 and older generations).
@@ -527,6 +541,7 @@ class AnthropicLLMClient(BaseLLMClient):
         tools: list[ToolSpec] | None,
         single_tool_call: bool,
         streaming: bool,
+        advisor_model: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """Return ``(messages_namespace, kwargs)`` for the SDK call.
 
@@ -570,6 +585,19 @@ class AnthropicLLMClient(BaseLLMClient):
             }
 
         betas: list[str] = []
+        if advisor_model and advisor_model != model:
+            # Server-side advisor: the executor consults a stronger model
+            # mid-generation; capped per request so cost stays bounded.
+            kwargs.setdefault("tools", [])
+            kwargs["tools"].append(
+                {
+                    "type": _ADVISOR_TOOL_TYPE,
+                    "name": "advisor",
+                    "model": advisor_model,
+                    "max_uses": _advisor_max_uses(),
+                }
+            )
+            betas.append(_ADVISOR_BETA)
         if supports_server_fallback(model):
             betas.append(_SERVER_FALLBACK_BETA)
             kwargs["fallbacks"] = "default"
@@ -612,6 +640,7 @@ class AnthropicLLMClient(BaseLLMClient):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,
     ) -> LLMResponse:
         import anthropic
 
@@ -625,6 +654,7 @@ class AnthropicLLMClient(BaseLLMClient):
             tools=tools,
             single_tool_call=single_tool_call,
             streaming=False,
+            advisor_model=advisor_model,
         )
 
         async def _do() -> Any:
@@ -677,6 +707,7 @@ class AnthropicLLMClient(BaseLLMClient):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         import anthropic
 
@@ -690,6 +721,7 @@ class AnthropicLLMClient(BaseLLMClient):
             tools=tools,
             single_tool_call=single_tool_call,
             streaming=True,
+            advisor_model=advisor_model,
         )
 
         async def _run() -> AsyncIterator[StreamEvent]:
@@ -957,6 +989,7 @@ class OpenAILLMClient(BaseLLMClient):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,  # noqa: ARG002 — Anthropic-only server tool
     ) -> LLMResponse:
         create_kwargs = self._build_kwargs(
             model=model,
@@ -1009,6 +1042,7 @@ class OpenAILLMClient(BaseLLMClient):
         effort: str | None = None,
         tools: list[ToolSpec] | None = None,
         single_tool_call: bool = True,
+        advisor_model: str | None = None,  # noqa: ARG002 — Anthropic-only server tool
     ) -> AsyncIterator[StreamEvent]:
         create_kwargs = self._build_kwargs(
             model=model,
@@ -1122,4 +1156,5 @@ def llm_config_from_settings() -> LLMConfig:
         effort=settings.director_effort or None,
         worker_effort=settings.worker_effort or None,
         decision_protocol=settings.decision_protocol,
+        advisor_model=settings.advisor_model,
     )
