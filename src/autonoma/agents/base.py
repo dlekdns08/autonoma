@@ -255,6 +255,8 @@ class AutonomousAgent:
         # Background Claude Agent SDK session (``worker_backend=agent_sdk``).
         self._deep_work: asyncio.Task[Any] | None = None
         self._deep_work_task_id: str = ""
+        # Managed Agents session ids this agent ran (input to dreams).
+        self.managed_session_ids: list[str] = []
         self._total_tokens = 0
         self._total_cost_usd = 0.0
         self._consecutive_errors = 0
@@ -1073,6 +1075,16 @@ RECENT MESSAGES:
     # ── Deep work (Claude Agent SDK) ──────────────────────────────────
 
     def _deep_work_enabled(self) -> bool:
+        if settings.worker_backend == "managed_agents":
+            from autonoma.managed import is_configured
+
+            if not is_configured():
+                logger.warning(
+                    f"[{self.name}] worker_backend=managed_agents but no Anthropic key is "
+                    "configured; falling back to native actions"
+                )
+                return False
+            return True
         if settings.worker_backend != "agent_sdk":
             return False
         from autonoma.agents import deepwork
@@ -1122,19 +1134,38 @@ RECENT MESSAGES:
             )[:120]
             await bus.emit("agent.tool_use", agent=self.name, tool=name, detail=detail)
 
-        session = DeepWorkSession(
-            agent_name=self.name,
-            role=self.persona.role,
-            task_id=task.id,
-            task_title=task.title,
-            task_description=task.description,
-            project_description=project.description,
-            project_dir=project_dir,
-            on_text=on_text,
-            on_tool=on_tool,
-        )
+        session: Any
+        if settings.worker_backend == "managed_agents":
+            from autonoma.managed.deepwork import ManagedDeepWorkSession
+
+            session = ManagedDeepWorkSession(
+                agent_name=self.name,
+                role=self.persona.role,
+                task_id=task.id,
+                task_title=task.title,
+                task_description=task.description,
+                project_description=project.description,
+                project_dir=project_dir,
+                character_uuid=self.character_uuid,
+                on_text=on_text,
+                on_tool=on_tool,
+            )
+        else:
+            session = DeepWorkSession(
+                agent_name=self.name,
+                role=self.persona.role,
+                task_id=task.id,
+                task_title=task.title,
+                task_description=task.description,
+                project_description=project.description,
+                project_dir=project_dir,
+                on_text=on_text,
+                on_tool=on_tool,
+            )
         try:
             result = await session.run()
+            if getattr(session, "session_id", ""):
+                self.managed_session_ids.append(session.session_id)
         except asyncio.CancelledError:
             await bus.emit("deepwork.cancelled", agent=self.name, task_id=task.id)
             raise

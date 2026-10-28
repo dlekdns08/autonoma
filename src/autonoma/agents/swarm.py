@@ -851,6 +851,10 @@ class AgentSwarm:
             multiverse=multiverse_report,
             graveyard=graveyard,
         )
+
+        # Managed Agents dreams: consolidate each character's sessions
+        # into its memory store, off the critical path.
+        self._schedule_dreams()
         return project
 
     def stop(self) -> None:
@@ -887,6 +891,40 @@ class AgentSwarm:
         wait_seconds = timeout_rounds * 0.1
         await asyncio.sleep(wait_seconds)
         logger.info(f"[Swarm] Graceful shutdown complete after {wait_seconds}s wait")
+
+    def _schedule_dreams(self) -> None:
+        if not settings.managed_dreams_enabled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._run_dreams())
+
+    async def _run_dreams(self) -> None:
+        from autonoma.managed import client as managed_client
+        from autonoma.managed import dreams, registry
+
+        if not managed_client.is_configured():
+            return
+        client = managed_client.get_client()
+        for name, agent in list(self.agents.items()):
+            ids = list(getattr(agent, "managed_session_ids", []) or [])
+            uid = getattr(agent, "character_uuid", "") or ""
+            if not ids or not uid:
+                continue
+            try:
+                store_id = await registry.ensure_memory_store(client, uid, name)
+                await bus.emit("dream.started", agent=name, sessions=len(ids))
+                dream = await dreams.run_dream(client, memory_store_id=store_id, session_ids=ids)
+                await bus.emit(
+                    "dream.finished",
+                    agent=name,
+                    status=str(getattr(dream, "status", "")),
+                    dream_id=str(getattr(dream, "id", "")),
+                )
+            except Exception:
+                logger.exception(f"[Swarm] dream failed for {name}")
 
     def _schedule_signature_gestures(self, agent: AutonomousAgent) -> None:
         if not settings.gesture_gen_enabled:

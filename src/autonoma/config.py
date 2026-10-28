@@ -88,6 +88,19 @@ class Settings(BaseSettings):
     # trail). Keeps the cached prefix bounded.
     agent_history_rounds: int = 12
 
+    # ── Managed Agents (autonoma.managed) ──
+    # ``worker_backend=managed_agents`` runs each task as an outcome-driven
+    # hosted session; ``managed_memory_enabled`` attaches a per-character
+    # memory store; ``managed_dreams_enabled`` consolidates a run's sessions
+    # into those stores when the swarm finishes ("the character dreams").
+    managed_environment_name: str = "autonoma-workspace"
+    managed_agent_name: str = "Autonoma Worker"
+    managed_networking: Literal["limited", "unrestricted"] = "limited"
+    managed_outcome_max_iterations: int = 3
+    managed_memory_enabled: bool = True
+    managed_dreams_enabled: bool = False
+    managed_dream_model: str = "claude-sonnet-5-5"
+
     # ── Self-authored gestures (autonoma.gestures) ──
     # When on, every spawned worker gets a small set of signature moves
     # composed by an LLM choreographer (cached per agent name + trigger;
