@@ -258,16 +258,67 @@ def _configured_backend() -> str:
         return "auto"
 
 
+_bwrap_probe_cache: dict[str, bool] = {}
+
+
+def _bwrap_usable() -> bool:
+    """Can bubblewrap actually create namespaces here?
+
+    Installed is not enough: Ubuntu 24.04 (AppArmor
+    ``kernel.apparmor_restrict_unprivileged_userns=1``), many containers
+    and some CI runners refuse unprivileged user namespaces, and every
+    run then dies with ``bwrap: Creating new namespace failed``. Probed
+    once per binary path and cached. ``srt`` uses bubblewrap on Linux, so
+    it is gated on the same probe.
+    """
+    path = shutil.which("bwrap")
+    if not path:
+        return False
+    cached = _bwrap_probe_cache.get(path)
+    if cached is not None:
+        return cached
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [path, "--unshare-all", "--die-with-parent", "--ro-bind", "/", "/", "true"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+        )
+        ok = proc.returncode == 0
+        if not ok:
+            logger.warning(
+                "[sandbox] bwrap is installed but cannot create namespaces (%s); "
+                "falling back. On Ubuntu 24.04 run `sudo sysctl -w "
+                "kernel.apparmor_restrict_unprivileged_userns=0` or install an "
+                "AppArmor profile for bwrap to get full isolation.",
+                (proc.stderr or b"").decode("utf-8", "replace").strip()[:200],
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("[sandbox] bwrap probe failed: %s", exc)
+        ok = False
+    _bwrap_probe_cache[path] = ok
+    return ok
+
+
+def _srt_usable(system: str) -> bool:
+    if not _srt_binary():
+        return False
+    # On Linux srt is a bubblewrap front-end; on macOS it uses seatbelt.
+    return system != "Linux" or _bwrap_usable()
+
+
 def _detect_backend() -> str:
     system = platform.system()
     wanted = _configured_backend()
     if wanted == "srt":
-        return "srt" if _srt_binary() else _native_backend(system)
+        return "srt" if _srt_usable(system) else _native_backend(system)
     if wanted in ("seatbelt", "bwrap", "rlimit"):
         return wanted
     # auto: prefer srt (cross-platform, network allow-list, credential
-    # deny rules) when installed, then the OS-native primitives.
-    if system in ("Darwin", "Linux") and _srt_binary():
+    # deny rules) when installed and workable, then the OS primitives.
+    if system in ("Darwin", "Linux") and _srt_usable(system):
         return "srt"
     return _native_backend(system)
 
@@ -275,7 +326,7 @@ def _detect_backend() -> str:
 def _native_backend(system: str) -> str:
     if system == "Darwin" and shutil.which("sandbox-exec"):
         return "seatbelt"
-    if system == "Linux" and shutil.which("bwrap"):
+    if system == "Linux" and _bwrap_usable():
         return "bwrap"
     return "rlimit"
 
@@ -295,6 +346,7 @@ def backend_info() -> dict[str, object]:
         "backend": _detect_backend(),
         "sandbox_exec": shutil.which("sandbox-exec"),
         "bwrap": shutil.which("bwrap"),
+        "bwrap_usable": _bwrap_usable() if system == "Linux" else None,
         "srt": _srt_binary(),
         "max_concurrent": _SEM_CAPACITY,
         "rlimit_memory_enforced": system == "Linux",
@@ -315,7 +367,7 @@ class CodeSandbox:
         self.limits = limits or SandboxLimits()
         self.backend = _detect_backend()
 
-    async def run(self, code: str, language: Language = Language.PYTHON) -> SandboxResult:
+    async def run(self, code: str, language: Language | str = Language.PYTHON) -> SandboxResult:
         if not isinstance(language, Language):
             language = Language(str(language).lower())
         async with _semaphore():

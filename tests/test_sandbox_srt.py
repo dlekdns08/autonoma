@@ -123,3 +123,36 @@ def test_deepwork_sandbox_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setattr(deepwork.settings, "deep_work_sandbox", False)
     kw = session._options(sdk).kwargs
     assert kw["permission_mode"] == "bypassPermissions" and "sandbox" not in kw
+
+
+def test_unusable_bwrap_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ubuntu 24.04 / restricted containers: bwrap installed but no userns."""
+    monkeypatch.setattr(sbx.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sbx, "_configured_backend", lambda: "auto")
+    monkeypatch.setattr(sbx, "_srt_binary", lambda: "/usr/local/bin/srt")
+    monkeypatch.setattr(sbx, "_bwrap_usable", lambda: False)
+    assert sbx._detect_backend() == "rlimit"  # neither srt nor bwrap
+    monkeypatch.setattr(sbx, "_bwrap_usable", lambda: True)
+    assert sbx._detect_backend() == "srt"
+    monkeypatch.setattr(sbx, "_srt_binary", lambda: None)
+    assert sbx._detect_backend() == "bwrap"
+
+
+def test_bwrap_probe_caches_and_reads_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    class Done:
+        def __init__(self, rc: int) -> None:
+            self.returncode = rc
+            self.stderr = b"bwrap: Creating new namespace failed: Resource temporarily unavailable"
+
+    monkeypatch.setattr(
+        sbx.shutil, "which", lambda name: "/usr/bin/bwrap" if name == "bwrap" else None
+    )
+    monkeypatch.setattr(sbx, "_bwrap_probe_cache", {})
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: calls.append(argv) or Done(1))
+    assert sbx._bwrap_usable() is False
+    assert sbx._bwrap_usable() is False
+    assert len(calls) == 1 and "--unshare-all" in calls[0]
