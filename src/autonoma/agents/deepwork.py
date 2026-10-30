@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,116 @@ class DeepWorkResult:
     turns: int = 0
     duration_s: float = 0.0
     error: str = ""
+
+
+# ── Containment ──────────────────────────────────────────────────────
+#
+# The Agent SDK merges the *whole* server environment into the CLI
+# subprocess (``ClaudeAgentOptions.env`` can only override, never
+# remove), and file tools pre-approved via ``allowed_tools`` accept any
+# absolute path. Without the guards below a session could read the
+# repo's ``.env``, the SQLite DB under ``data_dir``, or every API token
+# in the environment.
+
+# Credentials the Claude Code CLI itself needs to reach the API.
+_ENV_KEEP = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"}
+_SECRET_MARKERS = (
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "PRIVATE",
+    "COOKIE",
+    "SESSION",
+    "DATABASE_URL",
+    "DSN",
+)
+_SECRET_PREFIXES = (
+    "AUTONOMA_",
+    "AWS_",
+    "AZURE_",
+    "GOOGLE_",
+    "GCP_",
+    "GH_",
+    "GITHUB_",
+    "HF_",
+    "OPENAI",
+)
+_FILE_TOOLS = "Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep"
+_PATH_KEYS = ("file_path", "path", "notebook_path")
+
+
+def scrubbed_env(environ: dict[str, str] | None = None) -> dict[str, str]:
+    """Overrides that blank every secret-looking inherited variable.
+
+    Returned as ``ClaudeAgentOptions.env``; the SDK applies it on top of
+    the inherited environment, so an empty string is how a variable is
+    removed. The Anthropic credential the CLI runs on is kept.
+    """
+    env = os.environ if environ is None else environ
+    out: dict[str, str] = {}
+    for key in env:
+        if key in _ENV_KEEP:
+            continue
+        upper = key.upper()
+        if upper.startswith(_SECRET_PREFIXES) or any(m in upper for m in _SECRET_MARKERS):
+            out[key] = ""
+    return out
+
+
+def _app_root() -> Path:
+    # src/autonoma/agents/deepwork.py → repo root
+    return Path(__file__).resolve().parents[3]
+
+
+def sensitive_read_denies() -> list[str]:
+    """Permission deny rules (``//`` = absolute path). Claude Code applies
+    Read deny rules to its bash sandbox too, so ``cat ../../.env`` is
+    blocked as well as the Read tool."""
+    paths: set[str] = set()
+    for root in {_app_root(), Path.cwd().resolve()}:
+        paths.add(str(root / ".env"))
+        paths.add(str(root / ".env.local"))
+        paths.add(str(root / ".secrets") + "/**")
+    paths.add(str(Path(settings.data_dir).resolve()) + "/**")
+    home = Path.home().resolve()
+    for d in (".ssh", ".aws", ".gnupg", ".kube", ".docker", ".config", ".claude"):
+        paths.add(str(home / d) + "/**")
+    for f in (".netrc", ".npmrc", ".pypirc", ".zshrc", ".bashrc", ".zsh_history", ".bash_history"):
+        paths.add(str(home / f))
+    return sorted(f"Read(/{p})" for p in paths)
+
+
+def make_path_guard(project_dir: Path) -> Any:
+    """PreToolUse hook: file tools may only touch ``project_dir``."""
+    root = project_dir.resolve()
+
+    async def guard(input_data: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        tool_input = (input_data or {}).get("tool_input") or {}
+        for key in _PATH_KEYS:
+            raw = tool_input.get(key)
+            if not raw:
+                continue
+            candidate = Path(str(raw)).expanduser()
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            resolved = candidate.resolve()
+            if resolved != root and not resolved.is_relative_to(root):
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"{raw} is outside the project workspace; "
+                            "only files under the current directory are available."
+                        ),
+                    }
+                }
+        return {}
+
+    return guard
 
 
 def _load_sdk() -> Any:
@@ -164,7 +275,7 @@ class DeepWorkSession:
         kwargs: dict[str, Any] = dict(
             cwd=str(self.project_dir),
             allowed_tools=list(settings.deep_work_allowed_tools),
-            disallowed_tools=list(settings.deep_work_disallowed_tools),
+            disallowed_tools=[*settings.deep_work_disallowed_tools, *sensitive_read_denies()],
             # Without the OS sandbox the workspace directory is the only
             # boundary, so every edit/command is pre-approved; with it on
             # (below) edits are auto-accepted and bash is auto-approved
@@ -175,7 +286,7 @@ class DeepWorkSession:
             max_turns=self.max_turns,
             model=self.model,
             system_prompt=system_prompt,
-            env={"CLAUDE_AGENT_SDK_CLIENT_APP": "autonoma"},
+            env={**scrubbed_env(), "CLAUDE_AGENT_SDK_CLIENT_APP": "autonoma"},
         )
         if self.max_budget_usd:
             kwargs["max_budget_usd"] = self.max_budget_usd
@@ -218,6 +329,12 @@ class DeepWorkSession:
                     tools=["Read", "Bash", "Glob", "Grep"],
                     model="haiku",
                 ),
+            }
+        if hasattr(sdk, "HookMatcher"):
+            kwargs["hooks"] = {
+                "PreToolUse": [
+                    sdk.HookMatcher(matcher=_FILE_TOOLS, hooks=[make_path_guard(self.project_dir)])
+                ]
             }
         return sdk.ClaudeAgentOptions(**kwargs)
 

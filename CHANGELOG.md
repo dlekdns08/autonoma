@@ -105,6 +105,16 @@ captures work in flight.
   coverage, and a README-drift warning.
 
 ### Fixed
+- Deep-work sessions could read the repo's `.env`, the SQLite DB under
+  `data_dir`, and every secret in the server environment: the Agent SDK
+  inherits the full environment and pre-approved file tools accept any
+  absolute path. Sessions now get secret-looking variables blanked (the
+  CLI's own Anthropic credential is kept), a PreToolUse hook confining
+  Read/Write/Edit/Glob/Grep to the project workspace, and Read deny rules
+  for `.env`, `data_dir` and credential dotfiles (also applied to the
+  bash sandbox).
+- Fetched web content reached the prompt unmarked; it is now fenced as
+  `<untrusted_web_content>` with a rule not to follow instructions in it.
 - Missing `llm_config_from_settings` import in `api.py` (NameError on
   scheduled headless runs).
 - Missing `Any` import in `tts_worker.py` (NameError at instantiation).
