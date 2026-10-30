@@ -24,7 +24,7 @@ export default defineConfig({
     // Don't pull these into Vitest's runner — they ship binary deps,
     // talk to the GPU, or rely on browser-only APIs that jsdom can't
     // emulate. Tests for code that uses them should stub the module.
-    exclude: ["node_modules", ".next", "dist"],
+    exclude: ["node_modules", ".next", "dist", "e2e/**"],
     css: false,
   },
 });

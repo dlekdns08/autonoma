@@ -81,6 +81,17 @@ npm run dev          # http://localhost:3000
 
 브라우저에서 열고 프로젝트 목표를 붙여넣으면 디렉터가 알아서 굴립니다.
 
+### E2E·시각 회귀 테스트
+
+```bash
+cd web
+npx playwright install chromium   # 최초 1회
+npm run e2e                        # 앱을 빌드하고 백엔드를 목업으로 대체
+npm run e2e:update                 # 의도한 UI 변경 후 기준 이미지 갱신
+```
+
+백엔드는 띄우지 않습니다. `web/e2e/support/mockBackend.ts`가 HTTP API에 응답하고 고정된 캐릭터로 WebSocket 서버 역할을 하므로 VTuber 무대가 매번 같은 캐릭터로 그려집니다. 모든 라우트의 크래시 여부, OBS 크로마키 위 실제 VRM 렌더링(픽셀 검사), OBS 오버레이·대시보드·로그인 화면의 기준 이미지 비교를 검사합니다. 기준 이미지는 OS별(`*-darwin.png`, `*-linux.png`)이며, CI는 없는 Linux 기준 이미지를 만들어 아티팩트로 올립니다.
+
 ## 아키텍처
 
 ```

@@ -11,6 +11,10 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Playwright E2E + visual regression (`web/e2e`, `npm run e2e`, CI job
+  `e2e`): mocked HTTP/WebSocket backend with a fixed cast, a smoke test
+  per route, a pixel check that a real VRM renders on the OBS green
+  screen, and screenshot baselines (OBS overlay, dashboard, login).
 - MCP server rebuilt on the official `mcp` SDK (`MCPServer`, formerly
   `FastMCP`): the standard streamable-HTTP transport is served at `/mcp`
   (stateless, JSON responses) with the same five tools, typed arguments
@@ -105,6 +109,12 @@ captures work in flight.
   coverage, and a README-drift warning.
 
 ### Fixed
+- `/obs` (an OBS browser source) rendered the site-wide theme and BGM
+  buttons into the stream, with the BGM button covering the record
+  button; they are now hidden on broadcast routes (`GlobalChrome`). On
+  the dashboard the same floating buttons covered the footer `logout`
+  link and the header status dot; both bars reserve room for them.
+  Found by the new Playwright suite.
 - Deep-work sessions could read the repo's `.env`, the SQLite DB under
   `data_dir`, and every secret in the server environment: the Agent SDK
   inherits the full environment and pre-approved file tools accept any

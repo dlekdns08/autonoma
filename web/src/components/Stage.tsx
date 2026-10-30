@@ -218,6 +218,7 @@ export default function Stage({
 
   return (
     <div
+      data-testid="pixel-stage"
       className="relative h-full overflow-hidden rounded-xl border border-cyan-500/20"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}

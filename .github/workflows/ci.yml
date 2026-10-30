@@ -108,3 +108,43 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: npm run build
+
+  e2e:
+    name: E2E & visual (Playwright)
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # The backend is mocked inside the tests (e2e/support/mockBackend.ts);
+      # playwright.config.ts builds and starts the app itself.
+      # ``--update-snapshots=missing``: baselines are per-OS; until the
+      # Linux ones are committed this run writes them (and passes) and the
+      # artifact below carries them — download, review, commit.
+      - name: Playwright
+        working-directory: web
+        run: npx playwright test --update-snapshots=missing
+
+      - name: Upload report and new baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright
+          path: |
+            web/e2e/.report
+            web/e2e/.results
+            web/e2e/__screenshots__
+          retention-days: 14

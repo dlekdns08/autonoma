@@ -1,0 +1,6 @@
+/* Applied only while taking toHaveScreenshot images (stylePath).
+   Canvases (3D stage, starfield, sparklines) animate every frame; the
+   3D render is verified separately by the green-screen pixel check. */
+canvas {
+  visibility: hidden !important;
+}

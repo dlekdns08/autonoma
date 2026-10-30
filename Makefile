@@ -6,7 +6,7 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help install sandbox-runtime lint format fix typecheck test test-fast test-cov \
-        web-test web-lint web-typecheck ci precommit \
+        web-test web-lint web-typecheck e2e e2e-update ci precommit \
         commit amend hooks
 
 help:  ## Show this help.
@@ -53,6 +53,12 @@ web-lint:  ## ESLint over the web directory.
 
 web-typecheck:  ## TypeScript --noEmit check.
 	cd web && npx tsc --noEmit
+
+e2e:  ## Playwright E2E + visual regression (mocked backend; builds the app).
+	cd web && npx playwright test
+
+e2e-update:  ## Re-record visual baselines after an intentional UI change.
+	cd web && npx playwright test --update-snapshots
 
 # ── CI parity ─────────────────────────────────────────────────────────
 

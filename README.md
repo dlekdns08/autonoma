@@ -106,6 +106,17 @@ npm run dev          # http://localhost:3000
 
 Open the web app and paste your project goal. The Director takes it from there.
 
+### End-to-end & visual tests
+
+```bash
+cd web
+npx playwright install chromium   # once
+npm run e2e                        # builds the app, mocks the backend
+npm run e2e:update                 # re-record baselines after an intended UI change
+```
+
+The backend is never started: `web/e2e/support/mockBackend.ts` answers the HTTP API and plays the WebSocket server with a fixed cast, so the VTuber stage renders the same characters every run. Tests cover every route (no uncaught errors), a real VRM render on the OBS green screen (pixel check), and screenshot baselines for the OBS overlay, dashboard, and login. Baselines are per-OS (`*-darwin.png`, `*-linux.png`); CI writes missing Linux ones and uploads them as an artifact to commit.
+
 ## Architecture
 
 ```
