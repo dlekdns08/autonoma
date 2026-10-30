@@ -387,6 +387,18 @@ export default function MocapPage() {
     const wasAutoStop = autoStoppedByMaxRef.current;
     autoStoppedByMaxRef.current = false;
     const clip = mocap.stopRecording();
+    if (
+      clip &&
+      Object.keys(clip.bones).length === 0 &&
+      Object.keys(clip.expressions).length === 0
+    ) {
+      // Nothing was tracked for the whole take (no person in frame, or
+      // the camera shows something MediaPipe can't read). The server
+      // rejects track-less clips as ``empty_clip``, so say so here
+      // instead of offering an upload that is bound to fail.
+      setStageMessage("사람이 감지되지 않아 저장할 동작이 없습니다 — 카메라 앞에서 다시 녹화하세요.");
+      return;
+    }
     if (clip) {
       const bound = { ...clip, sourceVrm: targetVrm ?? "" };
       setDraftClip(bound);

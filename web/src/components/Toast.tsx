@@ -69,7 +69,12 @@ export function createToastId(): number {
 
 export default function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: number) => void }) {
   return (
-    <div className="fixed top-20 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Notifications"
+      className="fixed top-20 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm"
+    >
       {toasts.slice(-5).map((toast) => (
         <ToastCard key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}

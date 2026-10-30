@@ -26,6 +26,7 @@ import {
   type MocapClip,
   type MocapExpression,
 } from "./clipFormat";
+import { API_BASE_URL } from "@/hooks/useSwarm";
 
 /** Per-frame sample buffers — reused across frames. */
 export interface ClipSample {
@@ -230,8 +231,13 @@ export function clipEndpoint(clipId: string): string {
 }
 
 async function fetchClip(clipId: string): Promise<MocapClip> {
-  const res = await fetch(clipEndpoint(clipId), {
-    credentials: "same-origin",
+  // ``clipEndpoint`` is a backend path. The backend lives on its own
+  // origin (``API_BASE_URL``) and the web app has no ``/api`` proxy, so a
+  // relative fetch hit the Next server and 404'd — no library clip or
+  // generated gesture ever played. Same base + cookies as the clip CRUD
+  // calls in ``useMocapClips``.
+  const res = await fetch(`${API_BASE_URL}${clipEndpoint(clipId)}`, {
+    credentials: "include",
   });
   if (!res.ok) {
     throw new Error(`fetch clip ${clipId}: ${res.status}`);

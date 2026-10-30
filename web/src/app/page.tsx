@@ -272,11 +272,16 @@ function Dashboard() {
   const previewOverridesRef = useRef<Map<string, { clipRef: string; expiresAt: number }>>(
     new Map(),
   );
+  // Spotlight pin from a pixel-sprite click or a gesture preview.
+  const [vtPinned, setVtPinned] = useState<string | null>(null);
   const previewGesture = useCallback((agentName: string, clipRef: string, durationS: number) => {
     previewOverridesRef.current.set(agentName, {
       clipRef,
       expiresAt: Date.now() + Math.max(800, durationS * 1000 + 400),
     });
+    // Only the spotlit VRM plays mocap clips, so a preview for anyone
+    // else would silently do nothing — bring that agent on stage.
+    setVtPinned(agentName);
     setManualOverrideBump((n) => n + 1);
   }, []);
   const mocapClipIdFor = useCallback(
@@ -334,7 +339,6 @@ function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Pixel → VTuber transition state
   const [bloomingAgent, setBloomingAgent] = useState<string | null>(null);
-  const [vtPinned, setVtPinned] = useState<string | null>(null);
 
   const [shareCopied, setShareCopied] = useState(false);
 
@@ -760,8 +764,13 @@ function Dashboard() {
         </div>
 
         {/* ── Right: sidebar panels ────────────────────────────────────── */}
+        {/* Panels keep their natural height (``*:shrink-0``) so the column
+            scrolls. With the default flex-shrink they were squashed and
+            their overflow-hidden boxes painted over each other — at
+            1280×800 the Agents list sat under the Files panel and its
+            cards could not be clicked. */}
         <div
-          className="flex flex-col overflow-y-auto scrollbar-thin"
+          className="flex flex-col overflow-y-auto scrollbar-thin *:shrink-0"
           style={{
             width: 308,
             borderLeft: "1px solid rgba(255,255,255,0.05)",

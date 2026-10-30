@@ -2039,6 +2039,14 @@ export default function VRMCharacter({
     () => (webgpuMods ? createWebGpuRendererFactory(webgpuMods) : null),
     [webgpuMods],
   );
+  // Which renderer actually drew, read off the live renderer in
+  // ``onCreated`` and exposed as ``data-renderer`` for diagnostics and
+  // the E2E suite. A WebGPURenderer can still run on three's WebGL2
+  // backend (no adapter), so the backend is what counts:
+  //   "webgpu"           WebGPURenderer on the WebGPU backend
+  //   "webgpu-on-webgl"  WebGPURenderer on its WebGL2 fallback backend
+  //   "webgl"            stock WebGLRenderer (default, or factory fallback)
+  const [activeRenderer, setActiveRenderer] = useState<string | null>(null);
 
   if (webgpu === "loading") {
     // Hold the Canvas until the chunks resolve (or fail → WebGL).
@@ -2050,6 +2058,7 @@ export default function VRMCharacter({
       className="relative h-full w-full overflow-hidden"
       role="img"
       aria-label={`${agent.name} — ${agent.mood || "neutral"}, ${effectiveState}`}
+      data-renderer={activeRenderer ?? undefined}
       // Only the gallery tile should fire onClick on the whole area —
       // in spotlight the OrbitControls need the drag gestures and the
       // parent attaches click handlers to separate overlay elements.
@@ -2080,6 +2089,17 @@ export default function VRMCharacter({
         gl={glFactory ?? { alpha: true }}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
+          const r = gl as unknown as {
+            isWebGPURenderer?: boolean;
+            backend?: { isWebGPUBackend?: boolean };
+          };
+          setActiveRenderer(
+            r.isWebGPURenderer
+              ? r.backend?.isWebGPUBackend
+                ? "webgpu"
+                : "webgpu-on-webgl"
+              : "webgl",
+          );
         }}
       >
         {/* Four-point lighting: ambient + key + fill + backlight rim.
