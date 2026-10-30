@@ -28,7 +28,7 @@ export interface GeneratedGesture {
   trigger_value: string;
   name: string;
   duration_s: number;
-  source: "llm" | "fallback";
+  source: "motion" | "llm" | "fallback";
   votes_up: number;
   votes_down: number;
   status: "active" | "retired";

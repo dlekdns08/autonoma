@@ -57,6 +57,7 @@ class ManagedDeepWorkSession:
         timeout_s: float | None = None,
         on_text: TextCallback | None = None,
         on_tool: ToolCallback | None = None,
+        on_subagent: Any = None,
         client: Any = None,
     ) -> None:
         self.agent_name = agent_name
@@ -73,7 +74,11 @@ class ManagedDeepWorkSession:
         self.timeout_s = timeout_s or settings.deep_work_timeout_s
         self.on_text = on_text
         self.on_tool = on_tool
+        # ``await on_subagent(phase, thread_id, agent_name)`` with phase
+        # "started" | "finished" for multiagent sub-threads.
+        self.on_subagent = on_subagent
         self._client = client
+        self.subagents: dict[str, str] = {}
         self.session_id: str = ""
 
     def _prompt(self, existing: list[str]) -> str:
@@ -174,6 +179,19 @@ class ManagedDeepWorkSession:
                                         }
                                     ],
                                 )
+                        elif etype == "session.thread_created":
+                            tid = str(getattr(event, "session_thread_id", ""))
+                            name = str(getattr(event, "agent_name", "") or "helper")
+                            self.subagents[tid] = name
+                            if self.on_subagent:
+                                await self.on_subagent("started", tid, name)
+                        elif etype in (
+                            "session.thread_status_terminated",
+                            "session.thread_status_idle",
+                        ):
+                            tid = str(getattr(event, "session_thread_id", ""))
+                            if tid in self.subagents and self.on_subagent:
+                                await self.on_subagent("finished", tid, self.subagents.pop(tid))
                         elif etype == "session.status_idle":
                             stop = getattr(getattr(event, "stop_reason", None), "type", "")
                             if stop != "requires_action":

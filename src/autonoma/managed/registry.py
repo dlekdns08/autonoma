@@ -70,17 +70,87 @@ async def ensure_environment(client: Any) -> str:
         return env.id
 
 
+_LEAD_DELEGATION = (
+    " When the task splits into independent parts (for example a module and its "
+    "docs), hand each self-contained part to a copy of yourself, one task per copy. "
+    "Hand running and fixing up the test suite to Test runner with the exact command. "
+    "Keep integration, verification and the final summary for yourself."
+)
+
+
+async def _ensure_test_runner(client: Any, data: dict[str, Any]) -> str:
+    if data.get("test_runner_id"):
+        return data["test_runner_id"]
+    runner = await client.beta.agents.create(
+        name="Test runner",
+        description=(
+            "Low-cost agent that runs a project's tests or program and reports failures "
+            "with output and file:line. Give it the command and what should pass."
+        ),
+        model=settings.managed_worker_model,
+        system=(
+            "Run exactly the command you are given in the shared workspace, read the "
+            "failures, and report pass/fail with the relevant output and file:line for "
+            "each failure. Fix only test files; report problems in source code instead."
+        ),
+        tools=[
+            {
+                "type": "agent_toolset_20260401",
+                "default_config": {"enabled": True, "permission_policy": {"type": "always_allow"}},
+                "configs": [
+                    {"name": "web_fetch", "enabled": False},
+                    {"name": "web_search", "enabled": False},
+                ],
+            }
+        ],
+    )
+    data["test_runner_id"] = runner.id
+    return runner.id
+
+
 async def ensure_agent(client: Any) -> tuple[str, Any]:
-    """Return ``(agent_id, version)`` for the worker agent, creating it once."""
+    """Return ``(agent_id, version)`` for the worker agent, creating it once.
+
+    With ``managed_multiagent`` the worker is a lead with a roster
+    (copies of itself + a cheaper Test runner); it is stored under its own
+    key so toggling the flag never reuses the wrong agent.
+    """
+    multi = bool(settings.managed_multiagent)
+    id_key, ver_key = (
+        ("lead_agent_id", "lead_agent_version") if multi else ("agent_id", "agent_version")
+    )
     async with _lock:
         data = load()
-        if data.get("agent_id"):
-            return data["agent_id"], data.get("agent_version")
+        if data.get(id_key):
+            return data[id_key], data.get(ver_key)
         model = settings.deep_work_model or settings.model
+        extra: dict[str, Any] = {}
+        system = _worker_system_prompt()
+        if multi:
+            runner_id = await _ensure_test_runner(client, data)
+            system += _LEAD_DELEGATION
+            extra["multiagent"] = {
+                "type": "multiagent_20261001",
+                "subagents": {
+                    "type": "enabled",
+                    "predefined_agents": [runner_id, {"type": "self"}],
+                    "inline_agents": {"type": "disabled"},
+                },
+                "workflows": (
+                    {
+                        "type": "enabled",
+                        "predefined_agents": [runner_id],
+                        "inline_agents": {"type": "disabled"},
+                    }
+                    if settings.managed_workflows
+                    else {"type": "disabled"}
+                ),
+            }
         agent = await client.beta.agents.create(
-            name=settings.managed_agent_name,
+            name=settings.managed_agent_name + (" (lead)" if multi else ""),
             model={"id": model, "effort": settings.deep_work_effort or "medium"},
-            system=_worker_system_prompt(),
+            system=system,
+            **extra,
             tools=[
                 {
                     "type": "agent_toolset_20260401",
@@ -97,11 +167,11 @@ async def ensure_agent(client: Any) -> tuple[str, Any]:
                 }
             ],
         )
-        data["agent_id"] = agent.id
-        data["agent_version"] = getattr(agent, "version", None)
+        data[id_key] = agent.id
+        data[ver_key] = getattr(agent, "version", None)
         save(data)
-        logger.info("[managed] created agent %s", agent.id)
-        return agent.id, data["agent_version"]
+        logger.info("[managed] created %s agent %s", "lead" if multi else "worker", agent.id)
+        return agent.id, data[ver_key]
 
 
 async def ensure_memory_store(client: Any, character_uuid: str, name: str) -> str:

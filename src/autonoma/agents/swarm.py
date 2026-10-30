@@ -109,7 +109,7 @@ class AgentSwarm:
         # List[{character_uuid, round, cause, epitaph}] — populated by
         # _create_ghost so finish_project can persist it.
         self._deaths: list[dict[str, Any]] = []
-        self._wills: list[dict[str, str]] = []
+        self._wills: list[dict[str, Any]] = []  # character_uuid may be None (registry off)
         # Captured by _run_loop just before it exits so the finally-block
         # persister gets the right exit reason.
         self._last_exit_reason: str = ""
@@ -545,6 +545,31 @@ class AgentSwarm:
                 self._round -= 1  # this round didn't actually run
                 break
 
+            # Dollar view of the same budget: list-price spend so far and
+            # the prompt-cache hit rate, published every round; hard stop
+            # at ``settings.swarm_budget_usd``.
+            cost = self.cost_summary()
+            await bus.emit("swarm.cost", round=self._round, **cost)
+            cap_usd = float(settings.swarm_budget_usd or 0.0)
+            if cap_usd > 0 and cost["total_usd"] >= cap_usd:
+                logger.info(
+                    "[Swarm] dollar cap reached at round %d ($%.4f >= $%.2f) — stopping",
+                    self._round,
+                    cost["total_usd"],
+                    cap_usd,
+                )
+                await bus.emit(
+                    "swarm.budget_stop",
+                    round=self._round,
+                    tokens_used=total_tokens,
+                    cap=self.policy.budget.tokens_per_run,
+                    cost_usd=cost["total_usd"],
+                    cap_usd=cap_usd,
+                )
+                exit_reason = "budget_usd_exceeded"
+                self._round -= 1
+                break
+
             # Update round number on all agents
             for agent in self.agents.values():
                 agent._round_number = self._round
@@ -891,6 +916,24 @@ class AgentSwarm:
         wait_seconds = timeout_rounds * 0.1
         await asyncio.sleep(wait_seconds)
         logger.info(f"[Swarm] Graceful shutdown complete after {wait_seconds}s wait")
+
+    def cost_summary(self) -> dict[str, Any]:
+        """List-price spend and prompt-cache hit rate across all agents."""
+        agents = list(self.agents.values())
+        total = sum(float(getattr(a, "total_cost_usd", 0.0) or 0.0) for a in agents)
+        prompt = sum(int(getattr(a, "prompt_tokens", 0) or 0) for a in agents)
+        cached = sum(int(getattr(a, "cache_read_tokens", 0) or 0) for a in agents)
+        unpriced = sum(int(getattr(a, "_unpriced_calls", 0) or 0) for a in agents)
+        return {
+            "total_usd": round(total, 6),
+            "cache_hit_ratio": round(cached / prompt, 4) if prompt else 0.0,
+            "prompt_tokens": prompt,
+            "cache_read_tokens": cached,
+            "unpriced_calls": unpriced,
+            "by_agent": {
+                a.name: round(float(getattr(a, "total_cost_usd", 0.0) or 0.0), 6) for a in agents
+            },
+        }
 
     def _schedule_dreams(self) -> None:
         if not settings.managed_dreams_enabled:

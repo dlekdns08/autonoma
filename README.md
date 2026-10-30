@@ -106,6 +106,16 @@ npm run dev          # http://localhost:3000
 
 Open the web app and paste your project goal. The Director takes it from there.
 
+### Measuring changes (eval harness)
+
+```bash
+uv run python -m autonoma.eval --dry-run                       # stub model, no cost: proves the harness
+uv run python -m autonoma.eval --suite core \
+    --variants baseline,advisor,sonnet-workers --repeats 3 --budget-usd 10
+```
+
+Runs fixed goals headlessly per variant (model tiers, advisor, decision protocol, Director interventions, deep work), interleaved so a budget stop leaves a fair comparison, and writes `output/eval/<ts>/report.md`: completion, files that parse/lint, $/run, $/task done, rounds, cache hit rate. `--budget-usd` is a hard cap across the whole eval.
+
 ### End-to-end & visual tests
 
 ```bash
@@ -172,6 +182,9 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_WORKER_BACKEND` | `native` (one file per round), `agent_sdk` (Claude Code session in `output/<project>/`; `uv sync --extra agent-sdk`), or `managed_agents` (Anthropic-hosted outcome-driven session with a per-character memory store) | `native` |
 | `AUTONOMA_SANDBOX_BACKEND` | run_code isolation: `auto` prefers Anthropic's sandbox runtime (`srt`), else sandbox-exec / bwrap / rlimit | `auto` |
 | `AUTONOMA_SANDBOX_AUTO_INSTALL` | On startup, install the pinned `srt` into `data/sandbox-runtime/` when it is missing (needs `npm`) | `true` |
+| `AUTONOMA_SWARM_BUDGET_USD` | Hard stop at this list-price spend per run (LLM + deep work); `swarm.cost` reports spend and cache hit rate each round | `0` (off) |
+| `AUTONOMA_MANAGED_MULTIAGENT` | Hosted deep work as a lead that delegates to copies of itself and a cheap Test runner; sub-threads appear on stage | `false` |
+| `AUTONOMA_GESTURE_MOTION_BACKEND` | `http` asks an external text-to-motion server (SMPL-22 → VRM retarget), else the DSL choreographer | `procedural` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |

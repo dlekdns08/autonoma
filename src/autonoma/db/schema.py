@@ -560,7 +560,7 @@ generated_gestures = Table(
     Column("duration_s", Float, nullable=False),
     Column("fps", Integer, nullable=False),
     Column("frame_count", Integer, nullable=False),
-    Column("source", String(16), nullable=False, server_default="llm"),  # llm|fallback
+    Column("source", String(16), nullable=False, server_default="llm"),  # motion|llm|fallback
     Column("model", String(64), nullable=False, server_default=""),
     Column("votes_up", Integer, nullable=False, server_default="0"),
     Column("votes_down", Integer, nullable=False, server_default="0"),

@@ -11,6 +11,17 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Eval harness (`python -m autonoma.eval`): fixed goal suites × named
+  variants, interleaved scheduling under a hard `--budget-usd`, objective
+  CI-pass metric alongside self-reported completion, `--dry-run` stub.
+- List-price cost accounting (`autonoma.pricing`), prompt-cache hit rate,
+  a per-round `swarm.cost` event and a hard `AUTONOMA_SWARM_BUDGET_USD` cap.
+- Multiagent hosted deep work (`AUTONOMA_MANAGED_MULTIAGENT`): lead with a
+  roster of copies of itself and a Haiku 5.5 Test runner;
+  `deepwork.subagent_started/finished` events.
+- Text-to-motion gesture backend (`AUTONOMA_GESTURE_MOTION_BACKEND=http`):
+  external motion server contract, SMPL-22 → VRM retarget, velocity
+  validation, DSL fallback.
 - Playwright E2E + visual regression (`web/e2e`, `npm run e2e`, CI job
   `e2e`): mocked HTTP/WebSocket backend with a fixed cast, a smoke test
   per route, a pixel check that a real VRM renders on the OBS green
@@ -109,6 +120,13 @@ captures work in flight.
   coverage, and a README-drift warning.
 
 ### Fixed
+- `run_code` failed on every call where bubblewrap is installed but
+  cannot create user namespaces (Ubuntu 24.04 AppArmor default, many
+  containers, CI runners): the sandbox now probes bwrap once and falls
+  back with a warning; `srt` on Linux is gated on the same probe.
+- pyright: 70 errors → 0 (incl. a real bug in `coordinator/store.py`
+  where an id collision built an invalid `MatchInvite`); CI's pyright
+  step is now blocking.
 - `/obs` (an OBS browser source) rendered the site-wide theme and BGM
   buttons into the stream, with the BGM button covering the record
   button; they are now hidden on broadcast routes (`GlobalChrome`). On

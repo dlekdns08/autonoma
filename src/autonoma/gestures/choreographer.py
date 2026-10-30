@@ -63,7 +63,7 @@ class CharacterContext:
 class ComposeResult:
     score: GestureScore
     clip: dict[str, Any]
-    source: str  # "llm" | "fallback"
+    source: str  # "motion" | "llm" | "fallback"
     model: str = ""
     attempts: int = 0
     error: str = ""
@@ -226,10 +226,41 @@ async def compose(
     effort: str | None = "low",
     max_attempts: int = 2,
 ) -> ComposeResult:
-    """Ask the choreographer; validate; fall back procedurally."""
+    """Text-to-motion (when configured), else the LLM choreographer, else
+    the procedural fallback — the first one that validates wins."""
     feedback = ""
     attempts = 0
     last_error = ""
+    from autonoma.config import settings
+
+    if settings.gesture_motion_backend == "http" and settings.gesture_motion_url:
+        from autonoma.gestures.motion import MotionBackendError, motion_prompt, text_to_motion
+
+        meaning = TRIGGER_MEANING.get(f"{kind}:{value}", f"{kind} {value}")
+        try:
+            clip = await text_to_motion(
+                motion_prompt(meaning, traits=ctx.traits, species=ctx.species, role=ctx.role),
+                duration_s=2.5,
+                name=f"{ctx.name}'s {value}",
+            )
+            # The score records provenance; playback uses the clip.
+            score = GestureScore(
+                name=f"{ctx.name}'s {value}",
+                duration_s=max(0.3, min(6.0, float(clip["durationS"]))),
+                segments=[
+                    {
+                        "family": "sway",
+                        "side": "both",
+                        "start": 0.0,
+                        "duration": max(0.3, min(6.0, float(clip["durationS"]))),
+                        "amplitude": 0.1,
+                    }
+                ],  # type: ignore[list-item]
+            )
+            return ComposeResult(score=score, clip=clip, source="motion", model="motion-server")
+        except MotionBackendError as exc:
+            last_error = f"motion: {exc}"
+            logger.warning("[gestures] text-to-motion failed, using choreographer: %s", exc)
     if client is not None and model:
         for _ in range(max_attempts):
             attempts += 1

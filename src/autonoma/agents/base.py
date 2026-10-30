@@ -278,6 +278,11 @@ class AutonomousAgent:
         self.managed_session_ids: list[str] = []
         self._total_tokens = 0
         self._total_cost_usd = 0.0
+        # Usage accounting (see ``_account``): prompt tokens split into
+        # uncached input and cache reads so the swarm can report a hit rate.
+        self._input_tokens = 0
+        self._cache_read_tokens = 0
+        self._unpriced_calls = 0
         self._consecutive_errors = 0
         self._mood_rng = random.Random()
 
@@ -358,8 +363,35 @@ class AutonomousAgent:
 
     @property
     def total_cost_usd(self) -> float:
-        """Dollar cost reported by delegated sessions (deep work only)."""
+        """List-price dollars spent: LLM calls (``_account``) plus delegated
+        deep-work sessions."""
         return self._total_cost_usd
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self._cache_read_tokens
+
+    @property
+    def prompt_tokens(self) -> int:
+        """Uncached input + cache reads (the denominator of the hit rate)."""
+        return self._input_tokens + self._cache_read_tokens
+
+    def _account(self, response: Any, model: str) -> None:
+        """Record tokens and list-price cost for one LLM response."""
+        from autonoma.pricing import cost_usd
+
+        usage = getattr(response, "usage", None)
+        inp = int(getattr(usage, "input_tokens", 0) or 0)
+        out = int(getattr(usage, "output_tokens", 0) or 0)
+        cached = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        self._total_tokens += inp + out + cached
+        self._input_tokens += inp
+        self._cache_read_tokens += cached
+        cost = cost_usd(model, input_tokens=inp, output_tokens=out, cache_read_tokens=cached)
+        if cost is None:
+            self._unpriced_calls += 1
+        else:
+            self._total_cost_usd += cost
 
     # ── Feature 27: Cancellation ───────────────────────────────────────
 
@@ -999,7 +1031,7 @@ RECENT MESSAGES:
 
         self._record_turn(turn, response)
         if response.input_tokens or response.output_tokens:
-            self._total_tokens += response.input_tokens + response.output_tokens
+            self._account(response, self._model)
         else:
             # Stub/offline clients report no usage — keep the old estimate
             # (~3.5 chars per token) so the soft budget cap still bites.
@@ -1157,6 +1189,17 @@ RECENT MESSAGES:
         if settings.worker_backend == "managed_agents":
             from autonoma.managed.deepwork import ManagedDeepWorkSession
 
+            async def on_subagent(phase: str, thread_id: str, helper: str) -> None:
+                # Sub-threads show up on stage as temporary helpers of this
+                # character for as long as they run.
+                await bus.emit(
+                    f"deepwork.subagent_{phase}",
+                    agent=self.name,
+                    thread_id=thread_id,
+                    helper=helper,
+                    task_id=task.id,
+                )
+
             session = ManagedDeepWorkSession(
                 agent_name=self.name,
                 role=self.persona.role,
@@ -1168,6 +1211,7 @@ RECENT MESSAGES:
                 character_uuid=self.character_uuid,
                 on_text=on_text,
                 on_tool=on_tool,
+                on_subagent=on_subagent,
             )
         else:
             session = DeepWorkSession(

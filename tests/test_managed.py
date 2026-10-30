@@ -345,3 +345,78 @@ async def test_agent_uses_managed_backend_and_records_session(
     assert captured["character_uuid"] == "uuid-a"
     assert agent.managed_session_ids == ["sesn_42"]
     assert task.status == TaskStatus.DONE
+
+
+@pytest.mark.asyncio
+async def test_multiagent_lead_has_roster_and_separate_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    c = FakeClient()
+    created: list[dict[str, Any]] = []
+
+    async def create_agent(**kw: Any) -> Any:
+        created.append(kw)
+        return NS(id=f"agent_{len(created)}", version=1)
+
+    c.beta.agents.create = create_agent
+    monkeypatch.setattr(registry.settings, "managed_multiagent", False)
+    assert (await registry.ensure_agent(c))[0] == "agent_1"
+    monkeypatch.setattr(registry.settings, "managed_multiagent", True)
+    monkeypatch.setattr(registry.settings, "managed_workflows", False)
+    lead_id, _ = await registry.ensure_agent(c)
+    # Test runner created first, then the lead; plain worker id untouched.
+    assert [a["name"] for a in created] == [
+        "Autonoma Worker",
+        "Test runner",
+        "Autonoma Worker (lead)",
+    ]
+    assert lead_id == "agent_3"
+    roster = created[2]["multiagent"]
+    assert roster["type"] == "multiagent_20261001"
+    assert roster["subagents"]["predefined_agents"] == ["agent_2", {"type": "self"}]
+    assert roster["workflows"] == {"type": "disabled"}
+    assert "Test runner" in created[2]["system"]
+    assert created[1]["model"] == registry.settings.managed_worker_model
+    data = registry.load()
+    assert data["agent_id"] == "agent_1" and data["lead_agent_id"] == "agent_3"
+    assert (await registry.ensure_agent(c))[0] == "agent_3"  # cached
+    assert len(created) == 3
+
+
+@pytest.mark.asyncio
+async def test_subagent_threads_are_reported(tmp_path: Path) -> None:
+    events = [
+        NS(type="session.thread_created", session_thread_id="th_1", agent_name="Test runner"),
+        NS(
+            type="session.thread_created",
+            session_thread_id="th_2",
+            agent_name="Autonoma Worker (lead)",
+        ),
+        NS(type="session.thread_status_idle", session_thread_id="th_1", agent_name="Test runner"),
+        NS(type="session.thread_status_terminated", session_thread_id="th_2", agent_name="x"),
+        NS(type="session.thread_status_idle", session_thread_id="th_unknown", agent_name="y"),
+        NS(type="session.status_idle", stop_reason=NS(type="end_turn")),
+    ]
+    c = FakeClient(events=events)
+    seen: list[tuple[str, str, str]] = []
+
+    async def on_sub(phase: str, tid: str, name: str) -> None:
+        seen.append((phase, tid, name))
+
+    s = ManagedDeepWorkSession(
+        agent_name="Ada",
+        role="coder",
+        task_id="t",
+        task_title="x",
+        task_description="",
+        project_description="",
+        project_dir=tmp_path / "p",
+        timeout_s=5,
+        client=c,
+        on_subagent=on_sub,
+    )
+    await s.run()
+    assert seen == [
+        ("started", "th_1", "Test runner"),
+        ("started", "th_2", "Autonoma Worker (lead)"),
+        ("finished", "th_1", "Test runner"),
+        ("finished", "th_2", "Autonoma Worker (lead)"),
+    ]

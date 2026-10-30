@@ -783,6 +783,47 @@ export function useSwarm() {
           return;
         }
 
+        // Multiagent deep work: each sub-thread appears on stage as a
+        // temporary helper next to the character that spawned it, and
+        // leaves when the thread goes idle or terminates.
+        if (event === "deepwork.subagent_started" || event === "deepwork.subagent_finished") {
+          const owner = (data.agent as string) || "";
+          const helper = (data.helper as string) || "helper";
+          const threadId = String(data.thread_id ?? "");
+          if (!owner || !threadId) return;
+          const helperName = `${owner}·${helper}·${threadId.slice(-4)}`;
+          setState((prev) => {
+            if (event === "deepwork.subagent_finished") {
+              return { ...prev, agents: prev.agents.filter((a) => a.name !== helperName) };
+            }
+            if (prev.agents.some((a) => a.name === helperName)) return prev;
+            const parent = prev.agents.find((a) => a.name === owner);
+            const siblings = prev.agents.filter((a) => a.name.startsWith(`${owner}·`)).length;
+            return {
+              ...prev,
+              agents: [
+                ...prev.agents,
+                {
+                  name: helperName,
+                  emoji: /test/i.test(helper) ? "🧪" : "🧩",
+                  role: `helper of ${owner}`,
+                  color: parent?.color ?? "cyan",
+                  position: {
+                    x: (parent?.position.x ?? 40) + 6 + siblings * 5,
+                    y: (parent?.position.y ?? 8) + 3,
+                  },
+                  state: "working",
+                  mood: "focused",
+                  level: 1,
+                  xp: 0,
+                  xp_to_next: 100,
+                },
+              ],
+            };
+          });
+          return;
+        }
+
         if (event === "deepwork.finished") {
           const agent = (data.agent as string) || "Agent";
           const ok = !!data.ok;

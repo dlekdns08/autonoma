@@ -81,6 +81,16 @@ npm run dev          # http://localhost:3000
 
 브라우저에서 열고 프로젝트 목표를 붙여넣으면 디렉터가 알아서 굴립니다.
 
+### 변경 효과 측정 (평가 하네스)
+
+```bash
+uv run python -m autonoma.eval --dry-run                       # 가짜 모델, 비용 없음: 하네스 동작 확인
+uv run python -m autonoma.eval --suite core \
+    --variants baseline,advisor,sonnet-workers --repeats 3 --budget-usd 10
+```
+
+고정 목표를 변형(모델 티어, advisor, 결정 프로토콜, Director 개입, 딥 워크)마다 헤드리스로 돌립니다. 예산이 떨어져도 공정하게 비교되도록 변형을 번갈아 실행하고, `output/eval/<시각>/report.md`에 완료율, 파싱·린트 통과 파일 비율, 실행당·완료 태스크당 비용, 라운드 수, 캐시 적중률을 씁니다. `--budget-usd`는 평가 전체의 하드 상한입니다.
+
 ### E2E·시각 회귀 테스트
 
 ```bash
@@ -147,6 +157,9 @@ web/src/
 | `AUTONOMA_WORKER_BACKEND` | `native`(라운드당 파일 하나), `agent_sdk`(`output/<project>/`의 Claude Code 세션), `managed_agents`(캐릭터별 메모리 스토어가 붙는 Anthropic 호스티드 outcome 세션) | `native` |
 | `AUTONOMA_SANDBOX_BACKEND` | run_code 격리: `auto`는 Anthropic 샌드박스 런타임(`srt`)을 우선, 없으면 sandbox-exec / bwrap / rlimit | `auto` |
 | `AUTONOMA_SANDBOX_AUTO_INSTALL` | 기동 시 `srt`가 없으면 고정 버전을 `data/sandbox-runtime/`에 설치 (`npm` 필요) | `true` |
+| `AUTONOMA_SWARM_BUDGET_USD` | 런당 정가 기준 지출(LLM + 딥 워크)이 이 금액에 닿으면 중단, 라운드마다 `swarm.cost`로 지출과 캐시 적중률 보고 | `0` (끔) |
+| `AUTONOMA_MANAGED_MULTIAGENT` | 호스티드 딥 워크를 자기 복제본과 저렴한 Test runner에 위임하는 리드로 실행, 하위 스레드는 무대에 표시 | `false` |
+| `AUTONOMA_GESTURE_MOTION_BACKEND` | `http`면 외부 text-to-motion 서버(SMPL-22 → VRM 리타깃)를 먼저 사용, 아니면 DSL 안무가 | `procedural` |
 | `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor 툴: 워커가 턴 중간에 상의하는 상위 모델 (비우면 끔) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | 정체 시 Director가 계획 모델에 지시 하나를 요청 | `true` |

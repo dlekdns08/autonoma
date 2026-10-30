@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     managed_memory_enabled: bool = True
     managed_dreams_enabled: bool = False
     managed_dream_model: str = "claude-sonnet-5-5"
+    # Multiagent deep work: the hosted worker becomes a lead that can hand
+    # self-contained sub-tasks to copies of itself and test runs to a
+    # cheaper ``Test runner`` agent (each in its own thread, shared
+    # workspace). Sub-threads appear on stage as temporary characters.
+    # Dynamic workflows (many parallel threads) stay off unless enabled —
+    # they multiply token spend.
+    managed_multiagent: bool = False
+    managed_workflows: bool = False
+    managed_worker_model: str = "claude-haiku-5-5"
 
     # ── Self-authored gestures (autonoma.gestures) ──
     # When on, every spawned worker gets a small set of signature moves
@@ -120,6 +129,13 @@ class Settings(BaseSettings):
     # A gesture whose net votes fall to this value is retired and
     # regenerated on next use.
     gesture_retire_net_votes: int = -3
+    # Text-to-motion: ``http`` asks an external motion server (any
+    # motion-diffusion model behind the contract in
+    # ``autonoma.gestures.motion``) first and falls back to the procedural
+    # DSL when it is unreachable or its output fails validation.
+    gesture_motion_backend: Literal["procedural", "http"] = "procedural"
+    gesture_motion_url: str = ""
+    gesture_motion_timeout_s: float = 60.0
 
     # ── Code sandbox backend (run_code) ──
     # ``auto`` prefers Anthropic's sandbox runtime (``srt``: seatbelt /
@@ -132,6 +148,13 @@ class Settings(BaseSettings):
     # is missing and ``npm`` is available (no global install, no root).
     sandbox_auto_install: bool = True
     srt_version: str = "0.0.81"
+
+    # ── Run cost cap ──
+    # Hard stop when a swarm run's list-price spend (LLM calls priced by
+    # ``autonoma.pricing`` + deep-work session costs) reaches this many
+    # USD. 0 → off. Checked once per round, so the final figure can pass
+    # the cap by at most one round of calls.
+    swarm_budget_usd: float = 0.0
 
     # ── Advisor tool ──
     # Pairs the cheap worker executor with a stronger advisor consulted

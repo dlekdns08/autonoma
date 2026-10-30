@@ -361,7 +361,7 @@ AVAILABLE AGENTS (with skill match scores for open tasks):
         except LLMError as e:
             logger.warning(f"[Director] intervention LLM error: {e}")
             return None
-        self._total_tokens += response.input_tokens + response.output_tokens
+        self._account(response, self._model)
         if response.refused or not response.tool_calls:
             return None
         call = response.tool_calls[0]
@@ -516,7 +516,7 @@ Rules:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
-            self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
+            self._account(response, self._model)
             data = _extract_json(
                 response.text,
                 strategy=self.policy.action.json_extraction,
@@ -722,7 +722,7 @@ Rules:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
-            self._total_tokens += response.usage.input_tokens + response.usage.output_tokens
+            self._account(response, self._model)
             text = (response.text or "").strip()
             if text:
                 return text
