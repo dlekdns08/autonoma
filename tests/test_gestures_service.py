@@ -113,6 +113,7 @@ async def test_votes_retire_unpopular_gestures(
     g = await service.vote(g.id, up=True)
     assert g is not None and g.votes_up == 1 and g.status == "active"
     for _ in range(3):
+        assert g is not None
         g = await service.vote(g.id, up=False)
     assert g is not None and g.votes_down == 3 and g.status == "retired"
     assert any(n == "gesture.retired" for n, _ in fake_bus.events)

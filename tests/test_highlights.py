@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from autonoma.config import settings
@@ -19,7 +21,7 @@ from autonoma.highlights import HighlightRecorder, get_recorder
 
 
 @pytest.fixture
-def recorder() -> HighlightRecorder:
+def recorder() -> Iterator[HighlightRecorder]:
     """A fresh ``HighlightRecorder`` wired into the (autouse-cleared) bus.
 
     The conftest ``_reset`` autouse fixture already clears handlers

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ def _reset():
 
 
 @pytest.fixture
-def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Scratch SQLite per test; shared by every test that touches the DB.
 
     The engine is a module-level singleton — without clearing

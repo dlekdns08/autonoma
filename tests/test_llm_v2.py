@@ -157,7 +157,9 @@ def test_fold_system_messages_merges_into_previous_user_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_retries_without_system_role_when_model_rejects_it() -> None:
+async def test_create_retries_without_system_role_when_model_rejects_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import anthropic
     import httpx2
 
@@ -179,7 +181,7 @@ async def test_create_retries_without_system_role_when_model_rejects_it() -> Non
             model="m",
         )
 
-    client._client.messages.create = fake_create
+    monkeypatch.setattr(client._client.messages, "create", fake_create)
     out = await client.create(
         model="claude-haiku-5-5",
         max_tokens=10,

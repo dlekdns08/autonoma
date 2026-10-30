@@ -113,7 +113,10 @@ async def create_template(
                 text=cleaned,
             )
         )
-        template_id = int(result.inserted_primary_key[0])
+        pk = result.inserted_primary_key
+        if pk is None:
+            raise RuntimeError("insert returned no primary key")
+        template_id = int(pk[0])
         row = (
             await conn.execute(select(quest_templates).where(quest_templates.c.id == template_id))
         ).first()

@@ -478,7 +478,7 @@ class AnimatedRenderer:
     async def _on_project_done(self, **_: Any) -> None:
         self._log(f"[bold green]★ PROJECT COMPLETE! {MOOD_EMOTES['excited']}[/]")
         # Spawn celebration particles
-        for _ in range(10):
+        for _i in range(10):
             self._particles.append(
                 {
                     "x": random.randint(10, 70),
@@ -517,7 +517,7 @@ class AnimatedRenderer:
             f"[bold yellow]★★★ {agent} LEVELED UP to Lv{level}! ★★★ {MOOD_EMOTES['excited']}[/]"
         )
         # Celebration particles
-        for _ in range(8):
+        for _i in range(8):
             self._particles.append(
                 {
                     "x": random.randint(10, 70),
@@ -539,7 +539,7 @@ class AnimatedRenderer:
         self._log(
             f"[bold cyan]♥♥ Guild formed: {name} ♥♥[/] ({member_str}) Synergy: +{synergy * 100:.0f}%"
         )
-        for _ in range(5):
+        for _i in range(5):
             self._particles.append(
                 {
                     "x": random.randint(10, 70),
@@ -569,7 +569,7 @@ class AnimatedRenderer:
         self, name: str = "", species: str = "", level: int = 0, hp: int = 0, **_: Any
     ) -> None:
         self._log(f"[bold red]☠☠☠ BOSS APPEARED: {name} (Lv{level}, {hp}HP) ☠☠☠[/]")
-        for _ in range(8):
+        for _i in range(8):
             self._particles.append(
                 {
                     "x": random.randint(5, 75),
@@ -580,7 +580,7 @@ class AnimatedRenderer:
 
     async def _on_boss_defeated(self, name: str = "", xp_reward: int = 0, **_: Any) -> None:
         self._log(f"[bold green]★★★ BOSS DEFEATED: {name}! +{xp_reward}XP to all! ★★★[/]")
-        for _ in range(15):
+        for _i in range(15):
             self._particles.append(
                 {
                     "x": random.randint(5, 75),

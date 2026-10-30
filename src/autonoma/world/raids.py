@@ -136,7 +136,7 @@ class GuildRaid:
             running += portion
         # Reconcile rounding so we hand out exactly ``total_xp``.
         if share:
-            top = max(share, key=share.get)
+            top = max(share, key=lambda a: share[a])
             share[top] += total_xp - running
         return share
 

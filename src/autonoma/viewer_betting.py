@@ -322,7 +322,10 @@ async def place_bet(
                     payout=0,
                 )
             )
-            entry_id = int(result.inserted_primary_key[0])
+            pk = result.inserted_primary_key
+            if pk is None:
+                raise RuntimeError("insert returned no primary key")
+            entry_id = int(pk[0])
     except IntegrityError as exc:
         # ``uq_bet_entry`` (market_id, session_id, viewer_id).
         raise ValueError("already_bet") from exc

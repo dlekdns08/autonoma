@@ -31,6 +31,7 @@ from autonoma.coordinator.model import (
     MatchInvite,
     MatchResult,
     MatchSubmission,
+    _new_id,
 )
 from autonoma.event_bus import bus
 
@@ -110,13 +111,13 @@ class CoordinatorStore:
             running = None
         existing = self._async_lock_ref
         if existing is None:
-            self._async_lock_ref = asyncio.Lock()
-            return self._async_lock_ref
+            existing = self._async_lock_ref = asyncio.Lock()
+            return existing
         if running is not None:
             bound = getattr(existing, "_loop", None)
             if bound is not None and bound is not running:
-                self._async_lock_ref = asyncio.Lock()
-        return self._async_lock_ref
+                existing = self._async_lock_ref = asyncio.Lock()
+        return existing
 
     # ── filesystem helpers ────────────────────────────────────────
 
@@ -247,7 +248,7 @@ class CoordinatorStore:
             self._load()
             if invite.id in self._invites:
                 # Avoid id collision with an existing invite.
-                invite = invite.model_copy(update={"id": MatchInvite().id})
+                invite = invite.model_copy(update={"id": _new_id()})
             self._invites[invite.id] = invite
             self._persist_invites()
             return invite

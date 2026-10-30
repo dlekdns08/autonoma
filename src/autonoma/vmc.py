@@ -358,6 +358,7 @@ async def start_listening_to_bus() -> None:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             return
+        return  # unreachable in practice: the bare Event is never set
 
     async def _on_mocap_frame(
         bones: dict[str, Any] | None = None,

@@ -21,6 +21,7 @@ in one place.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from autonoma.harness.strategies import register
@@ -33,7 +34,7 @@ def _classify(harness: Any, action_type: str) -> tuple[bool, str | None]:
     to :meth:`can_perform` for mocks/test doubles that only implement the
     boolean predicate.
     """
-    check = getattr(harness, "check_action", None)
+    check: Callable[[str], tuple[bool, str | None]] | None = getattr(harness, "check_action", None)
     if callable(check):
         return check(action_type)
     return bool(harness.can_perform(action_type)), None

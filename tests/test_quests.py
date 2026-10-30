@@ -20,6 +20,7 @@ Three behaviors covered:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -38,6 +39,12 @@ from autonoma.quests import (
     propose_quest,
     vote_quest,
 )
+
+
+def _error_code(exc: HTTPException) -> Any:
+    """Pull ``code`` out of a structured ``{"code": ...}`` error detail."""
+    detail: Any = exc.detail  # routers raise with a dict; starlette types it as str
+    return detail["code"]
 
 
 def _fake_user(uid: str = "u-test", role: str = "user") -> User:
@@ -191,7 +198,7 @@ async def test_router_vote_dedup_rejects_second_vote(fresh_db) -> None:
     with pytest.raises(HTTPException) as excinfo:
         await quests_router.vote(quest_id=qid, user=user)
     assert excinfo.value.status_code == 409
-    assert excinfo.value.detail["code"] == "already_voted"
+    assert _error_code(excinfo.value) == "already_voted"
 
     # The DB still shows a single recorded vote — the duplicate was
     # rejected before the increment.
@@ -261,4 +268,4 @@ async def test_router_propose_rejects_empty_text(fresh_db) -> None:
             user=user,
         )
     assert excinfo.value.status_code == 400
-    assert excinfo.value.detail["code"] == "quest_text_empty"
+    assert _error_code(excinfo.value) == "quest_text_empty"

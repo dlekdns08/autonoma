@@ -8,6 +8,8 @@ already covered by smoke runs of the live server.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from autonoma.api import (
@@ -22,7 +24,7 @@ from autonoma.api import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_room_registry() -> None:
+def _isolate_room_registry() -> Iterator[None]:
     """The api module keeps these registries process-global. Each test
     deserves a clean slate so an earlier test's leftovers can't make a
     later one accidentally pass."""

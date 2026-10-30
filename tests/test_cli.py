@@ -7,6 +7,8 @@ monkeypatch so the tests don't actually start a swarm.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from click.testing import CliRunner
 
@@ -52,7 +54,7 @@ def test_build_invokes_engine_with_args(
 
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-test-fake")
 
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
     class FakeEngine:
         def __init__(self, console, output_dir=None) -> None:

@@ -110,7 +110,9 @@ async def test_swarm_emits_raid_victory_when_guild_clears_boss():
             # Manually start a raid and record a hit so we can call the
             # finalizer through the public route the swarm uses.
             await swarm._maybe_start_raid(swarm.boss_arena.current_boss)
-            swarm.raid_arena.active.record("alice", 1)
+            raid = swarm.raid_arena.active
+            assert raid is not None
+            raid.record("alice", 1)
             swarm.boss_arena.current_boss.phase = BossPhase.DEFEATED
             await swarm._finalize_raid(base_xp=100, defeated=True)
     finally:

@@ -181,7 +181,10 @@ async def propose_quest(session_id: int, text: str) -> int:
         )
         # ``inserted_primary_key`` is the most portable way to recover
         # the autoincrement id across SQLite/Postgres backends.
-        quest_id = int(result.inserted_primary_key[0])
+        pk = result.inserted_primary_key
+        if pk is None:
+            raise RuntimeError("insert returned no primary key")
+        quest_id = int(pk[0])
 
     await bus.emit(
         "quest.proposed",

@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from fastapi import status as http_status
 
 
-def assert_session_owner_or_admin(session_id: int, user: Any) -> None:
+def assert_session_owner_or_admin(session_id: int | str, user: Any) -> None:
     """Raise 404 if the session doesn't exist OR the caller isn't its owner.
 
     Admin users (``user.role == 'admin'``) bypass the owner check.

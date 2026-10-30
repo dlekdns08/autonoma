@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -13,7 +12,29 @@ import pytest
 from autonoma.agents import base as base_mod
 from autonoma.agents import deepwork
 from autonoma.agents.base import AutonomousAgent
+from autonoma.llm import BaseLLMClient, LLMResponse, ToolSpec
 from autonoma.models import AgentPersona, ProjectState, Task, TaskPriority, TaskStatus
+
+
+class _UnusableLLMClient(BaseLLMClient):
+    """LLM client that fails loudly if anything tries to call it."""
+
+    async def create(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        system: str,
+        messages: list[dict[str, Any]],
+        temperature: float | None = None,
+        cache_system_prompt: bool = False,
+        effort: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        single_tool_call: bool = True,
+        advisor_model: str | None = None,
+    ) -> LLMResponse:
+        raise AssertionError("LLM must not be called in this round")
+
 
 # ── a stand-in for claude_agent_sdk ──────────────────────────────────
 
@@ -276,7 +297,7 @@ async def test_work_on_task_delegates_and_completes_task(agent_env: FakeBus) -> 
     assert tool_events[0]["tool"] == "Read" and tool_events[0]["detail"] == "README.md"
 
     # Next round is a normal one again (slot cleared).
-    agent._client = SimpleNamespace()  # would blow up if the LLM were called
+    agent._client = _UnusableLLMClient()  # would blow up if the LLM were called
     agent._deep_work_enabled = lambda: False  # type: ignore[method-assign]
     assert agent._deep_work is not None
     await asyncio.sleep(0)

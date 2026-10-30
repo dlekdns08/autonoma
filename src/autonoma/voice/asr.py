@@ -277,7 +277,7 @@ async def warmup_asr_provider() -> None:
     transcription cost itself, not the warm-up.
     Mirrors ``warmup_shared_client`` in ``tts_omnivoice``.
     """
-    import anyio
+    import anyio.to_thread
 
     from autonoma.config import settings
 

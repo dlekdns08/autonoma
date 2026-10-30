@@ -445,7 +445,7 @@ async def voice_transcribe(
     try:
         # Heavy CPU/GPU work — push to a worker thread so the event loop
         # keeps serving other requests while the model decodes.
-        import anyio
+        import anyio.to_thread
 
         result = await anyio.to_thread.run_sync(lambda: provider.transcribe(raw, language=lang))
     except RuntimeError as exc:
@@ -692,7 +692,7 @@ async def voice_stream(ws: WebSocket) -> None:
     last_partial_text = ""
     last_partial_at_bytes = 0  # buffer length the last time we tried a partial
     closed = False
-    import anyio  # local module-level import alternative would force a hard dep at boot
+    import anyio.to_thread  # local module-level import alternative would force a hard dep at boot
 
     async def _transcribe_snapshot(snapshot: bytes) -> Any:
         # Cohere is sync + thread-unsafe internally; the provider's own

@@ -161,9 +161,12 @@ class AnomalyDetector:
         # ``config.py`` (a shared file) — the ``getattr`` fallback keeps
         # this module forward-compatible: an operator can add the field
         # later for tuning without an edit here.
-        if window_rounds is None:
-            window_rounds = getattr(settings, "anomaly_window_rounds", WINDOW_ROUNDS)
-        self.window_rounds = max(1, int(window_rounds))
+        resolved_window = (
+            window_rounds
+            if window_rounds is not None
+            else getattr(settings, "anomaly_window_rounds", WINDOW_ROUNDS)
+        )
+        self.window_rounds = max(1, int(resolved_window))
 
         # Per-agent ring of recent utterances. Each entry is
         # ``(round_number, raw_text, tokenized_set)`` so we don't have

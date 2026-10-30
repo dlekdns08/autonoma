@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from time import time
 from typing import Any, Literal, get_args, get_origin
 
+from pydantic import BaseModel
+
 from autonoma.harness.policy import HarnessPolicyContent
 
 # ── Per-run metrics accumulator ──────────────────────────────────────────
@@ -161,6 +163,8 @@ def _iter_enum_picks(content: HarnessPolicyContent) -> list[tuple[str, str]]:
     dump = content.model_dump(mode="json")
     for section_name, section_field in HarnessPolicyContent.model_fields.items():
         sub_model = section_field.annotation
+        if not (isinstance(sub_model, type) and issubclass(sub_model, BaseModel)):
+            continue
         for field_name, field_info in sub_model.model_fields.items():
             annot = field_info.annotation
             if get_origin(annot) is Literal and get_args(annot):

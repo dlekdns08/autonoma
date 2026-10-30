@@ -80,4 +80,5 @@ def test_session_accumulation(tmp_path):
     tracker.save(project)  # Second session
 
     data = tracker.load()
+    assert data is not None
     assert len(data["sessions"]) == 2

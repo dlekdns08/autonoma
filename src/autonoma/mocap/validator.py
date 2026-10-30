@@ -25,7 +25,7 @@ import gzip
 import json
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 ALLOWED_BONES: frozenset[str] = frozenset(
     [
@@ -150,7 +150,7 @@ class ValidatedClip:
     source_vrm: str
 
 
-def _is_finite_number(v: Any) -> bool:
+def _is_finite_number(v: Any) -> TypeGuard[int | float]:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 

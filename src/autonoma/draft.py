@@ -307,7 +307,7 @@ async def _resolve_character_uuids(
             )
         ).all()
     for row in rows:
-        m = row._mapping if hasattr(row, "_mapping") else row
+        m = row._mapping
         name = str(m["name"])
         if name not in resolved:
             resolved[name] = str(m["character_uuid"])
@@ -393,7 +393,7 @@ async def _score_picks(session_id: int, picks: list[str]) -> int:
                 )
             ).all()
             for row in xp_rows:
-                m = row._mapping if hasattr(row, "_mapping") else row
+                m = row._mapping
                 xp_by_uuid[str(m["character_uuid"])] = int(m["xp"] or 0)
 
             ach_q = (
@@ -413,7 +413,7 @@ async def _score_picks(session_id: int, picks: list[str]) -> int:
                 ach_q = ach_q.where(earned_achievements.c.project_uuid == str(project_uuid))
             ach_rows = (await conn.execute(ach_q)).all()
             for row in ach_rows:
-                m = row._mapping if hasattr(row, "_mapping") else row
+                m = row._mapping
                 ach_by_uuid[str(m["character_uuid"])] = int(m["n"] or 0)
 
     score = 0

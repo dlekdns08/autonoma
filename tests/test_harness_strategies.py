@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Literal, get_args, get_origin
 
 import pytest
+from pydantic import BaseModel
 
 
 def test_registry_has_entry_for_every_literal_value() -> None:
@@ -24,6 +25,7 @@ def test_registry_has_entry_for_every_literal_value() -> None:
     expected: set[tuple[str, str]] = set()
     for section_name, section_field in HarnessPolicyContent.model_fields.items():
         sub_model = section_field.annotation
+        assert isinstance(sub_model, type) and issubclass(sub_model, BaseModel)
         for field_name, field_info in sub_model.model_fields.items():
             annot = field_info.annotation
             if get_origin(annot) is Literal:

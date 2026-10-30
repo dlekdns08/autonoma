@@ -19,8 +19,6 @@ def _make_agent(name: str = "Tester") -> AutonomousAgent:
         role="coder",
         emoji="🧪",
         color="cyan",
-        background="test agent",
-        catchphrase="ping",
     )
     return AutonomousAgent(persona=persona)
 

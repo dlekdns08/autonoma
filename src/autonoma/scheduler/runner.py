@@ -50,16 +50,16 @@ class SchedulerRunner:
             running = None
         existing = self._stopping_ref
         if existing is None:
-            self._stopping_ref = asyncio.Event()
-            return self._stopping_ref
+            existing = self._stopping_ref = asyncio.Event()
+            return existing
         if running is not None:
             bound = getattr(existing, "_loop", None)
             if bound is not None and bound is not running:
                 # Loop swap (typically a fresh pytest-asyncio loop).
                 # Drop the stale Event and start over so handlers don't
                 # crash trying to wait on a closed loop.
-                self._stopping_ref = asyncio.Event()
-        return self._stopping_ref
+                existing = self._stopping_ref = asyncio.Event()
+        return existing
 
     @property
     def running(self) -> bool:

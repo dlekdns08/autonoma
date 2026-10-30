@@ -18,6 +18,7 @@ DB isolation comes from ``fresh_db`` (tests/conftest.py).
 from __future__ import annotations
 
 import uuid as _uuid
+from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import insert, select
@@ -51,7 +52,7 @@ def _reinstall_bus_handlers() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _restore_achievements_catalog() -> None:
+def _restore_achievements_catalog() -> Iterator[None]:
     """``refresh_cache`` mutates the global ``world.ACHIEVEMENTS`` dict
     in-place to register custom-DSL entries. Those entries lack the
     ``check`` callable that the built-in catalog uses, which makes

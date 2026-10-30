@@ -58,7 +58,7 @@ class BaseTTSClient(ABC):
     """Streaming TTS contract: yields audio-bytes chunks."""
 
     @abstractmethod
-    async def synthesize(
+    def synthesize(
         self,
         *,
         text: str,

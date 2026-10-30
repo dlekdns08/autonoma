@@ -227,7 +227,7 @@ class DiarySearchIndex:
 
     def filter_by_mood(
         self,
-        mood: str | "Mood",
+        mood: str | Mood,
         *,
         agent: str | None = None,
         top_n: int = 5,

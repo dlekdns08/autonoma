@@ -44,12 +44,10 @@ jobs:
         run: uv run ruff format --check src tests
 
       - name: Type check (pyright)
-        # Non-blocking for now: pyright in basic mode still catches
-        # high-signal issues, but ~70 errors remain spread across the
-        # tree (``draft.py``, ``tui/renderer.py``, ``mocap/validator.py``,
-        # a tail of tests, ...). Drop the ``|| true`` once ``uv run
-        # pyright`` is clean — the output is still surfaced in the log.
-        run: uv run pyright || true
+        # Blocking: the tree is at 0 errors (basic mode). The remaining
+        # warnings are missing imports for optional ML extras, which the
+        # config deliberately leaves as warnings.
+        run: uv run pyright
 
       - name: README sync check
         run: |
