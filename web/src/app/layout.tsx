@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/hooks/useAuth";
-import ThemeToggle from "@/components/ThemeToggle";
-import BGMToggle from "@/components/BGMToggle";
+import GlobalChrome from "@/components/GlobalChrome";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,14 +32,8 @@ export default function RootLayout({
     >
       <body className="h-full bg-[#0a0a12] text-white">
         <AuthProvider>{children}</AuthProvider>
-        <ThemeToggle />
-        {/* Global background-music toggle. The component is a Client
-            Component (the "use client" directive lives inside
-            BGMToggle.tsx) and self-persists settings to localStorage.
-            We default to ``mood="calm"`` because the root layout has
-            no access to live swarm state — pages that need a richer
-            mood-driven track can mount their own. */}
-        <BGMToggle mood="calm" />
+        {/* Theme + BGM floating controls; hidden on broadcast routes. */}
+        <GlobalChrome />
       </body>
     </html>
   );

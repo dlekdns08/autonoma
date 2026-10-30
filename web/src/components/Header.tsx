@@ -40,7 +40,7 @@ export default function Header({
   const progressPct = maxRounds > 0 ? Math.min(100, (round / maxRounds) * 100) : 0;
 
   return (
-    <header className="border-b border-[rgba(255,255,255,0.06)] bg-transparent px-4 py-2">
+    <header className="border-b border-[rgba(255,255,255,0.06)] bg-transparent pl-4 pr-12 py-2">
       <div className="flex items-center justify-between gap-4">
 
         {/* Left — logo mark + nav */}

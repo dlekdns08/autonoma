@@ -859,7 +859,7 @@ function Dashboard() {
 
       {/* Status bar */}
       <footer
-        className="flex items-center justify-between gap-4 px-4 py-1.5 font-mono text-[9px] relative z-10"
+        className="flex items-center justify-between gap-4 pl-4 pr-14 py-1.5 font-mono text-[9px] relative z-10"
         style={{
           borderTop: "1px solid rgba(255,255,255,0.04)",
           background: "rgba(7,6,15,0.9)",
