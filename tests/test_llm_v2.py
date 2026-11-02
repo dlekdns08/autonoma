@@ -343,7 +343,9 @@ async def test_compact_sends_summarize_and_reads_iterations(monkeypatch) -> None
             usage=SimpleNamespace(
                 input_tokens=0,
                 output_tokens=0,
-                iterations=[SimpleNamespace(type="compaction", input_tokens=144, output_tokens=276)],
+                iterations=[
+                    SimpleNamespace(type="compaction", input_tokens=144, output_tokens=276)
+                ],
             ),
             model="claude-sonnet-5-5",
         )
@@ -368,7 +370,10 @@ async def test_compact_sends_summarize_and_reads_iterations(monkeypatch) -> None
         return SimpleNamespace(stop_reason="end_turn", content=[], usage=None, model="m")
 
     monkeypatch.setattr(client._client.beta.messages, "create", no_summary)
-    assert await client.compact(model="claude-sonnet-5-5", max_tokens=1, system="", messages=[]) is None
+    assert (
+        await client.compact(model="claude-sonnet-5-5", max_tokens=1, system="", messages=[])
+        is None
+    )
 
 
 def test_sdk_tracing_follows_the_otel_endpoint(monkeypatch) -> None:

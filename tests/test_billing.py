@@ -11,7 +11,9 @@ import pytest
 from autonoma import billing
 
 
-def _transport(pages: dict[str, list[dict[str, Any]]], *, status: int = 200) -> httpx2.MockTransport:
+def _transport(
+    pages: dict[str, list[dict[str, Any]]], *, status: int = 200
+) -> httpx2.MockTransport:
     calls: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -45,10 +47,18 @@ async def test_summary_aggregates_cost_and_usage_across_pages() -> None:
                 "starting_at": "2026-10-30T00:00:00Z",
                 "ending_at": "2026-10-31T00:00:00Z",
                 "results": [
-                    {"amount": "123.45", "currency": "USD", "model": "claude-haiku-5-5",
-                     "description": "Claude Haiku 5.5 Usage - Input"},
-                    {"amount": "10", "currency": "USD", "model": "claude-sonnet-5-5",
-                     "description": "Claude Sonnet 5.5 Usage - Output"},
+                    {
+                        "amount": "123.45",
+                        "currency": "USD",
+                        "model": "claude-haiku-5-5",
+                        "description": "Claude Haiku 5.5 Usage - Input",
+                    },
+                    {
+                        "amount": "10",
+                        "currency": "USD",
+                        "model": "claude-sonnet-5-5",
+                        "description": "Claude Sonnet 5.5 Usage - Output",
+                    },
                 ],
             }
         ],
@@ -60,7 +70,9 @@ async def test_summary_aggregates_cost_and_usage_across_pages() -> None:
             {
                 "starting_at": "2026-10-31T00:00:00Z",
                 "ending_at": "2026-11-01T00:00:00Z",
-                "results": [{"amount": "0.5", "currency": "USD", "description": "Web Search Usage"}],
+                "results": [
+                    {"amount": "0.5", "currency": "USD", "description": "Web Search Usage"}
+                ],
             }
         ],
         "has_more": False,
@@ -76,12 +88,19 @@ async def test_summary_aggregates_cost_and_usage_across_pages() -> None:
                         "model": "claude-haiku-5-5",
                         "uncached_input_tokens": 1500,
                         "cache_read_input_tokens": 200,
-                        "cache_creation": {"ephemeral_5m_input_tokens": 50, "ephemeral_1h_input_tokens": 25},
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 50,
+                            "ephemeral_1h_input_tokens": 25,
+                        },
                         "output_tokens": 500,
                     }
                 ],
             },
-            {"starting_at": "2026-10-31T00:00:00Z", "ending_at": "2026-11-01T00:00:00Z", "results": []},
+            {
+                "starting_at": "2026-10-31T00:00:00Z",
+                "ending_at": "2026-11-01T00:00:00Z",
+                "results": [],
+            },
         ],
         "has_more": False,
         "next_page": None,
@@ -97,13 +116,19 @@ async def test_summary_aggregates_cost_and_usage_across_pages() -> None:
     result = await billing.fetch_summary(days=2, transport=transport, now=now)
 
     assert result.total_usd == pytest.approx(1.2345 + 0.10 + 0.005)
-    assert result.cost_by_day == {"2026-10-30": pytest.approx(1.3345), "2026-10-31": pytest.approx(0.005)}
+    assert result.cost_by_day == {
+        "2026-10-30": pytest.approx(1.3345),
+        "2026-10-31": pytest.approx(0.005),
+    }
     assert result.cost_by_model["claude-haiku-5-5"] == pytest.approx(1.2345)
     assert result.cost_by_model["Web Search Usage"] == pytest.approx(0.005)
     assert len(result.usage) == 1
     u = result.usage[0]
     assert (u.day, u.model, u.cache_creation_tokens, u.output_tokens) == (
-        "2026-10-30", "claude-haiku-5-5", 75, 500,
+        "2026-10-30",
+        "claude-haiku-5-5",
+        75,
+        500,
     )
     # Window: two whole days up to the next hour boundary.
     assert result.starting_at == "2026-10-30T00:00:00Z"

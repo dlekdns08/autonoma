@@ -836,7 +836,9 @@ RECENT MESSAGES:
             # Same system prompt and tools as the decide requests: the
             # summarizer reads them, and the kept block stays bound to them.
             permitted = self._permitted_actions()
-            tools = build_decision_tools(permitted) if self._decision_protocol == "tool_use" else None
+            tools = (
+                build_decision_tools(permitted) if self._decision_protocol == "tool_use" else None
+            )
             try:
                 summary = await self.client.compact(
                     model=self._model,

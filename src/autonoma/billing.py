@@ -80,9 +80,7 @@ def _headers(key: str) -> dict[str, str]:
     }
 
 
-async def _get_all(
-    http: Any, path: str, params: list[tuple[str, str]]
-) -> list[dict[str, Any]]:
+async def _get_all(http: Any, path: str, params: list[tuple[str, str]]) -> list[dict[str, Any]]:
     """Follow ``has_more`` / ``next_page`` until the report is complete."""
     buckets: list[dict[str, Any]] = []
     page: str | None = None

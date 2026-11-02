@@ -101,7 +101,9 @@ def resample(frames: list[list[Quat]], src_fps: float, dst_fps: float) -> list[l
         lo = min(int(math.floor(pos)), len(frames) - 1)
         hi = min(lo + 1, len(frames) - 1)
         t = pos - lo
-        out.append([slerp(a, b, t) if hi != lo else list(a) for a, b in zip(frames[lo], frames[hi])])
+        out.append(
+            [slerp(a, b, t) if hi != lo else list(a) for a, b in zip(frames[lo], frames[hi])]
+        )
     return out
 
 

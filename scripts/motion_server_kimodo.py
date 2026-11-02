@@ -143,7 +143,9 @@ async def health() -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8090)
     args = parser.parse_args()

@@ -102,8 +102,11 @@ async def _tool_list_sessions(_params: dict[str, Any]) -> Any:
                 "is_admin": bool(getattr(sess, "is_admin", False)),
                 "status": "running" if room is not None else "idle",
                 **(
-                    {k: v for k, v in _swarm_snapshot(room, getattr(sess, "project", None)).items()
-                     if k in ("round", "tasks_total", "tasks_done", "cost_usd")}
+                    {
+                        k: v
+                        for k, v in _swarm_snapshot(room, getattr(sess, "project", None)).items()
+                        if k in ("round", "tasks_total", "tasks_done", "cost_usd")
+                    }
                     if room is not None
                     else {}
                 ),
@@ -200,7 +203,9 @@ async def _tool_get_run_status(params: dict[str, Any]) -> Any:
     swarm = getattr(sess, "swarm", None) if sess is not None else None
     if sess is not None and swarm is not None:
         snap = _swarm_snapshot(swarm, getattr(sess, "project", None))
-        snap.update({"session_id": session_id, "status": "running" if snap["running"] else "finishing"})
+        snap.update(
+            {"session_id": session_id, "status": "running" if snap["running"] else "finishing"}
+        )
         return snap
 
     rows = await _tool_fetch_run_summary({"session_id": session_id})

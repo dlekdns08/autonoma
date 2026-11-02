@@ -209,14 +209,22 @@ async def test_get_run_status_covers_live_finished_and_missing(
     from autonoma.db.schema import run_summary
 
     # A live session: status comes from the swarm object.
-    agent = SimpleNamespace(state=SimpleNamespace(value="working"), total_cost_usd=0.01,
-                            prompt_tokens=10, cache_read_tokens=5, _unpriced_calls=0)
+    agent = SimpleNamespace(
+        state=SimpleNamespace(value="working"),
+        total_cost_usd=0.01,
+        prompt_tokens=10,
+        cache_read_tokens=5,
+        _unpriced_calls=0,
+    )
     swarm = SimpleNamespace(
-        _round=4, _running=True, agents={"Ada": agent},
+        _round=4,
+        _running=True,
+        agents={"Ada": agent},
         cost_summary=lambda: {"total_usd": 0.01, "cache_hit_ratio": 0.5},
     )
     project = SimpleNamespace(
-        goal="ship it", completed=False,
+        goal="ship it",
+        completed=False,
         tasks=[SimpleNamespace(status="done"), SimpleNamespace(status="open")],
     )
     monkeypatch.setitem(api_mod._sessions, -77, SimpleNamespace(swarm=swarm, project=project))
@@ -224,21 +232,39 @@ async def test_get_run_status_covers_live_finished_and_missing(
     # A finished run: only its run_summary row remains.
     engine = get_engine()
     async with engine.begin() as conn:
-        await conn.execute(run_summary.insert().values(
-            session_id=-78, goal="done goal", total_rounds=9, task_count=3, tasks_done=3,
-            tasks_failed=0, llm_calls=40, agent_count=2,
-        ))
+        await conn.execute(
+            run_summary.insert().values(
+                session_id=-78,
+                goal="done goal",
+                total_rounds=9,
+                task_count=3,
+                tasks_done=3,
+                tasks_failed=0,
+                llm_calls=40,
+                agent_count=2,
+            )
+        )
 
     async with _connected(mcp_app) as client:
-        live = json.loads(_text((await client.call_tool("get_run_status", {"session_id": -77})).content[0]))
+        live = json.loads(
+            _text((await client.call_tool("get_run_status", {"session_id": -77})).content[0])
+        )
         assert live["status"] == "running" and live["round"] == 4
         assert live["tasks_done"] == 1 and live["tasks_total"] == 2
         assert live["agents"] == {"Ada": "working"} and live["cost_usd"] == 0.01
 
-        done = json.loads(_text((await client.call_tool("get_run_status", {"session_id": -78})).content[0]))
-        assert done["status"] == "finished" and done["total_rounds"] == 9 and done["goal"] == "done goal"
+        done = json.loads(
+            _text((await client.call_tool("get_run_status", {"session_id": -78})).content[0])
+        )
+        assert (
+            done["status"] == "finished"
+            and done["total_rounds"] == 9
+            and done["goal"] == "done goal"
+        )
 
-        gone = json.loads(_text((await client.call_tool("get_run_status", {"session_id": -79})).content[0]))
+        gone = json.loads(
+            _text((await client.call_tool("get_run_status", {"session_id": -79})).content[0])
+        )
         assert gone == {"session_id": -79, "status": "not_found"}
 
         sessions = json.loads(_text((await client.call_tool("list_sessions", {})).content[0]))

@@ -29,3 +29,4 @@ web/out/
 # Vitest / TS build cache
 web/coverage/
 web/tsconfig.tsbuildinfo
+traces/

@@ -1,9 +1,0 @@
-{
-  "goal": "d",
-  "model": "claude-sonnet-5-5",
-  "started_at": "2026-11-02T15:08:28.503227",
-  "finished_at": "2026-11-02T15:08:29.222252",
-  "checkpoints": [],
-  "llm_calls": 1,
-  "events": 0
-}

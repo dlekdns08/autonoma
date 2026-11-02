@@ -308,8 +308,10 @@ async def test_round_cap_compacts_on_the_server(
     agent._last_action_result = "ok"
     await agent._decide("R3")
     assert stub.calls[-1]["messages"][0]["content"] == [_COMPACTION_BLOCK]
-    assert ("agent.compacted", {"agent": "Ada", "summarized_messages": 5,
-                                "input_tokens": 300, "output_tokens": 40}) in fake_bus.events
+    assert (
+        "agent.compacted",
+        {"agent": "Ada", "summarized_messages": 5, "input_tokens": 300, "output_tokens": 40},
+    ) in fake_bus.events
     assert agent._total_cost_usd > 0
 
 

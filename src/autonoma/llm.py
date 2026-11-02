@@ -759,11 +759,17 @@ class AnthropicLLMClient(BaseLLMClient):
         # are irrelevant to it and ``tool_choice`` is not accepted.
         kwargs.pop("tool_choice", None)
         kwargs.pop("fallbacks", None)
-        kwargs["tools"] = [t for t in kwargs.get("tools", []) if t.get("type") != _ADVISOR_TOOL_TYPE]
+        kwargs["tools"] = [
+            t for t in kwargs.get("tools", []) if t.get("type") != _ADVISOR_TOOL_TYPE
+        ]
         if not kwargs["tools"]:
             del kwargs["tools"]
         kwargs.pop("thinking", None)
-        betas = [b for b in kwargs.get("betas", []) if b not in (_ADVISOR_BETA, _SERVER_FALLBACK_BETA, _THINKING_UPDATES_BETA)]
+        betas = [
+            b
+            for b in kwargs.get("betas", [])
+            if b not in (_ADVISOR_BETA, _SERVER_FALLBACK_BETA, _THINKING_UPDATES_BETA)
+        ]
         if _COMPACTION_BETA not in betas:
             betas.append(_COMPACTION_BETA)
         kwargs["betas"] = betas
