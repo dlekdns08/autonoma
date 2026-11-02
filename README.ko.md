@@ -102,6 +102,23 @@ npm run e2e:update                 # 의도한 UI 변경 후 기준 이미지 �
 
 백엔드는 띄우지 않습니다. `web/e2e/support/mockBackend.ts`가 HTTP API에 응답하고 고정된 캐릭터로 WebSocket 서버 역할을 하므로 VTuber 무대가 매번 같은 캐릭터로 그려집니다. 모든 라우트의 크래시 여부, OBS 크로마키 위 실제 VRM 렌더링(픽셀 검사), OBS 오버레이·대시보드·로그인 화면의 기준 이미지 비교를 검사합니다. 기준 이미지는 OS별(`*-darwin.png`, `*-linux.png`)이며, CI는 없는 Linux 기준 이미지를 만들어 아티팩트로 올립니다.
 
+### Kimodo 텍스트→모션 (선택, GPU)
+
+자체 생성 제스처를 절차적 DSL 대신 모션 디퓨전 모델로 만들 수 있습니다. `scripts/motion_server_kimodo.py`가 [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo)(코드 Apache-2.0, `Kimodo-SMPLX-RP-v1` 체크포인트는 NVIDIA R&D Model License)를 모션 서버 계약으로 감쌉니다: `kimodo_gen`을 실행하고 AMASS NPZ를 읽어 SMPL-X axis-angle 포즈를 무대가 VRM 본에 리타깃하는 SMPL-22 쿼터니언 페이로드로 변환합니다.
+
+```bash
+# GPU 머신 (VRAM ~17 GB, Linux, `hf auth login`으로 meta-llama/Meta-Llama-3-8B-Instruct 접근 필요)
+conda create -n kimodo python=3.10 && conda activate kimodo
+pip install torch && pip install git+https://github.com/nv-tlabs/kimodo.git
+KIMODO_GEN=$(which kimodo_gen) uv run python scripts/motion_server_kimodo.py --port 8090
+
+# Autonoma 쪽
+AUTONOMA_GESTURE_MOTION_BACKEND=http
+AUTONOMA_GESTURE_MOTION_URL=http://<gpu-host>:8090/generate
+```
+
+생성된 클립도 관절 한계/속도 검증을 통과해야 하며, 실패하면 DSL 안무가로 폴백합니다.
+
 ## 아키텍처
 
 ```

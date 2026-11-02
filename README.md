@@ -127,6 +127,23 @@ npm run e2e:update                 # re-record baselines after an intended UI ch
 
 The backend is never started: `web/e2e/support/mockBackend.ts` answers the HTTP API and plays the WebSocket server with a fixed cast, so the VTuber stage renders the same characters every run. Tests cover every route (no uncaught errors), a real VRM render on the OBS green screen (pixel check), and screenshot baselines for the OBS overlay, dashboard, and login. Baselines are per-OS (`*-darwin.png`, `*-linux.png`); CI writes missing Linux ones and uploads them as an artifact to commit.
 
+### Text-to-motion with Kimodo (optional, GPU)
+
+Self-authored gestures can come from a motion-diffusion model instead of the procedural DSL. `scripts/motion_server_kimodo.py` wraps [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (Apache-2.0 code; the `Kimodo-SMPLX-RP-v1` checkpoint is under the NVIDIA R&D Model License) in the motion-server contract: it shells out to `kimodo_gen`, reads the AMASS NPZ and converts SMPL-X axis-angle poses to the SMPL-22 quaternion payload the stage retargets onto VRM bones.
+
+```bash
+# on the GPU machine (~17 GB VRAM; Linux; needs access to meta-llama/Meta-Llama-3-8B-Instruct via `hf auth login`)
+conda create -n kimodo python=3.10 && conda activate kimodo
+pip install torch && pip install git+https://github.com/nv-tlabs/kimodo.git
+KIMODO_GEN=$(which kimodo_gen) uv run python scripts/motion_server_kimodo.py --port 8090
+
+# on the Autonoma side
+AUTONOMA_GESTURE_MOTION_BACKEND=http
+AUTONOMA_GESTURE_MOTION_URL=http://<gpu-host>:8090/generate
+```
+
+Generated clips still pass the joint-limit / velocity validator; anything the model gets wrong falls back to the DSL choreographer.
+
 ## Architecture
 
 ```

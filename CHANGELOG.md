@@ -11,6 +11,10 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- `scripts/motion_server_kimodo.py`: NVIDIA Kimodo (SMPL-X) wrapped in the
+  text-to-motion server contract; `autonoma.gestures.kimodo` converts AMASS
+  axis-angle poses (z-up) to SMPL-22 quaternions (y-up, +z facing) with slerp
+  resampling.
 - Claude SDK OpenTelemetry spans ride the configured OTLP exporter
   (`AUTONOMA_OTEL_CONTENT_MODE`, swarm session as conversation id), and
   `GET /api/billing/summary` (admin) reads billed USD by day/model plus
