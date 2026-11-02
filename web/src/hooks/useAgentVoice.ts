@@ -25,6 +25,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  buildVisemeTimeline,
+  estimateDurationS,
+  sampleVisemes,
+  wavDurationS,
+  type Viseme,
+  type VisemeCue,
+} from "@/lib/visemes";
+
 type AudioEventName =
   | "agent.speech_audio_start"
   | "agent.speech_audio_chunk"
@@ -41,6 +50,10 @@ interface AudioEventData {
   mime?: string;
   total_bytes?: number;
   reason?: string;
+  /** The line being spoken (``agent.speech_audio_start``) — source of
+   *  the vowel timeline for lip-sync. */
+  text?: string;
+  language?: string;
 }
 
 interface AgentSlot {
@@ -68,6 +81,44 @@ interface AgentSlot {
   /** Set when ``audio.play()`` was rejected by the autoplay policy. The
    *  one-shot user-gesture unlock replays these. */
   pendingPlay: boolean;
+  /** Text of the in-flight utterance and its vowel timeline, built
+   *  against the audio's real duration once the bytes are in (or an
+   *  estimate while the text-driven fallback runs). */
+  text: string;
+  cues: VisemeCue[];
+  /** ``performance.now()`` when the text fallback started; drives the
+   *  timeline clock while no <audio> is playing. */
+  fallbackStartMs: number;
+}
+
+/** Result of :func:`getMouthViseme` — the vowel the mouth should open
+ *  into right now, plus the next one and how far to blend toward it. */
+export interface MouthViseme {
+  viseme: Viseme | null;
+  next: Viseme | null;
+  blend: number;
+}
+
+// Slots of the mounted hook, readable from the render loop without
+// threading another prop through every stage component (the VRM frame
+// loop imports ``getMouthViseme`` directly, like it would a store).
+let activeSlots: Map<string, AgentSlot> | null = null;
+
+/**
+ * Vowel shape for ``agent`` at this instant, or ``viseme: null`` when
+ * the agent is silent / between syllables. Timed off ``audio.currentTime``
+ * while server TTS plays, off a wall clock during the text fallback.
+ */
+export function getMouthViseme(agent: string): MouthViseme | null {
+  const slot = activeSlots?.get(agent);
+  if (!slot || !slot.cues.length || !slot.speaking) return null;
+  const audio = slot.audio;
+  const playing = !!audio.src && !audio.paused && !audio.ended;
+  if (playing) return sampleVisemes(slot.cues, audio.currentTime);
+  if (slot.textTarget >= 0 && slot.fallbackStartMs > 0) {
+    return sampleVisemes(slot.cues, (performance.now() - slot.fallbackStartMs) / 1000);
+  }
+  return null;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -195,6 +246,13 @@ export interface UseAgentVoiceResult {
 
 export function useAgentVoice(): UseAgentVoiceResult {
   const slotsRef = useRef<Map<string, AgentSlot>>(new Map());
+  useEffect(() => {
+    const slots = slotsRef.current;
+    activeSlots = slots;
+    return () => {
+      if (activeSlots === slots) activeSlots = null;
+    };
+  }, []);
   const ctxRef = useRef<AudioContext | null>(null);
   const [speakingAgents, setSpeakingAgents] = useState<Set<string>>(() => new Set());
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -254,6 +312,9 @@ export function useAgentVoice(): UseAgentVoiceResult {
       speaking: false,
       textTarget: -1,
       pendingPlay: false,
+      text: "",
+      cues: [],
+      fallbackStartMs: 0,
     };
     slotsRef.current.set(agent, slot);
     return slot;
@@ -364,6 +425,7 @@ export function useAgentVoice(): UseAgentVoiceResult {
           // by the chunk handler below.
           slot.seq = data.seq ?? slot.seq + 1;
           slot.chunks = [];
+          slot.text = data.text ?? "";
           // Defence-in-depth: if any prior code path or browser
           // extension ever kicks off a ``speechSynthesis`` utterance
           // (it shouldn't now that we removed the fallback), cancel
@@ -423,6 +485,12 @@ export function useAgentVoice(): UseAgentVoiceResult {
             (chunks as (Uint8Array | null)[])[i] = null;
           }
           const mime = data.mime || "audio/mpeg";
+          // Vowel timeline against the real audio length. The WAV header
+          // gives it up front; for other containers wait for metadata.
+          const headerDuration = wavDurationS(merged);
+          slot.cues = headerDuration
+            ? buildVisemeTimeline(slot.text, headerDuration)
+            : [];
           const blob = new Blob([merged.buffer], { type: mime });
           const url = URL.createObjectURL(blob);
 
@@ -432,6 +500,12 @@ export function useAgentVoice(): UseAgentVoiceResult {
           const prevSrc = slot.audio.src;
           slot.audio.src = url;
           slot.pendingPlay = false;
+          slot.audio.onloadedmetadata = () => {
+            const d = slot.audio.duration;
+            if (Number.isFinite(d) && d > 0 && (!slot.cues.length || !headerDuration)) {
+              slot.cues = buildVisemeTimeline(slot.text, d);
+            }
+          };
           slot.audio.onended = () => {
             slot.speaking = false;
             slot.amp = 0;
@@ -557,6 +631,11 @@ export function useAgentVoice(): UseAgentVoiceResult {
 
       slot.speaking = true;
       setSpeaking(agentName, true);
+      // Shape the fallback mouth from the text too, on an estimated
+      // clock; real audio rebuilds the timeline when it lands.
+      slot.text = text;
+      slot.cues = buildVisemeTimeline(text, estimateDurationS(text));
+      slot.fallbackStartMs = performance.now();
 
       // Fake amplitude: step a TARGET every ~130 ms (one syllable-ish);
       // ``getMouthAmplitude`` eases ``amp`` toward it only while no real
@@ -631,6 +710,8 @@ export function useAgentVoice(): UseAgentVoiceResult {
     slot.chunks = [];
     slot.pendingPlay = false;
     slot.textTarget = -1;
+    slot.cues = [];
+    slot.text = "";
   };
 
   const cleanupAgent = useCallback((agentName: string) => {

@@ -11,6 +11,13 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Turn-scoped operator notes (`clear_at: next_user_message`, beta) and
+  `agent.progress` status lines from `thinking.display: "updates"`
+  (`AUTONOMA_TURN_SCOPED_NOTES`, `AUTONOMA_THINKING_UPDATES`).
+- Text-timed viseme lip-sync: `agent.speech_audio_start` carries the
+  spoken text; the browser builds a Hangul/kana/Latin vowel timeline
+  against the audio's real length (`web/src/lib/visemes.ts`) and the VRM
+  mouth opens into the right vowel instead of a drifting cycle.
 - Eval harness (`python -m autonoma.eval`): fixed goal suites × named
   variants, interleaved scheduling under a hard `--budget-usd`, objective
   CI-pass metric alongside self-reported completion, `--dry-run` stub.

@@ -10,6 +10,9 @@
  * always resolves to the same model across sessions and across viewers.
  *
  * Lip-sync:
+ *   - Vowel shape comes from the text-timed viseme timeline the voice
+ *     hook keeps per agent (``getMouthViseme``) when one exists; the
+ *     drifting bias below is the fallback.
  *   - The caller passes `getMouthAmplitude(name)` — the same 0..1 envelope
  *     the procedural SVG face used. Inside the r3f render loop we pull it
  *     every frame, apply a concave curve so quiet speech reads as more
@@ -79,6 +82,7 @@ import {
   type MocapBone,
   type MocapExpression,
 } from "@/lib/mocap/clipFormat";
+import { getMouthViseme } from "@/hooks/useAgentVoice";
 
 interface Props {
   agent: AgentData;
@@ -1302,15 +1306,30 @@ function VRMModel({
     // naturally on soft speech.
     if (em && getMouthAmplitude) {
       const curved = Math.pow(Math.min(1, amp * 1.4), 0.7);
-      // Vowel bias changes every ~180ms during speech. Math.floor(now * 5.5)
-      // gives ~5.5 steps/sec; phase offsets per-agent so two characters
-      // speaking simultaneously don't share the same mouth shape.
-      const vowelIdx = Math.floor(now * 5.5 + phase) % VOWELS.length;
-      const nbrIdx = (vowelIdx + 1) % VOWELS.length;
       for (let i = 0; i < VOWELS.length; i++) {
         em.setValue(VOWELS[i], 0);
       }
-      if (curved >= 0.04) {
+      // Text-timed vowel shape when the voice hook has a timeline for
+      // this line (see ``lib/visemes``): the energy envelope still sets
+      // how far the mouth opens, the timeline says into which vowel,
+      // gliding toward the next syllable's shape over the cue's tail.
+      const timed = getMouthViseme(agentName);
+      if (timed && timed.viseme) {
+        if (curved >= 0.04) {
+          const main = curved * (1 - timed.blend * 0.6);
+          em.setValue(timed.viseme, main);
+          if (timed.next && timed.next !== timed.viseme) {
+            em.setValue(timed.next, curved * timed.blend * 0.6);
+          }
+        }
+      } else if (curved >= 0.04) {
+        // No timeline (older server, podcast page, mocap preview), or a
+        // rest in the timeline while the audio still carries energy
+        // (consonant, timing drift): fall back to the drifting vowel
+        // cycle. The bias changes every ~180ms; phase offsets per-agent
+        // so two characters speaking simultaneously don't share a shape.
+        const vowelIdx = Math.floor(now * 5.5 + phase) % VOWELS.length;
+        const nbrIdx = (vowelIdx + 1) % VOWELS.length;
         em.setValue(VOWELS[vowelIdx], curved);
         em.setValue(VOWELS[nbrIdx], curved * 0.3);
       }

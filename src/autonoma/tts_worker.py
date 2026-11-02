@@ -13,7 +13,9 @@ Why a worker instead of synthesizing inline?
 
 Protocol (events emitted on the bus):
 
-- ``agent.speech_audio_start {agent, seq, voice, mood, mime}``
+- ``agent.speech_audio_start {agent, seq, voice, mood, mime, text, language}``
+  (``text`` is the line being spoken so the browser can build a vowel
+  timeline for lip-sync against the audio's real duration)
 - ``agent.speech_audio_chunk {agent, seq, index, b64}``
 - ``agent.speech_audio_end   {agent, seq, total_bytes}``
 - ``agent.speech_audio_dropped {agent, reason}``
@@ -348,6 +350,8 @@ class TTSWorker:
             voice=job.voice,
             mood=job.mood,
             mime="audio/wav",
+            text=job.text,
+            language=job.language,
         )
 
         total = 0
