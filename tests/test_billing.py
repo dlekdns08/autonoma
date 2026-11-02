@@ -11,9 +11,7 @@ import pytest
 from autonoma import billing
 
 
-def _transport(
-    pages: dict[str, dict[str, Any]], *, status: int = 200
-) -> httpx2.MockTransport:
+def _transport(pages: dict[str, dict[str, Any]], *, status: int = 200) -> httpx2.MockTransport:
     calls: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
