@@ -275,9 +275,12 @@ function Dashboard() {
   // Spotlight pin from a pixel-sprite click or a gesture preview.
   const [vtPinned, setVtPinned] = useState<string | null>(null);
   const previewGesture = useCallback((agentName: string, clipRef: string, durationS: number) => {
+    // Floor of a few seconds: pinning a new agent loads its VRM first,
+    // and a 1 s clip whose override had already expired by then was
+    // never fetched (the state gesture won instead).
     previewOverridesRef.current.set(agentName, {
       clipRef,
-      expiresAt: Date.now() + Math.max(800, durationS * 1000 + 400),
+      expiresAt: Date.now() + Math.max(5000, durationS * 1000 + 400),
     });
     // Only the spotlit VRM plays mocap clips, so a preview for anyone
     // else would silently do nothing — bring that agent on stage.

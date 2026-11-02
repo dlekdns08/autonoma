@@ -132,10 +132,14 @@ test("signature moves: list, preview, upvote, compose", async ({ page }) => {
 
   // ▶ preview → the clip is fetched from the BACKEND origin (not the
   // Next server) and Bear takes the spotlight.
+  // The stage may already be fetching another of Bear's moves on its
+  // own (signature gestures fire on state changes), so look for the
+  // previewed clip among the requests rather than at index 0.
   await modal.getByRole("button", { name: "Preview Victory Stomp" }).click();
-  await expect.poll(() => clipRequests.length, { timeout: 20_000 }).toBeGreaterThan(0);
-  expect(new URL(clipRequests[0].url()).origin).toBe(API);
-  expect(new URL(clipRequests[0].url()).pathname).toBe("/api/gestures/g-victory/clip");
+  const victoryClip = () =>
+    clipRequests.find((r) => new URL(r.url()).pathname === "/api/gestures/g-victory/clip");
+  await expect.poll(() => victoryClip() !== undefined, { timeout: 20_000 }).toBe(true);
+  expect(new URL(victoryClip()!.url()).origin).toBe(API);
 
   // 👍 → POST /api/gestures/g-victory/vote {up:true}; both vote buttons
   // for that move disable, the other move's stay live.
