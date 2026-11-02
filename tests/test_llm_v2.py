@@ -369,3 +369,36 @@ async def test_compact_sends_summarize_and_reads_iterations(monkeypatch) -> None
 
     monkeypatch.setattr(client._client.beta.messages, "create", no_summary)
     assert await client.compact(model="claude-sonnet-5-5", max_tokens=1, system="", messages=[]) is None
+
+
+def test_sdk_tracing_follows_the_otel_endpoint(monkeypatch) -> None:
+    from autonoma import config
+
+    captured: dict = {}
+
+    class FakeAsync:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    monkeypatch.setattr("anthropic.AsyncAnthropic", FakeAsync)
+    monkeypatch.setattr(config.settings, "otel_endpoint", "")
+    llm_module.AnthropicLLMClient(api_key="k")
+    assert captured["open_telemetry"] is False
+
+    monkeypatch.setattr(config.settings, "otel_endpoint", "http://collector:4318")
+    monkeypatch.setattr(config.settings, "otel_content_mode", "content")
+    client = llm_module.AnthropicLLMClient(api_key="k")
+    assert captured["open_telemetry"] == {"traces": {"content_mode": "content"}}
+
+    # Inside a swarm session the request client is tagged with it.
+    from autonoma.context import current_session_id
+
+    client._client = MagicMock()
+    token = current_session_id.set(42)
+    try:
+        client._traced()
+    finally:
+        current_session_id.reset(token)
+    client._client.with_options.assert_called_once_with(
+        open_telemetry={"traces": {"content_mode": "content"}, "conversation_id": "session-42"}
+    )

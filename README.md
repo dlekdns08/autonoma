@@ -64,7 +64,7 @@ to enable.
 - **Swarm-vs-swarm coordinator** — invite-based matchmaking + ELO leaderboard. The local instance hosts the coordinator endpoints under `/api/coordinator/*`.
 - **MCP server** — built on the official `mcp` SDK; serves the standard streamable-HTTP transport at `/mcp` (plus the legacy `POST /mcp/jsonrpc` endpoint) and exposes `list_sessions`, `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events` as MCP tools so Claude Code / Cursor can drive Autonoma directly. Point a client at `http://<host>:8000/mcp` with an `X-MCP-Token` header equal to `AUTONOMA_COORDINATOR_TOKEN`. Off by default; gated by `AUTONOMA_MCP_SERVER_ENABLED`.
 - **Auto CI loop** — every file an agent creates is sandbox-checked (ruff for `.py`, `tsc` for `.ts/.tsx`, `json.loads` for `.json`); failures fold back into the agent's inbox as a fix-task.
-- **OpenTelemetry + Prometheus** — `setup_otel()` exports traces to OTLP; `/metrics` serves Prometheus scrape format.
+- **OpenTelemetry + Prometheus** — `setup_otel()` exports traces to OTLP, including the Claude SDK's own request spans (session id as conversation id); `/metrics` serves Prometheus scrape format. `GET /api/billing/summary` reconciles the list-price `swarm.cost` estimates against Anthropic's billed usage & cost reports.
 
 ## Quick start
 
@@ -188,6 +188,8 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |
+| `AUTONOMA_OTEL_CONTENT_MODE` | Claude SDK OpenTelemetry spans (`anthropic.messages.create`, GenAI attributes) export through `AUTONOMA_OTEL_ENDPOINT`; `content` also exports prompts/responses | `metadata_only` |
+| `AUTONOMA_ANTHROPIC_ADMIN_API_KEY` | Admin API key for `GET /api/billing/summary` — billed USD by day/model and token usage from Anthropic's usage & cost reports (admin only) | — |
 | `AUTONOMA_AGENT_COMPACTION` | At the history round cap: `server` summarizes the trail into a signed compaction block (beta) so the agent keeps what it tried; `reset` drops it | `server` |
 | `AUTONOMA_TURN_SCOPED_NOTES` | Viewer hints/operator notes apply for one round (`clear_at` beta), then stay cleared in the history | `true` |
 | `AUTONOMA_THINKING_UPDATES` | `thinking.display: "updates"` (beta): the model's progress notes become `agent.progress` status lines on stage | `true` |

@@ -582,11 +582,41 @@ def _normalize_anthropic(resp: Any) -> LLMResponse:
     )
 
 
+def _otel_option() -> dict[str, Any] | None:
+    """SDK tracing option: on only when an OTLP endpoint is configured
+    (``setup_otel`` registers the provider the SDK emits through)."""
+    from autonoma.config import settings
+
+    if not settings.otel_endpoint:
+        return None
+    return {"traces": {"content_mode": settings.otel_content_mode}}
+
+
 class AnthropicLLMClient(BaseLLMClient):
     def __init__(self, api_key: str) -> None:
         import anthropic
 
-        self._client = anthropic.AsyncAnthropic(api_key=api_key or None)
+        otel = _otel_option()
+        self._otel = otel
+        # ``False`` keeps the SDK quiet when no collector is set, so a
+        # stray OTEL_* variable can't turn on export by surprise. The
+        # option is a TypedDict in the SDK; the plain dict is cast.
+        option: Any = otel if otel is not None else False
+        self._client = anthropic.AsyncAnthropic(api_key=api_key or None, open_telemetry=option)
+
+    def _traced(self) -> Any:
+        """The client to call: a copy tagged with the current swarm
+        session as ``conversation_id`` when tracing is on."""
+        otel = getattr(self, "_otel", None)
+        if otel is None:
+            return self._client
+        from autonoma.context import current_session_id
+
+        sid = current_session_id.get(None)
+        if sid is None:
+            return self._client
+        tagged: Any = {**otel, "conversation_id": f"session-{sid}"}
+        return self._client.with_options(open_telemetry=tagged)
 
     # ── request assembly ──
 
@@ -674,10 +704,11 @@ class AnthropicLLMClient(BaseLLMClient):
             # ``thinking`` blocks; reasoning itself stays hidden.
             kwargs["thinking"] = {"type": "adaptive", "display": "updates"}
             betas.append(_THINKING_UPDATES_BETA)
+        client = self._traced()
         if betas:
             kwargs["betas"] = betas
-            return self._client.beta.messages, kwargs
-        return self._client.messages, kwargs
+            return client.beta.messages, kwargs
+        return client.messages, kwargs
 
     @staticmethod
     def _translate_error(exc: Exception) -> Exception:
@@ -738,7 +769,7 @@ class AnthropicLLMClient(BaseLLMClient):
         kwargs["betas"] = betas
         kwargs["compaction"] = {"type": "summarize"}
         try:
-            resp = await self._client.beta.messages.create(**kwargs)
+            resp = await self._traced().beta.messages.create(**kwargs)
         except anthropic.APIError as exc:
             logger.warning("[llm] compaction request failed on %s: %s", model, _sanitize(exc))
             return None

@@ -11,6 +11,10 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Claude SDK OpenTelemetry spans ride the configured OTLP exporter
+  (`AUTONOMA_OTEL_CONTENT_MODE`, swarm session as conversation id), and
+  `GET /api/billing/summary` (admin) reads billed USD by day/model plus
+  token usage from the Usage & Cost API (`AUTONOMA_ANTHROPIC_ADMIN_API_KEY`).
 - Server-side compaction on demand at the agent history cap
   (`AUTONOMA_AGENT_COMPACTION=server`, beta `compact-2026-09-04`): the
   trail is summarized into a signed block instead of dropped;

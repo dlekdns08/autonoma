@@ -452,6 +452,17 @@ class Settings(BaseSettings):
     # this OTLP endpoint in addition to the in-process tracer.
     otel_endpoint: str = ""
     otel_service_name: str = "autonoma"
+    # Claude SDK spans (``anthropic.messages.create`` etc., GenAI
+    # semantic conventions) ride the same tracer provider. ``content``
+    # also exports prompts and responses — the backend then stores
+    # conversations under its own retention; keep ``metadata_only``
+    # unless that is wanted. The swarm session id is attached as the
+    # span's conversation id so one run groups in the backend.
+    otel_content_mode: Literal["metadata_only", "content"] = "metadata_only"
+    # Admin API credential (``sk-ant-admin…`` or an unscoped key) for the
+    # billed usage/cost reports behind ``GET /api/billing/summary``.
+    # Never used for inference. Empty → the endpoint answers 503.
+    anthropic_admin_api_key: str = ""
     prometheus_metrics_enabled: bool = True
 
     # #11 Goal recommender — gates /api/inspire which calls the LLM to

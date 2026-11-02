@@ -2406,6 +2406,9 @@ app.include_router(_gestures_router.router)
 import autonoma.routers.managed as _managed_router  # noqa: E402
 
 app.include_router(_managed_router.router)
+import autonoma.routers.billing as _billing_router  # noqa: E402
+
+app.include_router(_billing_router.router)
 app.include_router(_translate_router.router)
 app.include_router(_live_router.router)
 app.include_router(_personas_router.router)
