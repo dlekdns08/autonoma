@@ -12,7 +12,7 @@ from autonoma import billing
 
 
 def _transport(
-    pages: dict[str, list[dict[str, Any]]], *, status: int = 200
+    pages: dict[str, dict[str, Any]], *, status: int = 200
 ) -> httpx2.MockTransport:
     calls: list[httpx2.Request] = []
 
