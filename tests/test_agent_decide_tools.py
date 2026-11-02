@@ -163,6 +163,61 @@ async def test_operator_note_travels_as_system_message_once(fake_bus: FakeBus) -
 
 
 @pytest.mark.asyncio
+async def test_operator_note_is_turn_scoped_and_kept_in_history(
+    fake_bus: FakeBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(base_mod.settings, "turn_scoped_notes", True)
+    agent, stub = _agent(
+        [_tool_response("idle", {"speech": "a"}), _tool_response("idle", {"speech": "b"})]
+    )
+    agent.receive_operator_note("viewer bob: wave at the camera")
+    await agent._decide("S1")
+    note = stub.calls[0]["messages"][-1]
+    assert note["role"] == "system" and note["clear_at"] == "next_user_message"
+
+    # The cleared copy is resent verbatim on the next round (append-only
+    # history) rather than deleted.
+    await agent._decide("S2")
+    replayed = [m for m in stub.calls[1]["messages"] if m.get("role") == "system"]
+    assert replayed == [note]
+
+    monkeypatch.setattr(base_mod.settings, "turn_scoped_notes", False)
+    agent2, stub2 = _agent([_tool_response("idle", {"speech": "a"})])
+    agent2.receive_operator_note("x")
+    await agent2._decide("S1")
+    assert "clear_at" not in stub2.calls[0]["messages"][-1]
+
+
+class ProgressStubClient(StubClient):
+    """Streams progress notes (``thinking`` events) before the tool call."""
+
+    def __init__(self, responses: list[LLMResponse], notes: list[str]) -> None:
+        super().__init__(responses)
+        self._notes = notes
+
+    async def stream_events(self, **kwargs: Any):  # type: ignore[override]
+        for note in self._notes:
+            # Fragmented like a real thinking_delta stream.
+            for i in range(0, len(note), 5):
+                yield StreamEvent("thinking", text=note[i : i + 5])
+        async for ev in super().stream_events(**kwargs):
+            yield ev
+
+
+@pytest.mark.asyncio
+async def test_progress_notes_are_emitted_per_sentence(fake_bus: FakeBus) -> None:
+    agent, _ = _agent([_tool_response("idle", {"speech": "ok"})])
+    agent._client = ProgressStubClient(
+        [_tool_response("idle", {"speech": "ok"})],
+        ["Checking the failing test first. ", "Then I'll patch the router."],
+    )
+    await agent._decide("S1")
+    progress = [d["text"] for n, d in fake_bus.events if n == "agent.progress"]
+    assert progress == ["Checking the failing test first.", "Then I'll patch the router."]
+    assert all(d["agent"] == "Ada" for n, d in fake_bus.events if n == "agent.progress")
+
+
+@pytest.mark.asyncio
 async def test_refusal_returns_idle_and_drops_history(fake_bus: FakeBus) -> None:
     agent, _ = _agent(
         [

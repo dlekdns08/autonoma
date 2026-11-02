@@ -279,3 +279,38 @@ def test_openai_build_kwargs_tools_and_effort() -> None:
     )
     assert kw["temperature"] == 0.2
     assert "tools" not in kw
+
+
+def test_turn_scoped_system_message_adds_clear_at_beta() -> None:
+    client = _client()
+    _, kw = _request(
+        client,
+        model="claude-haiku-5-5",
+        messages=[
+            {"role": "user", "content": "hi"},
+            {"role": "system", "clear_at": "next_user_message", "content": "note"},
+        ],
+    )
+    assert "mid-conversation-system-clear-at-2026-08-21" in kw["betas"]
+    # The field is passed through untouched (it must be resent verbatim).
+    assert kw["messages"][-1]["clear_at"] == "next_user_message"
+
+    _, kw = _request(client, model="claude-haiku-5-5")
+    assert "betas" not in kw
+
+
+def test_thinking_updates_only_on_supporting_models(monkeypatch) -> None:
+    from autonoma import config
+
+    monkeypatch.setattr(config.settings, "thinking_updates", True)
+    client = _client()
+    _, kw = _request(client, model="claude-sonnet-5-5")
+    assert kw["thinking"] == {"type": "adaptive", "display": "updates"}
+    assert "thinking-display-updates-2026-08-18" in kw["betas"]
+
+    _, kw = _request(client, model="claude-haiku-5-5")
+    assert "thinking" not in kw
+
+    monkeypatch.setattr(config.settings, "thinking_updates", False)
+    _, kw = _request(client, model="claude-sonnet-5-5")
+    assert "thinking" not in kw

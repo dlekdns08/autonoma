@@ -87,6 +87,18 @@ class Settings(BaseSettings):
     # project state, so a reset only loses the model's own reasoning
     # trail). Keeps the cached prefix bounded.
     agent_history_rounds: int = 12
+    # Operator notes / viewer hints travel as turn-scoped system messages
+    # (``clear_at: "next_user_message"``, beta): the note has system
+    # authority for the round it lands in, then stops rendering — so a
+    # spectator's "wave!" doesn't keep steering the agent twelve rounds
+    # later. Off → the note stays in force for the whole history window.
+    turn_scoped_notes: bool = True
+    # ``thinking.display: "updates"`` (beta): the model's one-line
+    # progress notes between tool calls come back as text while the
+    # reasoning stays hidden. They are emitted as ``agent.progress`` and
+    # shown as a status line on stage. Only models that support the
+    # display mode get it; others run with the default display.
+    thinking_updates: bool = True
 
     # ── Managed Agents (autonoma.managed) ──
     # ``worker_backend=managed_agents`` runs each task as an outcome-driven

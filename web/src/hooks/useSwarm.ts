@@ -839,6 +839,24 @@ export function useSwarm() {
           return;
         }
 
+        if (event === "agent.progress") {
+          // The model's progress note between tool calls. Shown as a
+          // status line on stage for a few seconds; the event log keeps
+          // the full text.
+          const agent = (data.agent as string) || "";
+          const text = ((data.text as string) || "").trim();
+          if (agent && text) {
+            const at = Date.now();
+            setState((prev) => ({
+              ...prev,
+              agents: prev.agents.map((a) =>
+                a.name === agent ? { ...a, progress: { text, at } } : a,
+              ),
+            }));
+          }
+          return;
+        }
+
         if (event === "agent.tool_use") {
           // One line per tool call is too chatty for toasts; the event
           // log keeps it. Nudge the agent into the working pose and

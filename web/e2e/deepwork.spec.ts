@@ -104,6 +104,28 @@ test("OBS: tool pill appears under the name tag and expires after ~3s", async ({
   await expect(page.getByText(/⌘ Read/)).toHaveCount(0);
 });
 
+test("a progress note shows as a status line and expires", async ({ page }) => {
+  const backend = await mockBackend(page);
+  await page.goto("/obs?bg=green&chat=0&ticker=0");
+  await expect(page.getByText("Director").first()).toBeVisible();
+
+  backend.send("agent.progress", {
+    agent: "Director",
+    text: "Reading the failing test before touching the router.",
+  });
+  const line = page.getByTestId("progress-line");
+  await expect(line).toBeVisible();
+  await expect(line).toContainText("Reading the failing test");
+  const shownAt = Date.now();
+  await expect(line).toBeHidden({ timeout: 10_000 });
+  expect(Date.now() - shownAt).toBeGreaterThan(4_000);
+
+  // A note from an agent that isn't in the spotlight isn't shown.
+  backend.send("agent.progress", { agent: "Bear", text: "Off-stage note." });
+  await page.waitForTimeout(400);
+  await expect(page.getByTestId("progress-line")).toHaveCount(0);
+});
+
 test("OBS overlay with the tool pill matches baseline", async ({ page }) => {
   const backend = await mockBackend(page);
   await page.goto("/obs?bg=green&chat=0&ticker=0");

@@ -498,6 +498,7 @@ FORWARDED_EVENTS = [
     # lifecycle (see agents/base.py, agents/deepwork.py).
     "agent.refusal",
     "agent.tool_use",
+    "agent.progress",
     "deepwork.started",
     "deepwork.finished",
     "deepwork.cancelled",

@@ -217,11 +217,13 @@ class StreamEvent:
 
     - ``text``: a text delta (``text`` holds the fragment)
     - ``tool_input``: a fragment of a tool call's JSON input
+    - ``thinking``: a progress-note delta (``thinking.display:
+      "updates"``) — a sentence about what the model is doing next
     - ``final``: the stream is complete; ``response`` holds the
       normalized :class:`LLMResponse`
     """
 
-    kind: Literal["text", "tool_input", "final"]
+    kind: Literal["text", "tool_input", "thinking", "final"]
     text: str = ""
     response: LLMResponse | None = None
 
@@ -446,6 +448,16 @@ _FALLBACK_MODEL_PREFIXES = (
     "claude-sonnet-5-5",
 )
 _SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_CLEAR_AT_BETA = "mid-conversation-system-clear-at-2026-08-21"
+_THINKING_UPDATES_BETA = "thinking-display-updates-2026-08-18"
+# Models that accept ``thinking.display: "updates"`` (progress notes
+# between tool calls). Haiku 5.5 and the 4.x line do not.
+_THINKING_UPDATES_MODEL_PREFIXES = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+)
 _ADVISOR_TOOL_TYPE = "advisor_20260301"
 _ADVISOR_BETA = "advisor-tool-2026-03-01"
 
@@ -463,6 +475,16 @@ _SYSTEM_ROLE_UNSUPPORTED_RE = re.compile(r"role\s*'?\"?system'?\"?\s+is not supp
 
 def supports_server_fallback(model: str) -> bool:
     return model.startswith(_FALLBACK_MODEL_PREFIXES)
+
+
+def supports_thinking_updates(model: str) -> bool:
+    return model.startswith(_THINKING_UPDATES_MODEL_PREFIXES)
+
+
+def _thinking_updates_enabled() -> bool:
+    from autonoma.config import settings
+
+    return bool(getattr(settings, "thinking_updates", False))
 
 
 def _anthropic_tool(spec: ToolSpec, *, streaming: bool) -> dict[str, Any]:
@@ -601,6 +623,16 @@ class AnthropicLLMClient(BaseLLMClient):
         if supports_server_fallback(model):
             betas.append(_SERVER_FALLBACK_BETA)
             kwargs["fallbacks"] = "default"
+        if any(m.get("clear_at") for m in messages):
+            # Turn-scoped system messages: the note renders for one turn
+            # and then stays in the transcript cleared (never deleted —
+            # that would edit the prefix under preserved thinking).
+            betas.append(_CLEAR_AT_BETA)
+        if _thinking_updates_enabled() and supports_thinking_updates(model):
+            # Progress notes between tool calls come back as short
+            # ``thinking`` blocks; reasoning itself stays hidden.
+            kwargs["thinking"] = {"type": "adaptive", "display": "updates"}
+            betas.append(_THINKING_UPDATES_BETA)
         if betas:
             kwargs["betas"] = betas
             return self._client.beta.messages, kwargs
@@ -732,6 +764,13 @@ class AnthropicLLMClient(BaseLLMClient):
                         yield StreamEvent("text", text=event.text)
                     elif etype == "input_json":
                         yield StreamEvent("tool_input", text=event.partial_json)
+                    elif etype == "thinking":
+                        # Under ``display: "updates"`` a non-empty thinking
+                        # delta is a progress note; empty ones (hidden
+                        # reasoning) carry nothing worth forwarding.
+                        delta = getattr(event, "thinking", "") or ""
+                        if delta:
+                            yield StreamEvent("thinking", text=delta)
                 final = await stream_ctx.get_final_message()
             yield StreamEvent("final", response=_normalize_anthropic(final))
 

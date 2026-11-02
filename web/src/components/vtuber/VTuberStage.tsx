@@ -97,6 +97,9 @@ function spotlightTint(mood: string | undefined): string {
 
 /** How long the ``tool: detail`` pill stays under the name tag. */
 const TOOL_PILL_MS = 3000;
+/** How long a progress note (``agent.progress``) stays on screen. Longer
+ *  than the tool pill: it is a sentence, not a tag. */
+const PROGRESS_LINE_MS = 6000;
 /** How long after the agent stops producing sound the bubble lingers. */
 const BUBBLE_LINGER_MS = 2500;
 
@@ -312,6 +315,21 @@ export default function VTuberStage({
       ? spotlightAgent.lastTool
       : null;
 
+  // ── Progress line ────────────────────────────────────────────────
+  // Same lifetime scheme as the tool pill, keyed on ``progress.at``.
+  const progressAt = spotlightAgent?.progress?.at ?? 0;
+  const [expiredProgressAt, setExpiredProgressAt] = useState(0);
+  useEffect(() => {
+    if (!progressAt) return;
+    const remaining = Math.max(0, progressAt + PROGRESS_LINE_MS - Date.now());
+    const t = window.setTimeout(() => setExpiredProgressAt(progressAt), remaining);
+    return () => window.clearTimeout(t);
+  }, [progressAt]);
+  const progressLine =
+    spotlightAgent?.progress && progressAt !== expiredProgressAt
+      ? spotlightAgent.progress
+      : null;
+
   if (agents.length === 0) {
     return (
       <div className="flex h-full items-center justify-center rounded-xl border border-fuchsia-500/20 bg-slate-950/60">
@@ -444,6 +462,17 @@ export default function VTuberStage({
                 >
                   <span className="text-cyan-300">⌘ {toolPill.tool}</span>
                   {toolPill.detail ? `: ${toolPill.detail}` : ""}
+                </div>
+              )}
+              {progressLine && (
+                <div
+                  key={progressLine.at}
+                  data-testid="progress-line"
+                  className="max-w-[320px] rounded-md border border-amber-300/40 bg-black/70 px-2 py-0.5 font-mono text-[10px] leading-snug text-amber-50 backdrop-blur-sm animate-[bubble-in_200ms_ease-out]"
+                  title={progressLine.text}
+                >
+                  <span className="text-amber-300">… </span>
+                  {progressLine.text}
                 </div>
               )}
             </div>

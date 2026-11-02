@@ -23,6 +23,11 @@ export interface AgentData {
    *  timestamp (ms) so the stage can expire the pill and the VRM can
    *  fire a one-shot pulse per call. */
   lastTool?: { tool: string; detail: string; at: number } | null;
+  /** Most recent ``agent.progress`` note — the model's own one-line
+   *  "what I'm doing next" between tool calls (``thinking.display:
+   *  "updates"``). ``at`` is a client timestamp so the stage can expire
+   *  the status line. */
+  progress?: { text: string; at: number } | null;
 }
 
 export interface TaskData {
