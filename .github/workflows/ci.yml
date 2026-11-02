@@ -13,12 +13,14 @@ concurrency:
 jobs:
   test:
     name: Test & Build
+    # The server is deployed on macOS, so CI runs there by default (the
+    # sandbox uses seatbelt/srt, Playwright baselines are *-darwin.png).
     # Configurable runner with a GitHub-hosted fallback: set the
     # repository/org variable ``CI_RUNNER`` (e.g. ``self-hosted``) to
     # pin a runner; when it is unset the expression evaluates to the
-    # empty string and ``||`` falls through to ``ubuntu-latest``.
+    # empty string and ``||`` falls through to ``macos-latest``.
     # ``vars`` is one of the contexts available to ``runs-on``.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || 'macos-latest' }}
     # Hard ceiling so a hung model download / stuck test can't pin a
     # runner for the default 360 minutes.
     timeout-minutes: 30
@@ -109,7 +111,7 @@ jobs:
 
   e2e:
     name: E2E & visual (Playwright)
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || 'macos-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
