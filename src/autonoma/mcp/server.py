@@ -101,6 +101,12 @@ async def _tool_list_sessions(_params: dict[str, Any]) -> Any:
                 "room_id": getattr(sess, "room_id", sid),
                 "is_admin": bool(getattr(sess, "is_admin", False)),
                 "status": "running" if room is not None else "idle",
+                **(
+                    {k: v for k, v in _swarm_snapshot(room, getattr(sess, "project", None)).items()
+                     if k in ("round", "tasks_total", "tasks_done", "cost_usd")}
+                    if room is not None
+                    else {}
+                ),
             }
         )
     return out
@@ -142,6 +148,76 @@ async def _tool_start_swarm_headless(params: dict[str, Any]) -> Any:
         max_rounds=max_rounds,
     )
     return {"session_id": sid}
+
+
+def _swarm_snapshot(swarm: Any, project: Any) -> dict[str, Any]:
+    """Progress of a live swarm, cheap enough to poll once a second."""
+    tasks = list(getattr(project, "tasks", None) or [])
+    done = sum(1 for t in tasks if getattr(t, "status", "") in ("done", "completed"))
+    cost: dict[str, Any] = {}
+    try:
+        cost = swarm.cost_summary()
+    except Exception:  # pragma: no cover — stub swarms in tests
+        cost = {}
+    agents = getattr(swarm, "agents", {}) or {}
+    return {
+        "round": int(getattr(swarm, "_round", 0) or 0),
+        "running": bool(getattr(swarm, "_running", False)),
+        "goal": str(getattr(project, "goal", "") or ""),
+        "completed": bool(getattr(project, "completed", False)),
+        "tasks_total": len(tasks),
+        "tasks_done": done,
+        "agents": {
+            name: str(getattr(getattr(a, "state", None), "value", getattr(a, "state", "")) or "")
+            for name, a in agents.items()
+        },
+        "cost_usd": cost.get("total_usd"),
+        "cache_hit_ratio": cost.get("cache_hit_ratio"),
+    }
+
+
+async def _tool_get_run_status(params: dict[str, Any]) -> Any:
+    """Poll a run started with ``start_swarm_headless`` (or any session).
+
+    ``status`` is ``running`` while the session is live, ``finished``
+    once only its ``run_summary`` row remains, ``not_found`` otherwise.
+    This is the call-now / poll-later shape clients use for long runs;
+    when the MCP Tasks extension lands in the SDK it will wrap this.
+    """
+    sid_raw = params.get("session_id")
+    if sid_raw is None:
+        raise ValueError("session_id is required")
+    try:
+        session_id = int(sid_raw)
+    except (TypeError, ValueError):
+        raise ValueError("session_id must be an integer")
+
+    try:
+        from autonoma.api import _sessions  # noqa: PLC0415 — lazy
+    except Exception:  # pragma: no cover — defensive
+        _sessions = {}
+    sess = _sessions.get(session_id)
+    swarm = getattr(sess, "swarm", None) if sess is not None else None
+    if sess is not None and swarm is not None:
+        snap = _swarm_snapshot(swarm, getattr(sess, "project", None))
+        snap.update({"session_id": session_id, "status": "running" if snap["running"] else "finishing"})
+        return snap
+
+    rows = await _tool_fetch_run_summary({"session_id": session_id})
+    if rows:
+        latest = rows[0]
+        return {
+            "session_id": session_id,
+            "status": "finished",
+            "goal": latest.get("goal", ""),
+            "completed_at": latest.get("completed_at"),
+            "total_rounds": latest.get("total_rounds"),
+            "tasks_total": latest.get("task_count"),
+            "tasks_done": latest.get("tasks_done"),
+            "tasks_failed": latest.get("tasks_failed"),
+            "llm_calls": latest.get("llm_calls"),
+        }
+    return {"session_id": session_id, "status": "not_found"}
 
 
 async def _tool_fetch_run_summary(params: dict[str, Any]) -> Any:
@@ -315,6 +391,22 @@ async def start_swarm_headless(
         _tool_start_swarm_headless,
         {"goal": goal, "preset_id": preset_id, "max_rounds": max_rounds},
     )
+
+
+@mcp_server.tool(
+    name="get_run_status",
+    description=(
+        "Poll a swarm run: status (running|finishing|finished|not_found), "
+        "round, task counts, per-agent states and list-price cost while it "
+        "runs; the run_summary figures once it has finished. Pair with "
+        "start_swarm_headless for call-now / poll-later."
+    ),
+    structured_output=False,
+)
+async def get_run_status(
+    session_id: Annotated[int, Field(description="Session id from start_swarm_headless.")],
+) -> str:
+    return await _run_tool(_tool_get_run_status, {"session_id": session_id})
 
 
 @mcp_server.tool(

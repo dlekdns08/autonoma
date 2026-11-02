@@ -39,7 +39,7 @@ HUD 픽셀 맵, 또는 3D VTuber 캐릭터(립싱크·무드·제스처가 실�
 - **네이티브 tool-use 에이전트 프로토콜** — 모든 액션이 strict 툴입니다. Director는 Sonnet 5.5로 계획하고 워커는 Haiku 5.5로 결정하며, append-only 히스토리와 프롬프트 캐싱, 관전자 힌트의 운영자 채널(system 메시지) 전달을 지원합니다.
 - **선택적 TTS** — 자체 호스팅 OmniVoice zero-shot 클로닝 (MPS/CUDA/CPU), 에이전트별 음성 배정 + 예산 상한.
 - **샌드박스 실행** — 에이전트가 쓴 코드는 Anthropic 샌드박스 런타임(`srt`: seatbelt / bubblewrap + 프록시 네트워크 필터, 컨테이너 없음)이 있으면 그 안에서, 없으면 sandbox-exec / bubblewrap 안에서 CPU·시간·메모리 제한과 함께 실행됩니다. 딥 워크 세션의 bash는 Claude Code의 OS 샌드박스와 도메인 허용 목록 아래 돕니다.
-- **MCP 서버** — 공식 `mcp` SDK 기반. 표준 streamable-HTTP 전송을 `/mcp`에서 제공하고(레거시 `POST /mcp/jsonrpc`도 유지) `list_sessions`, `start_swarm_headless`, `fetch_run_summary`, `fetch_diary`, `fetch_world_events`를 MCP 툴로 노출해 Claude Code / Cursor가 Autonoma를 직접 조종할 수 있습니다. 클라이언트는 `http://<host>:8000/mcp`에 `X-MCP-Token` 헤더(`AUTONOMA_COORDINATOR_TOKEN` 값)를 붙여 접속합니다. 기본 꺼짐; `AUTONOMA_MCP_SERVER_ENABLED`로 활성화.
+- **MCP 서버** — 공식 `mcp` SDK 기반. 표준 streamable-HTTP 전송을 `/mcp`에서 제공하고(레거시 `POST /mcp/jsonrpc`도 유지) `list_sessions`, `start_swarm_headless`, `get_run_status`(긴 실행을 지금 시작하고 나중에 폴링), `fetch_run_summary`, `fetch_diary`, `fetch_world_events`를 MCP 툴로 노출해 Claude Code / Cursor가 Autonoma를 직접 조종할 수 있습니다. 클라이언트는 `http://<host>:8000/mcp`에 `X-MCP-Token` 헤더(`AUTONOMA_COORDINATOR_TOKEN` 값)를 붙여 접속합니다. 기본 꺼짐; `AUTONOMA_MCP_SERVER_ENABLED`로 활성화.
 
 ## 빠른 시작
 

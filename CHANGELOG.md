@@ -11,6 +11,9 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- MCP `get_run_status` tool: poll a run started with `start_swarm_headless`
+  (round, task counts, agent states, list-price cost; run_summary once
+  finished); `list_sessions` carries round and cost.
 - `scripts/motion_server_kimodo.py`: NVIDIA Kimodo (SMPL-X) wrapped in the
   text-to-motion server contract; `autonoma.gestures.kimodo` converts AMASS
   axis-angle poses (z-up) to SMPL-22 quaternions (y-up, +z facing) with slerp
