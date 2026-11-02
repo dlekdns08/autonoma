@@ -803,16 +803,71 @@ RECENT MESSAGES:
         self._history.append({"role": "assistant", "content": response.raw_content})
         self._pending_tool_use_id = response.tool_calls[0].id if response.tool_calls else None
 
+    def _at_round_cap(self) -> bool:
+        return len(self._history) >= max(2, settings.agent_history_rounds) * 2
+
+    async def _compact_history(self) -> None:
+        """Shrink the trail at the round cap.
+
+        ``server``: the API summarizes the history (plus the owed
+        ``tool_result``) into one signed compaction block that replaces
+        it; the next turn is a fresh user message, so no request ends on
+        an unanswered tool call. ``reset`` — or any failure — falls back
+        to the client-side "simple compaction": drop the trail (the
+        situation report carries the full project state) and replay no
+        earlier thinking block.
+        """
+        if settings.agent_compaction == "server":
+            messages = list(self._history)
+            if self._pending_tool_use_id:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": self._pending_tool_use_id,
+                                "content": self._last_action_result or "ok",
+                                "is_error": self._last_action_error,
+                            }
+                        ],
+                    }
+                )
+            # Same system prompt and tools as the decide requests: the
+            # summarizer reads them, and the kept block stays bound to them.
+            permitted = self._permitted_actions()
+            tools = build_decision_tools(permitted) if self._decision_protocol == "tool_use" else None
+            try:
+                summary = await self.client.compact(
+                    model=self._model,
+                    max_tokens=max(4096, self._max_tokens),
+                    system=self._decision_system_prompt(tools, permitted),
+                    messages=messages,
+                    tools=tools,
+                    effort=self._effort,
+                )
+            except Exception as exc:  # pragma: no cover — provider quirks
+                logger.warning(f"[{self.name}] compaction failed: {exc}")
+                summary = None
+            if summary is not None and summary.raw_content:
+                self._account(summary, self._model)
+                self._history = [{"role": "assistant", "content": summary.raw_content}]
+                self._pending_tool_use_id = None
+                await bus.emit(
+                    "agent.compacted",
+                    agent=self.name,
+                    summarized_messages=len(messages),
+                    input_tokens=summary.input_tokens,
+                    output_tokens=summary.output_tokens,
+                )
+                logger.debug(f"[{self.name}] history compacted ({len(messages)} msgs)")
+                return
+        self._reset_history("round cap")
+
     def _build_turn(self, situation: str) -> list[dict[str, Any]]:
         """The messages appended for this round: the user turn (with the
         previous action's ``tool_result`` when one is owed) plus any
         queued operator notes as a ``role: system`` message."""
-        if len(self._history) >= max(2, settings.agent_history_rounds) * 2:
-            # Client-side "simple compaction": the situation report already
-            # carries the full project state, so dropping the trail is
-            # safe, and no earlier thinking block is replayed afterwards.
-            self._reset_history("round cap")
-
         user_content: str | list[dict[str, Any]] = situation
         if self._pending_tool_use_id:
             user_content = [
@@ -1044,6 +1099,8 @@ RECENT MESSAGES:
         if self._decision_protocol == "tool_use":
             tools = build_decision_tools(permitted)
         system = self._decision_system_prompt(tools, permitted)
+        if self._at_round_cap():
+            await self._compact_history()
         turn = self._build_turn(situation)
         messages = self._history + turn
 

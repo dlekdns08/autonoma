@@ -254,6 +254,83 @@ async def test_history_resets_at_round_cap(
     assert len(agent._history) == 2
 
 
+_COMPACTION_BLOCK = {"type": "compaction", "content": "Ada tried sqlite.", "signature": "sig"}
+
+
+class CompactingStubClient(StubClient):
+    def __init__(self, responses: list[LLMResponse], *, summary: bool = True) -> None:
+        super().__init__(responses)
+        self.compact_calls: list[dict[str, Any]] = []
+        self._summary = summary
+
+    async def compact(self, **kwargs: Any) -> LLMResponse | None:  # type: ignore[override]
+        self.compact_calls.append(kwargs)
+        if not self._summary:
+            return None
+        return LLMResponse(
+            text="",
+            input_tokens=300,
+            output_tokens=40,
+            stop_reason="compaction",
+            raw_content=[_COMPACTION_BLOCK],
+        )
+
+
+@pytest.mark.asyncio
+async def test_round_cap_compacts_on_the_server(
+    fake_bus: FakeBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(base_mod.settings, "agent_history_rounds", 2)
+    monkeypatch.setattr(base_mod.settings, "agent_compaction", "server")
+    responses = [_tool_response("idle", {"speech": str(i)}, tool_id=f"t{i}") for i in range(4)]
+    agent, _ = _agent(responses)
+    stub = CompactingStubClient(responses)
+    agent._client = stub
+    for i in range(3):
+        agent._last_action_result = "ok"
+        await agent._decide(f"R{i}")
+
+    # One compaction request: the whole trail plus the owed tool_result,
+    # ending on a user turn, with the decide request's system + tools.
+    assert len(stub.compact_calls) == 1
+    req = stub.compact_calls[0]
+    assert req["messages"][-1]["role"] == "user"
+    assert req["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert req["messages"][-1]["content"][0]["tool_use_id"] == "t1"
+    assert req["tools"] and req["system"] == stub.calls[-1]["system"]
+
+    # Round 3 was sent as: compaction block first, then a fresh user turn
+    # (the tool_result was consumed by the summary).
+    sent = stub.calls[-1]["messages"]
+    assert sent[0] == {"role": "assistant", "content": [_COMPACTION_BLOCK]}
+    assert sent[1]["role"] == "user" and sent[1]["content"] == "R2"
+    # The block stays first on the following round too.
+    agent._last_action_result = "ok"
+    await agent._decide("R3")
+    assert stub.calls[-1]["messages"][0]["content"] == [_COMPACTION_BLOCK]
+    assert ("agent.compacted", {"agent": "Ada", "summarized_messages": 5,
+                                "input_tokens": 300, "output_tokens": 40}) in fake_bus.events
+    assert agent._total_cost_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_round_cap_falls_back_to_reset_without_summary(
+    fake_bus: FakeBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(base_mod.settings, "agent_history_rounds", 2)
+    monkeypatch.setattr(base_mod.settings, "agent_compaction", "server")
+    responses = [_tool_response("idle", {"speech": str(i)}, tool_id=f"t{i}") for i in range(3)]
+    agent, _ = _agent(responses)
+    stub = CompactingStubClient(responses, summary=False)
+    agent._client = stub
+    for i in range(3):
+        agent._last_action_result = "ok"
+        await agent._decide(f"R{i}")
+    assert len(stub.compact_calls) == 1
+    assert len(agent._history) == 2
+    assert stub.calls[-1]["messages"][0]["role"] == "user"
+
+
 @pytest.mark.asyncio
 async def test_json_protocol_keeps_text_contract(fake_bus: FakeBus) -> None:
     agent, stub = _agent(

@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     # project state, so a reset only loses the model's own reasoning
     # trail). Keeps the cached prefix bounded.
     agent_history_rounds: int = 12
+    # What happens at the round cap: ``server`` asks the API for an
+    # on-demand summary (beta ``compact-2026-09-04``) and continues from
+    # the signed compaction block, so the agent keeps its reasoning trail
+    # ("I already tried X") across the cap; ``reset`` drops the trail
+    # (the old behaviour, and the fallback when the provider/model has no
+    # compaction or the summary call fails).
+    agent_compaction: Literal["server", "reset"] = "server"
     # Operator notes / viewer hints travel as turn-scoped system messages
     # (``clear_at: "next_user_message"``, beta): the note has system
     # authority for the round it lands in, then stops rendering — so a

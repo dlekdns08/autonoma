@@ -163,6 +163,7 @@ web/src/
 | `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor 툴: 워커가 턴 중간에 상의하는 상위 모델 (비우면 끔) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | 정체 시 Director가 계획 모델에 지시 하나를 요청 | `true` |
+| `AUTONOMA_AGENT_COMPACTION` | 히스토리 라운드 상한에서: `server`는 서명된 compaction 블록으로 요약(베타)해 시도했던 내용을 유지, `reset`은 폐기 | `server` |
 | `AUTONOMA_TURN_SCOPED_NOTES` | 시청자 힌트/운영자 노트를 한 라운드만 적용(`clear_at` 베타), 이후 히스토리에 비워진 채 유지 | `true` |
 | `AUTONOMA_THINKING_UPDATES` | `thinking.display: "updates"`(베타): 모델의 진행 메모를 `agent.progress` 상태 줄로 무대에 표시 | `true` |
 | `AUTONOMA_MANAGED_DREAMS_ENABLED` | 런이 끝나면 캐릭터별 호스티드 세션을 메모리 스토어로 정리 (`worker_backend=managed_agents`) | `false` |

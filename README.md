@@ -188,6 +188,7 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |
+| `AUTONOMA_AGENT_COMPACTION` | At the history round cap: `server` summarizes the trail into a signed compaction block (beta) so the agent keeps what it tried; `reset` drops it | `server` |
 | `AUTONOMA_TURN_SCOPED_NOTES` | Viewer hints/operator notes apply for one round (`clear_at` beta), then stay cleared in the history | `true` |
 | `AUTONOMA_THINKING_UPDATES` | `thinking.display: "updates"` (beta): the model's progress notes become `agent.progress` status lines on stage | `true` |
 | `AUTONOMA_MANAGED_DREAMS_ENABLED` | After a run, consolidate each character's hosted sessions into its memory store (`worker_backend=managed_agents`) | `false` |

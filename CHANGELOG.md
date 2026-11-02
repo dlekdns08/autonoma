@@ -11,6 +11,10 @@ captures work in flight.
 ## [Unreleased]
 
 ### Added
+- Server-side compaction on demand at the agent history cap
+  (`AUTONOMA_AGENT_COMPACTION=server`, beta `compact-2026-09-04`): the
+  trail is summarized into a signed block instead of dropped;
+  `agent.compacted` event.
 - Turn-scoped operator notes (`clear_at: next_user_message`, beta) and
   `agent.progress` status lines from `thinking.display: "updates"`
   (`AUTONOMA_TURN_SCOPED_NOTES`, `AUTONOMA_THINKING_UPDATES`).

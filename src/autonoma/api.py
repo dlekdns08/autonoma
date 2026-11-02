@@ -499,6 +499,7 @@ FORWARDED_EVENTS = [
     "agent.refusal",
     "agent.tool_use",
     "agent.progress",
+    "agent.compacted",
     "deepwork.started",
     "deepwork.finished",
     "deepwork.cancelled",

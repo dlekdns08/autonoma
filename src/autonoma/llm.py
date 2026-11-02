@@ -330,6 +330,28 @@ class BaseLLMClient(ABC):
         """
         ...
 
+    async def compact(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSpec] | None = None,
+        effort: str | None = None,
+    ) -> LLMResponse | None:
+        """Ask the provider to summarize ``messages`` (server-side
+        compaction on demand). Returns a response whose ``raw_content``
+        is the signed compaction block to put *first* in the next
+        request in place of the summarized messages, or ``None`` when
+        the provider has no such feature or returned no summary.
+
+        Send the same ``system`` and ``tools`` as the conversation's
+        ordinary requests: the summarizer reads them.
+        """
+        del model, max_tokens, system, messages, tools, effort
+        return None
+
     async def stream(
         self,
         *,
@@ -449,6 +471,7 @@ _FALLBACK_MODEL_PREFIXES = (
 )
 _SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _CLEAR_AT_BETA = "mid-conversation-system-clear-at-2026-08-21"
+_COMPACTION_BETA = "compact-2026-09-04"
 _THINKING_UPDATES_BETA = "thinking-display-updates-2026-08-18"
 # Models that accept ``thinking.display: "updates"`` (progress notes
 # between tool calls). Haiku 5.5 and the 4.x line do not.
@@ -475,6 +498,22 @@ _SYSTEM_ROLE_UNSUPPORTED_RE = re.compile(r"role\s*'?\"?system'?\"?\s+is not supp
 
 def supports_server_fallback(model: str) -> bool:
     return model.startswith(_FALLBACK_MODEL_PREFIXES)
+
+
+def _block_type(block: Any) -> str | None:
+    if isinstance(block, dict):
+        return block.get("type")
+    return getattr(block, "type", None)
+
+
+def has_compaction_block(messages: list[dict[str, Any]]) -> bool:
+    """True when a message carries a server ``compaction`` block (the
+    beta header must then accompany every request)."""
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list) and any(_block_type(b) == "compaction" for b in content):
+            return True
+    return False
 
 
 def supports_thinking_updates(model: str) -> bool:
@@ -623,6 +662,8 @@ class AnthropicLLMClient(BaseLLMClient):
         if supports_server_fallback(model):
             betas.append(_SERVER_FALLBACK_BETA)
             kwargs["fallbacks"] = "default"
+        if has_compaction_block(messages):
+            betas.append(_COMPACTION_BETA)
         if any(m.get("clear_at") for m in messages):
             # Turn-scoped system messages: the note renders for one turn
             # and then stays in the transcript cleared (never deleted —
@@ -657,6 +698,68 @@ class AnthropicLLMClient(BaseLLMClient):
     @staticmethod
     def _system_role_unsupported(exc: Exception) -> bool:
         return bool(_SYSTEM_ROLE_UNSUPPORTED_RE.search(str(exc)))
+
+    # ── compaction on demand ──
+
+    async def compact(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSpec] | None = None,
+        effort: str | None = None,
+    ) -> LLMResponse | None:
+        import anthropic
+
+        _, kwargs = self._build_request(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            cache_system_prompt=False,
+            effort=effort,
+            tools=tools,
+            single_tool_call=True,
+            streaming=False,
+        )
+        # The summarizer never runs a tool; the advisor/fallback extras
+        # are irrelevant to it and ``tool_choice`` is not accepted.
+        kwargs.pop("tool_choice", None)
+        kwargs.pop("fallbacks", None)
+        kwargs["tools"] = [t for t in kwargs.get("tools", []) if t.get("type") != _ADVISOR_TOOL_TYPE]
+        if not kwargs["tools"]:
+            del kwargs["tools"]
+        kwargs.pop("thinking", None)
+        betas = [b for b in kwargs.get("betas", []) if b not in (_ADVISOR_BETA, _SERVER_FALLBACK_BETA, _THINKING_UPDATES_BETA)]
+        if _COMPACTION_BETA not in betas:
+            betas.append(_COMPACTION_BETA)
+        kwargs["betas"] = betas
+        kwargs["compaction"] = {"type": "summarize"}
+        try:
+            resp = await self._client.beta.messages.create(**kwargs)
+        except anthropic.APIError as exc:
+            logger.warning("[llm] compaction request failed on %s: %s", model, _sanitize(exc))
+            return None
+        if str(getattr(resp, "stop_reason", "")) != "compaction":
+            # ``end_turn`` (no text), ``tool_use``, ``max_tokens`` …: keep
+            # the history as it is and try again later.
+            logger.info("[llm] no summary from %s (stop_reason=%s)", model, resp.stop_reason)
+            return None
+        usage = getattr(resp, "usage", None)
+        inp = out = 0
+        for it in getattr(usage, "iterations", None) or []:
+            inp += int(getattr(it, "input_tokens", 0) or 0)
+            out += int(getattr(it, "output_tokens", 0) or 0)
+        return LLMResponse(
+            text="",
+            input_tokens=inp,
+            output_tokens=out,
+            stop_reason="compaction",
+            raw_content=list(resp.content or []),
+            model=str(getattr(resp, "model", "") or model),
+        )
 
     # ── non-streaming ──
 

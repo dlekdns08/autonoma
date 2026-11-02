@@ -314,3 +314,58 @@ def test_thinking_updates_only_on_supporting_models(monkeypatch) -> None:
     monkeypatch.setattr(config.settings, "thinking_updates", False)
     _, kw = _request(client, model="claude-sonnet-5-5")
     assert "thinking" not in kw
+
+
+def test_compaction_block_in_history_adds_beta() -> None:
+    client = _client()
+    block = {"type": "compaction", "content": "summary", "signature": "s"}
+    _, kw = _request(
+        client,
+        model="claude-haiku-5-5",
+        messages=[{"role": "assistant", "content": [block]}, {"role": "user", "content": "go"}],
+    )
+    assert "compact-2026-09-04" in kw["betas"]
+    assert kw["messages"][0]["content"] == [block]
+
+
+@pytest.mark.asyncio
+async def test_compact_sends_summarize_and_reads_iterations(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    client = _client()
+    captured: dict = {}
+
+    async def fake_create(**kw):
+        captured.update(kw)
+        return SimpleNamespace(
+            stop_reason="compaction",
+            content=[SimpleNamespace(type="compaction", content="S", signature="x")],
+            usage=SimpleNamespace(
+                input_tokens=0,
+                output_tokens=0,
+                iterations=[SimpleNamespace(type="compaction", input_tokens=144, output_tokens=276)],
+            ),
+            model="claude-sonnet-5-5",
+        )
+
+    monkeypatch.setattr(client._client.beta.messages, "create", fake_create)
+    resp = await client.compact(
+        model="claude-sonnet-5-5",
+        max_tokens=4096,
+        system="SYS",
+        messages=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}],
+        tools=[_TOOL],
+        effort="low",
+    )
+    assert resp is not None and resp.stop_reason == "compaction"
+    assert resp.input_tokens == 144 and resp.output_tokens == 276
+    assert captured["compaction"] == {"type": "summarize"}
+    assert "compact-2026-09-04" in captured["betas"]
+    assert "fallbacks" not in captured and "tool_choice" not in captured
+    assert captured["tools"][0]["name"] == _TOOL.name
+
+    async def no_summary(**kw):
+        return SimpleNamespace(stop_reason="end_turn", content=[], usage=None, model="m")
+
+    monkeypatch.setattr(client._client.beta.messages, "create", no_summary)
+    assert await client.compact(model="claude-sonnet-5-5", max_tokens=1, system="", messages=[]) is None
