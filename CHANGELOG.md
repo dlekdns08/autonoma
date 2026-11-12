@@ -117,6 +117,22 @@ captures work in flight.
   `voice/store.py` CRUD surface, including FS+DB consistency on insert
   rollback and migration-007 legacy fallback).
 
+### Security
+- SSRF guard on user-supplied vLLM `base_url` (guest HTTP endpoint and WS
+  auth): private, loopback, link-local and reserved targets are refused in
+  production.
+- Rate limits on `/api/auth/login`, `/signup`, `/guest` (per IP; login also
+  per username); minimum signup password length 8.
+- `/docs`, `/redoc`, `/openapi.json` off in production; `/metrics` requires
+  `AUTONOMA_METRICS_TOKEN` there.
+- Baseline security headers on API and web responses; `X-Powered-By` removed.
+- `AUTONOMA_GUEST_MODE=off` to refuse guest sessions.
+- Web container published on loopback only; healthcheck fixed (IPv4).
+- CI: pull requests never run on a self-hosted runner; workflow tokens
+  read-only.
+- Dependencies: next 16.4.6, starlette 1.10, fastapi 0.162, python-multipart
+  0.0.33, anyio, certifi, pydantic-settings; npm transitive fixes.
+
 ### Changed
 - CI: the runner is configurable via the `CI_RUNNER` repository
   variable with a GitHub-hosted fallback (`ubuntu-latest`), and the job

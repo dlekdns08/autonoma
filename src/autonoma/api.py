@@ -1373,7 +1373,21 @@ async def lifespan(app: FastAPI):
         _unregister_event_bridge()
 
 
-app = FastAPI(title="Autonoma API", version="0.1.0", lifespan=lifespan)
+def _docs_enabled() -> bool:
+    flag = settings.api_docs_enabled
+    return (not settings.session_secret) if flag is None else bool(flag)
+
+
+# The interactive docs and the OpenAPI schema map every route; they are
+# served in dev and switched off in production unless asked for.
+app = FastAPI(
+    title="Autonoma API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled() else None,
+    redoc_url="/redoc" if _docs_enabled() else None,
+    openapi_url="/openapi.json" if _docs_enabled() else None,
+)
 
 # Session cookie + CORS helpers live in ``_api_cookies`` — re-exported
 # here so the existing call sites (``auth_login``/``auth_logout``/
@@ -1431,6 +1445,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from autonoma.security import SecurityHeadersMiddleware  # noqa: E402
+
+# Added after CORS so it wraps it: preflight and error responses get the
+# headers too.
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 def _cleanup_session(session_id: int) -> None:
@@ -1755,6 +1775,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                         error = "API 키를 입력해주세요."
                     elif provider == "vllm" and not base_url:
                         error = "vLLM 서버 URL을 입력해주세요."
+                    elif provider == "vllm":
+                        from autonoma.security import check_outbound_url
+
+                        # Every LLM call of this session goes to this URL
+                        # from the server — same SSRF guard as the guest
+                        # HTTP endpoint.
+                        if await check_outbound_url(base_url) is not None:
+                            error = "허용되지 않는 vLLM 서버 URL입니다."
 
                     if error:
                         logger.info(f"[WS:{session.session_id}] User auth rejected: {error}")

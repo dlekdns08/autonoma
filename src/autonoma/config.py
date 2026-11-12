@@ -464,6 +464,26 @@ class Settings(BaseSettings):
     # Never used for inference. Empty → the endpoint answers 503.
     anthropic_admin_api_key: str = ""
     prometheus_metrics_enabled: bool = True
+    # In production (``session_secret`` set) ``/metrics`` requires
+    # ``Authorization: Bearer <metrics_token>``; with no token configured
+    # it answers 404. Dev mode stays open for local scraping.
+    metrics_token: str = ""
+
+    # ── Hardening (see autonoma.security) ──
+    # Interactive API docs (``/docs``, ``/redoc``, ``/openapi.json``).
+    # Unset → on in dev, off in production.
+    api_docs_enabled: bool | None = None
+    # May a user-supplied LLM ``base_url`` (vLLM guests) point at a
+    # loopback/private address? Unset → yes in dev, no in production —
+    # otherwise the server can be used to probe its own network.
+    allow_private_llm_urls: bool | None = None
+    # Attempts per minute per client IP on login / signup / guest, and
+    # per username on login. 0 disables the limiter.
+    auth_rate_limit_per_minute: int = 10
+    # ``open``: anyone with their own LLM key gets a guest session and can
+    # run swarms on this server. ``off``: guest sessions are refused and
+    # only approved accounts get in.
+    guest_mode: Literal["open", "off"] = "open"
 
     # #11 Goal recommender — gates /api/inspire which calls the LLM to
     # suggest goals from a repo URL or file tree.

@@ -205,6 +205,11 @@ Settings are loaded from environment variables (`AUTONOMA_*` prefix) or a
 | `AUTONOMA_GESTURE_GEN_ENABLED` | Compose each character's signature gestures with an LLM choreographer (procedural families → validated clip; viewers vote) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor tool: workers consult this stronger model mid-turn (empty = off) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | Director asks the planning model for one directive on stalls | `true` |
+| `AUTONOMA_GUEST_MODE` | `open` lets anyone with their own LLM key start a guest session and run swarms on this server; `off` refuses guests | `open` |
+| `AUTONOMA_AUTH_RATE_LIMIT_PER_MINUTE` | Login / signup / guest attempts per client IP (login also per username); `0` disables | `10` |
+| `AUTONOMA_METRICS_TOKEN` | Bearer token required by `/metrics` in production (unset → 404) | — |
+| `AUTONOMA_API_DOCS_ENABLED` | `/docs`, `/redoc`, `/openapi.json`; unset → on in dev, off in production | — |
+| `AUTONOMA_ALLOW_PRIVATE_LLM_URLS` | Allow a guest's vLLM `base_url` to target loopback/private addresses; unset → dev only | — |
 | `AUTONOMA_OTEL_CONTENT_MODE` | Claude SDK OpenTelemetry spans (`anthropic.messages.create`, GenAI attributes) export through `AUTONOMA_OTEL_ENDPOINT`; `content` also exports prompts/responses | `metadata_only` |
 | `AUTONOMA_ANTHROPIC_ADMIN_API_KEY` | Admin API key for `GET /api/billing/summary` — billed USD by day/model and token usage from Anthropic's usage & cost reports (admin only) | — |
 | `AUTONOMA_AGENT_COMPACTION` | At the history round cap: `server` summarizes the trail into a signed compaction block (beta) so the agent keeps what it tried; `reset` drops it | `server` |

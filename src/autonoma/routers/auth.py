@@ -52,6 +52,29 @@ from autonoma.db.users import (
 
 logger = logging.getLogger(__name__)
 
+from autonoma.security import RateLimiter, check_outbound_url, client_ip  # noqa: E402
+
+# Unauthenticated endpoints are throttled per client IP; login also per
+# username so a distributed guess at one account is slowed too.
+_ip_limiter = RateLimiter(settings.auth_rate_limit_per_minute)
+_user_limiter = RateLimiter(settings.auth_rate_limit_per_minute)
+MIN_PASSWORD_LENGTH = 8
+
+
+def _throttle(request: Request, *, username: str = "") -> None:
+    limit = settings.auth_rate_limit_per_minute
+    _ip_limiter.limit = _user_limiter.limit = limit
+    wait = _ip_limiter.hit(f"{request.url.path}|{client_ip(request)}")
+    if not wait and username:
+        wait = _user_limiter.hit(username)
+    if wait:
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too_many_attempts",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
+
 router = APIRouter()
 
 
@@ -64,10 +87,11 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9_-]{3,32}$")
 
 
 @router.post("/api/auth/signup", status_code=http_status.HTTP_201_CREATED)
-async def auth_signup(payload: dict[str, Any]) -> dict[str, Any]:
+async def auth_signup(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     """Public signup. New users start as ``pending`` until an admin
     approves them. Returns 201 on success, 409 if taken, 400 if the
     input doesn't match the username/password rules."""
+    _throttle(request)
     username = str(payload.get("username") or "").strip().lower()
     password = str(payload.get("password") or "")
     if not USERNAME_PATTERN.match(username):
@@ -75,7 +99,7 @@ async def auth_signup(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="invalid_username",
         )
-    if len(password) < 6:
+    if len(password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail="invalid_password",
@@ -102,10 +126,13 @@ async def auth_signup(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/api/auth/login")
-async def auth_login(payload: dict[str, Any], response: FastAPIResponse) -> dict[str, Any]:
+async def auth_login(
+    payload: dict[str, Any], response: FastAPIResponse, request: Request
+) -> dict[str, Any]:
     """Username/password login. 200 + cookie on success."""
     username = str(payload.get("username") or "").strip().lower()
     password = str(payload.get("password") or "")
+    _throttle(request, username=username[:64])
     if not username or not password:
         raise HTTPException(
             status_code=http_status.HTTP_401_UNAUTHORIZED,
@@ -212,6 +239,7 @@ async def _validate_guest_credentials(
 async def auth_guest(
     payload: dict[str, Any],
     response: FastAPIResponse,
+    request: Request,
 ) -> dict[str, Any]:
     """Issue a guest session — no signup, no admin approval.
 
@@ -228,6 +256,13 @@ async def auth_guest(
     out the server's API key.
     """
     from datetime import UTC, datetime
+
+    if settings.guest_mode == "off":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail={"reason": "guest_disabled", "message": "게스트 접속이 비활성화되어 있습니다."},
+        )
+    _throttle(request)
 
     provider = str(payload.get("provider") or "").strip()
     api_key = str(payload.get("api_key") or "").strip()
@@ -259,6 +294,19 @@ async def auth_guest(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail={"reason": "invalid_input", "message": "vLLM 서버 URL을 입력해주세요."},
         )
+
+    if provider == "vllm":
+        # The server fetches this URL itself — never let it reach the
+        # host's own network. One generic message for every refusal so
+        # the response can't be used to map what is listening where.
+        if await check_outbound_url(base_url) is not None:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "reason": "invalid_input",
+                    "message": "허용되지 않는 vLLM 서버 URL입니다.",
+                },
+            )
 
     ok, err_msg = await _validate_guest_credentials(
         provider=provider, api_key=api_key, base_url=base_url

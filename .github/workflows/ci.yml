@@ -10,6 +10,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege for the workflow token.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test & Build
@@ -20,7 +24,10 @@ jobs:
     # pin a runner; when it is unset the expression evaluates to the
     # empty string and ``||`` falls through to ``macos-latest``.
     # ``vars`` is one of the contexts available to ``runs-on``.
-    runs-on: ${{ vars.CI_RUNNER || 'macos-latest' }}
+    # Pull requests always run on a GitHub-hosted runner: this repo is
+    # public, and a fork's code must never execute on a self-hosted box
+    # even if ``CI_RUNNER`` points at one.
+    runs-on: ${{ (github.event_name == 'pull_request' && 'macos-latest') || vars.CI_RUNNER || 'macos-latest' }}
     # Hard ceiling so a hung model download / stuck test can't pin a
     # runner for the default 360 minutes.
     timeout-minutes: 30
@@ -111,7 +118,7 @@ jobs:
 
   e2e:
     name: E2E & visual (Playwright)
-    runs-on: ${{ vars.CI_RUNNER || 'macos-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && 'macos-latest') || vars.CI_RUNNER || 'macos-latest' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4

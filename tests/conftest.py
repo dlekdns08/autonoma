@@ -17,7 +17,14 @@ def _reset():
     # apparently-unrelated test failures.
     bus._handlers.clear()
     bus._taps.clear()
+    # The auth rate limiter is process-wide and every test client shares
+    # one address; tests that exercise it turn it back on themselves.
+    from autonoma.config import settings
+
+    saved_limit = settings.auth_rate_limit_per_minute
+    settings.auth_rate_limit_per_minute = 0
     yield
+    settings.auth_rate_limit_per_minute = saved_limit
     bus._handlers.clear()
     bus._taps.clear()
 

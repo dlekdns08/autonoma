@@ -9,6 +9,10 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 
+# Least privilege for the workflow token.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: Build & Deploy

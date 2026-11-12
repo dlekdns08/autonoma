@@ -180,6 +180,11 @@ web/src/
 | `AUTONOMA_GESTURE_GEN_ENABLED` | 캐릭터별 시그니처 제스처를 LLM 안무가가 작곡 (절차적 패밀리 → 검증된 클립, 시청자 투표) | `false` |
 | `AUTONOMA_ADVISOR_MODEL` | Advisor 툴: 워커가 턴 중간에 상의하는 상위 모델 (비우면 끔) | — |
 | `AUTONOMA_DIRECTOR_LLM_INTERVENTIONS` | 정체 시 Director가 계획 모델에 지시 하나를 요청 | `true` |
+| `AUTONOMA_GUEST_MODE` | `open`이면 자기 LLM 키만 있으면 누구나 게스트 세션으로 이 서버에서 스웜 실행 가능, `off`면 게스트 거부 | `open` |
+| `AUTONOMA_AUTH_RATE_LIMIT_PER_MINUTE` | 로그인/가입/게스트 시도 횟수 제한(클라이언트 IP별, 로그인은 사용자명별도); `0`이면 끔 | `10` |
+| `AUTONOMA_METRICS_TOKEN` | 운영 환경에서 `/metrics`에 필요한 Bearer 토큰 (미설정 시 404) | — |
+| `AUTONOMA_API_DOCS_ENABLED` | `/docs`, `/redoc`, `/openapi.json`; 미설정 시 개발에서는 켜짐, 운영에서는 꺼짐 | — |
+| `AUTONOMA_ALLOW_PRIVATE_LLM_URLS` | 게스트 vLLM `base_url`이 루프백/사설 주소를 가리키는 것을 허용; 미설정 시 개발에서만 | — |
 | `AUTONOMA_OTEL_CONTENT_MODE` | Claude SDK OpenTelemetry span(`anthropic.messages.create`, GenAI 속성)을 `AUTONOMA_OTEL_ENDPOINT`로 내보냄; `content`면 프롬프트/응답도 포함 | `metadata_only` |
 | `AUTONOMA_ANTHROPIC_ADMIN_API_KEY` | `GET /api/billing/summary`용 Admin API 키 — Anthropic 사용량·비용 리포트의 실제 청구액(일/모델별)과 토큰 사용량 (관리자 전용) | — |
 | `AUTONOMA_AGENT_COMPACTION` | 히스토리 라운드 상한에서: `server`는 서명된 compaction 블록으로 요약(베타)해 시도했던 내용을 유지, `reset`은 폐기 | `server` |
